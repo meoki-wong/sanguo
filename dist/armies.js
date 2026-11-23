@@ -1,0 +1,341 @@
+import { availableAttackers, cityName, cityReserve, eraByYear, expeditionGrain, forecastAttack, gameOutcome, minimumMarch, previewOrders } from "./engine.js";
+import { isHostile } from "./diplomacy.js";
+import { roadPath as roadsBetween } from "./roads.js";
+import { officeSkill } from "./realm.js";
+import { militaryView, roadTerrain } from "./war-intel.js";
+import { resolveInvestment, stances, validArmyOperation, warBlockaded, warReport } from "./war-operations.js";
+import { hasPassage, openRoadEdge } from "./grand-logistics.js";
+
+export const armyLimit = 2;
+export const armyCapacity = (state) => state.grand ? 4 : armyLimit;
+export const armyGarrison = 400;
+export const armyPhases = { muster: "集结中", march: "行军中", hold: "固守", retreat: "撤军中", secured: "战后驻扎" };
+
+const marchHops = 4;
+const owned = (state, faction, key) => state.cities[key]?.owner === faction;
+const cityIndex = (world) => new Map(world.cities.map((city) => [city.key, city]));
+
+export function armyByOfficer(state, officer) {
+  return state.armies?.find((army) => army.officer === officer) ?? null;
+}
+
+export function holdingArmies(state, faction, city) {
+  return state?.armies?.filter((army) => army.faction === faction && army.location === city && army.troops > 0
+    && ["hold", "secured"].includes(army.phase)) ?? [];
+}
+
+export function marchRoute(world, state, faction, from, target) {
+  if (!hasPassage(state, faction, from) || !state.cities[target] || owned(state, faction, target)
+    || !isHostile(state, faction, state.cities[target].owner)) return null;
+  return roadsBetween(cityIndex(world), from, target, (key) => key === target || hasPassage(state, faction, key), marchHops,
+    (a, b) => openRoadEdge(state, faction, a, b, b === target));
+}
+
+export function supplyRoute(world, state, army, depot = army.depot) {
+  const { faction, location } = army;
+  if (!owned(state, faction, depot) || state.cities[depot].occupation || !hasPassage(state, faction, location) || warBlockaded(state, depot)) return null;
+  return roadsBetween(cityIndex(world), depot, location, (key) => hasPassage(state, faction, key)
+    && (!state.cities[key].occupation || key === location) && (key === location || !warBlockaded(state, key)), Infinity,
+  (a, b) => openRoadEdge(state, faction, a, b));
+}
+
+export function shippingCost(world, state, army, route) {
+  if (!state.realm || !route) return 0;
+  const office = army.faction === state.player ? officeSkill(eraByYear(world, state), state, "marshal") : 0;
+  const difficult = state.war ? route.slice(1).filter((key, index) => roadTerrain(route[index], key)).length : 0;
+  const formation = state.grand?.campaigns.find(({ wings }) => Object.values(wings).some(({ officer }) => officer === army.officer));
+  const escort = formation?.wings.escort && armyByOfficer(state, formation.wings.escort.officer);
+  const protectedRoute = escort?.faction === army.faction && escort.troops >= 300 && escort.phase === "hold" && route.includes(escort.location);
+  return Math.max(0, route.length - 2 + difficult - Number(office >= 80) - (protectedRoute ? 2 : 0));
+}
+
+export function withdrawalRoute(world, state, army, to) {
+  if (!owned(state, army.faction, to)) return null;
+  return roadsBetween(cityIndex(world), army.location, to, (key) => hasPassage(state, army.faction, key)
+    && (key === to || !warBlockaded(state, key)), Infinity, (a, b) => openRoadEdge(state, army.faction, a, b));
+}
+
+export function mobilizationQuote(world, state, faction, order) {
+  const { from, to, officer, troops } = order;
+  const factionArmies = (state.armies ?? []).filter((army) => army.faction === faction);
+  if (order.stance !== undefined && (!state.war || !Object.hasOwn(stances, order.stance))) throw new Error("请选择可用的军团战法。");
+  if (factionArmies.length >= armyCapacity(state)) throw new Error("每个势力最多同时组建 " + armyCapacity(state) + " 支军团。");
+  if (!owned(state, faction, from) || state.cities[from].occupation) throw new Error("集结城须为己方已完成整顿的城池。");
+  const route = marchRoute(world, state, faction, from, to);
+  if (!route) throw new Error("目标须在四段道路以内，沿途可由己方城池通行。");
+  const era = eraByYear(world, state);
+  if (!availableAttackers(era, state, faction, from).some(({ key }) => key === officer)) {
+    throw new Error("请选择驻在集结城且可领兵的待任武将或守将。");
+  }
+  const leave = state.cities[from].troops - troops;
+  if (!Number.isSafeInteger(troops) || troops < minimumMarch || leave < cityReserve) {
+    throw new Error("请至少集结 200 人，并在出发城留守 250 人。");
+  }
+  const ration = expeditionGrain(troops);
+  if (state.factions[faction].grain < 2 * ration) throw new Error("组建军团需要两季随军粮。");
+  return { route, leave, ration, carried: 2 * ration, quarters: route.length + 1, battle: forecastAttack(era, state, order, faction) };
+}
+
+export function mobilizeArmy(world, state, faction, order) {
+  const { route, carried } = mobilizationQuote(world, state, faction, order);
+  const { officer, from, troops, to } = order;
+  const city = state.cities[from];
+  city.troops -= troops;
+  if (city.commander === officer) city.commander = null;
+  state.stations[officer] = null;
+  state.factions[faction].grain -= carried;
+  state.armies ??= [];
+  state.armies.push({ faction, officer, troops, grain: carried, location: from, depot: from, target: to, route,
+    phase: "muster", prepared: false, assembledAt: state.turn, ...(order.stance ? { stance: order.stance } : {}) });
+  return carried;
+}
+
+export function armyStatus(world, state, army) {
+  const supply = supplyRoute(world, state, army);
+  const ration = expeditionGrain(army.troops);
+  const routeClosed = army.route.slice(1, -1).some((key) => !owned(state, army.faction, key));
+  return { supply, ration, routeClosed, reserveSeasons: Math.floor(army.grain / ration) };
+}
+
+export function orderArmy(world, state, army, order) {
+  if (order.type === "hold") return { phase: "hold" };
+  if (order.type === "retreat") {
+    const route = withdrawalRoute(world, state, army, order.target);
+    if (!route) throw new Error("没有通往该己方城池的撤军道路。");
+    return { phase: "retreat", route, target: order.target };
+  }
+  if (order.stance !== undefined && (!state.war || !Object.hasOwn(stances, order.stance))) throw new Error("请选择可用的军团战法。");
+  const route = marchRoute(world, state, army.faction, army.location, order.target);
+  if (order.type !== "march" || !route || !supplyRoute(world, state, army, order.depot)) {
+    throw new Error("继续出征需要可通行的目标和补给城。");
+  }
+  return { phase: army.prepared ? "march" : "muster", route, target: order.target, depot: order.depot,
+    ...(order.stance !== undefined ? { stance: order.stance } : {}) };
+}
+
+export function redirectArmy(world, state, army, order) {
+  const next = orderArmy(world, state, army, order);
+  if (next.phase !== "march" || next.target !== army.target || (next.stance && next.stance !== army.stance)) delete army.engagement;
+  Object.assign(army, next);
+}
+
+function releaseArmy(state, army) {
+  state.cities[army.location].troops += army.troops;
+  state.stations[army.officer] = army.location;
+  state.factions[army.faction].grain += army.grain;
+  army.troops = 0;
+  return army.grain;
+}
+
+function removeInactive(state) {
+  state.armies = state.armies.filter(({ troops }) => troops > 0);
+  if (!state.armies.length) delete state.armies;
+}
+
+export function commandArmy(world, state, officer, order) {
+  if (gameOutcome(state) !== "ongoing") throw new Error("战局已结束。");
+  const original = armyByOfficer(state, officer);
+  if (!original || original.faction !== state.player) throw new Error("只能指挥本势力的军团。");
+  const next = structuredClone(state);
+  const army = armyByOfficer(next, officer);
+  if (order.type === "garrison") {
+    if (!owned(next, army.faction, army.location)) throw new Error("只能驻入己方城池。");
+    releaseArmy(next, army);
+    removeInactive(next);
+  } else {
+    redirectArmy(world, next, army, order);
+  }
+  for (const plan of next.theaters ?? []) {
+    if (plan.army !== officer) continue;
+    plan.army = null;
+    plan.paused = true;
+    delete plan.report;
+  }
+  if (next.war && order.type === "retreat") next.war.timeline = [...next.war.timeline,
+    { turn: next.turn, event: "retreat", faction: next.player, city: order.target, officer, text: "接管军团并下令撤回。" }].slice(-120);
+  previewOrders(world, next);
+  return next;
+}
+
+function armyEntry(world, era, army, text) {
+  const leader = era.officers.find(({ key }) => key === army.officer);
+  return { type: "army", faction: army.faction, city: army.location, armyOfficer: army.officer, assembledAt: army.assembledAt,
+    text: leader.name + "军团" + text };
+}
+
+function supplySeason(world, state, army, ration, allocation) {
+  const supply = supplyRoute(world, state, army);
+  let spent = 0;
+  if (supply) {
+    const stock = state.factions[army.faction];
+    const reserve = army.faction === state.player ? Math.max(state.delegationReserve?.grain ?? 0, state.grand?.national.reserve ?? 0) : 12;
+    const freight = shippingCost(world, state, army, supply);
+    const store = state.grand?.depots[army.depot] ?? 0;
+    const shipment = Math.max(0, Math.min(Math.max(0, stock.grain - reserve) + store,
+      Math.max(0, 2 * ration - army.grain) + freight, allocation?.limit() ?? Infinity));
+    if (shipment > freight) {
+      const used = Math.min(store, shipment);
+      if (used) state.grand.depots[army.depot] -= used;
+      stock.grain -= shipment - used;
+      army.grain += shipment - freight;
+      allocation?.charge(shipment);
+      spent = shipment;
+    }
+  }
+  const short = army.grain < ration;
+  army.grain = Math.max(0, army.grain - ration);
+  return { connected: Boolean(supply), short, spent };
+}
+
+function steerOpponent(world, era, state, army) {
+  if (["muster", "retreat"].includes(army.phase)) return;
+  if (army.phase === "secured" && owned(state, army.faction, army.location)) {
+    releaseArmy(state, army);
+    return;
+  }
+  const route = marchRoute(world, state, army.faction, army.location, army.target);
+  const ownedCities = world.cities.filter(({ key }) => owned(state, army.faction, key));
+  const depot = supplyRoute(world, state, army) ? army.depot : ownedCities
+    .map(({ key }) => ({ key, road: supplyRoute(world, state, army, key) })).filter(({ road }) => road)
+    .sort((a, b) => a.road.length - b.road.length)[0]?.key;
+  if (route && depot && army.troops >= minimumMarch) {
+    const odds = route.length === 2 && forecastAttack(era, militaryView(state, army.faction), {
+      from: army.location, to: army.target, officer: army.officer, troops: army.troops,
+    }, army.faction);
+    if (army.stance && army.stance !== "assault" && state.war && (!odds || odds.offense >= odds.defense * .68)) {
+      redirectArmy(world, state, army, { type: "march", target: army.target, depot });
+      return;
+    }
+    if (!odds || odds.offense >= odds.defense * .8) {
+      const phase = odds && !odds.wins ? "hold" : army.prepared ? "march" : "muster";
+      if (phase === "hold") delete army.engagement;
+      Object.assign(army, { phase, route, depot });
+      return;
+    }
+  }
+  const retreat = ownedCities.map(({ key }) => withdrawalRoute(world, state, army, key)).filter(Boolean)
+    .sort((a, b) => a.length - b.length)[0];
+  if (retreat) redirectArmy(world, state, army, { type: "retreat", target: retreat.at(-1) });
+}
+
+export function settleArmies(world, era, state, existing, fight, { playerOnly = false, logistics, captured = new Set() } = {}) {
+  const reports = [];
+  for (const army of state.armies ?? []) {
+    if (!army.troops || (playerOnly && army.faction !== state.player)) continue;
+    const note = (text, returned = 0, reason) => {
+      const entry = armyEntry(world, era, army, text);
+      if (returned) entry.grainReturned = returned;
+      if (reason) entry.reason = reason;
+      reports.push(entry);
+    };
+    const report = (event, text, cost = 0) => {
+      if (state.war && army.stance) reports.push(warReport(event, army.faction, army.target, text, { officer: army.officer, cost }));
+    };
+    if (!Object.values(state.cities).some(({ owner }) => owner === army.faction)) {
+      note("因势力覆灭而解散。");
+      army.troops = 0;
+      continue;
+    }
+    if (!existing.has(army.officer)) continue;
+    if (army.faction !== state.player) steerOpponent(world, era, state, army);
+    if (!army.troops) {
+      note("驻入" + cityName(world, army.location) + "整顿。", army.grain);
+      continue;
+    }
+    if (army.phase === "retreat" && army.location === army.target && owned(state, army.faction, army.location)) {
+      note("已撤回" + cityName(world, army.location) + "。", releaseArmy(state, army));
+      report("returned", "军团回营，余粮归仓。");
+      continue;
+    }
+    const advancing = ["muster", "march"].includes(army.phase);
+    const { connected, short, spent } = supplySeason(world, state, army, expeditionGrain(army.troops), logistics?.get(army.officer));
+    if (short) {
+      const losses = Math.min(army.troops, Math.max(1, Math.ceil(army.troops * .12)));
+      army.troops -= losses;
+      note("随军粮不足，折损 " + losses + " 人。");
+      if (army.phase !== "retreat") army.phase = "hold";
+      delete army.engagement;
+    }
+    if (!army.troops) continue;
+    if (!connected && army.phase === "retreat") report("isolated", "撤军途中粮道中断，军团沿退路消耗随行粮。");
+    if (!connected && advancing) {
+      army.phase = "hold";
+      delete army.engagement;
+      note("补给中断，就地固守。", 0, "supply-cut");
+      report("isolated", "军团补给路已断，须改道、补粮或撤军。", spent);
+    }
+    if (army.phase === "muster") {
+      army.phase = "march";
+      army.prepared = true;
+      note("集结完毕，下季开拔。");
+      report("prepared", "军团集结完成，下季开拔。", spent);
+      continue;
+    }
+    if (army.phase !== "march" && army.phase !== "retreat") continue;
+    const destination = army.route[1];
+    if (army.phase === "retreat" && destination !== army.target && warBlockaded(state, destination)) {
+      army.phase = "hold";
+      report("withdraw-blocked", "撤回途中有城被围，军团停步并请求改道。", spent);
+      continue;
+    }
+    if (hasPassage(state, army.faction, destination) && openRoadEdge(state, army.faction, army.location, destination)) {
+      army.location = destination;
+      army.route = army.route.slice(1);
+      const arrived = destination === army.target;
+      note(arrived && army.phase === "retreat" ? "已撤回" + cityName(world, destination) + "。"
+        : "已抵达" + cityName(world, destination) + "。", arrived ? releaseArmy(state, army) : 0);
+      delete army.engagement;
+      report(arrived ? "returned" : "moving", "军团已抵达" + cityName(world, destination) + "。", spent);
+      continue;
+    }
+    if (army.phase === "retreat" || destination !== army.target || !state.cities[destination]
+      || !isHostile(state, army.faction, state.cities[destination].owner) || army.troops < minimumMarch || (state.war && captured.has(destination))) {
+      const wasRetreating = army.phase === "retreat";
+      army.phase = "hold";
+      delete army.engagement;
+      note("道路易主、协定生效或兵力不足，就地固守。");
+      report(wasRetreating ? "withdraw-blocked" : "held", wasRetreating ? "撤军道路易主，军团停步并请求改道。"
+        : "目标已易主或受协定保护，军团等待新指令。", spent);
+      continue;
+    }
+    const order = { type: "attack", from: army.location, to: destination, officer: army.officer, troops: army.troops };
+    const attack = (unit, conditions) => {
+      const entry = fight(unit, order, conditions);
+      if (entry.type === "capture") {
+        captured.add(destination);
+        report("captured", "战役攻占" + cityName(world, destination) + "，已开始接管。");
+      } else if (army.stance) report("held", "攻坚失利，军团就地重整。");
+      return entry;
+    };
+    if (army.stance && army.stance !== "assault") resolveInvestment(world, state, army, attack, reports, spent);
+    else {
+      report("assault", "军团向" + cityName(world, destination) + "发起强攻。", spent);
+      reports.push(attack(army));
+    }
+  }
+  if (state.armies) removeInactive(state);
+  return reports;
+}
+
+export function validArmies(world, state, officers) {
+  if (state.armies === undefined) return true;
+  if (!Array.isArray(state.armies) || state.armies.length > Object.keys(state.factions).length * armyCapacity(state)) return false;
+  const cities = cityIndex(world);
+  const seen = new Set();
+  const amounts = new Map();
+  return state.armies.every((army) => {
+    if (!army || !officers.has(army.officer) || officers.get(army.officer).faction !== army.faction || seen.has(army.officer)
+      || state.stations[army.officer] !== null || !Object.hasOwn(armyPhases, army.phase) || typeof army.prepared !== "boolean"
+      || (army.phase === "muster" && army.prepared) || (["march", "secured"].includes(army.phase) && !army.prepared)
+      || !Number.isSafeInteger(army.assembledAt) || army.assembledAt < 0 || army.assembledAt >= state.turn
+      || ![army.depot, army.location, army.target].every((key) => cities.has(key))
+      || !Number.isSafeInteger(army.troops) || army.troops < 1 || !Number.isSafeInteger(army.grain) || army.grain < 0
+      || !Array.isArray(army.route) || army.route[0] !== army.location || army.route.at(-1) !== army.target
+      || new Set(army.route).size !== army.route.length || !army.route.every((key, index) => cities.has(key)
+        && (!index || cities.get(army.route[index - 1]).links.includes(key))) || !validArmyOperation(state, army)) return false;
+    seen.add(army.officer);
+    const count = (amounts.get(army.faction) ?? 0) + 1;
+    amounts.set(army.faction, count);
+    return count <= armyCapacity(state);
+  });
+}
