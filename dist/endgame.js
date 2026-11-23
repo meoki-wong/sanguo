@@ -5,10 +5,12 @@ import { formerlyServed } from "./polities-data.js";
 import { peaceCriteria } from "./polity.js";
 
 const endings = {
+  184: { name: "安民定乱", stock: "grain", wealth: "储粮", margin: 95 },
   190: { name: "关东定势", stock: "treasury", wealth: "国库", margin: 90 },
   199: { name: "立业中原", stock: "treasury", wealth: "国库", margin: 85 },
   208: { name: "定江保境", stock: "grain", wealth: "储粮", margin: 90 },
   219: { name: "荆汉定局", stock: "grain", wealth: "储粮", margin: 110 },
+  234: { name: "持重定策", stock: "grain", wealth: "储粮", margin: 125 },
   262: { name: "山河相持", stock: "grain", wealth: "储粮", margin: 110 },
   265: { name: "安定州郡", stock: "treasury", wealth: "国库", margin: 95 },
 };

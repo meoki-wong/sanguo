@@ -88,13 +88,13 @@ export function openingLedger(state, income) {
 
 export function validLedger(ledger, cities, focuses, developmentProjects) {
   if (!ledger || !Array.isArray(ledger.programs) || ledger.programs.length > Object.keys(cities).length) return false;
-  const { opening, tax, trade, gifts, orders, delegation, closing, programs, reserve, realm, politics, grand, armyReturns = 0 } = ledger;
+  const { opening, tax, trade, gifts, orders, delegation, closing, programs, reserve, realm, politics, grand, landscape, armyReturns = 0 } = ledger;
   if (![opening, tax, orders, delegation, closing].every(validResourcePair) || !nonnegative(trade)
     || (reserve !== undefined && !validResourcePair(reserve))
     || !gifts || !nonnegative(gifts.paid) || !nonnegative(gifts.received) || !nonnegative(armyReturns)
     || (realm !== undefined && (!realm || ![realm.commerce, realm.aidIn, realm.aidOut].every(nonnegative) || !validResourcePair(realm.relief)))
-    || [politics, grand].some((item) => item !== undefined && (!item || ![item.in, item.out, item.budget].every(validResourcePair)))) return false;
-  const afterPolitics = (resource) => [politics, grand].reduce((sum, item) =>
+    || [politics, grand, landscape].some((item) => item !== undefined && (!item || ![item.in, item.out, item.budget].every(validResourcePair)))) return false;
+  const afterPolitics = (resource) => [politics, grand, landscape].reduce((sum, item) =>
     sum + (item ? item.in[resource] - item.out[resource] - item.budget[resource] : 0), 0);
   if (opening.treasury + tax.treasury + trade + gifts.received - gifts.paid - orders.treasury - delegation.treasury
     + (realm?.commerce ?? 0) - (realm?.relief.treasury ?? 0) + afterPolitics("treasury") !== closing.treasury

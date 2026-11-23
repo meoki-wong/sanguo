@@ -54,8 +54,8 @@ function plannedBattle() {
   return { state, plan };
 }
 
-test("all six eras share the same 42 cities and a custom opening applies all three kinds of edits", () => {
-  assert.deepEqual(world.scenarios.map(({ year }) => year).sort(), [190, 199, 208, 219, 262, 265]);
+test("all eight eras share the same 42 cities and a custom opening applies all three kinds of edits", () => {
+  assert.deepEqual(world.scenarios.map(({ year }) => year).sort(), [184, 190, 199, 208, 219, 234, 262, 265]);
   for (const era of world.scenarios) assert.deepEqual(Object.keys(era.ownership).sort(), world.cities.map(({ key }) => key).sort());
   const opening = { title: "南线推演", owners: { changan: "cao" }, stocks: { cao: { treasury: 256, grain: 318 } }, stations: { "cao-1": "changan" } };
   const state = restore(createGame(world, 199, "cao", { grand: true, opening }));
@@ -234,8 +234,8 @@ for (const [year, faction] of [[190, "cao"], [190, "dong"], [199, "cao"], [199, 
   });
 }
 
-test("standard Cao opening reaches peaceful succession and completed diplomacy in 2.0", () => {
-  let state = game();
+test("standard Cao opening reaches peaceful succession and completed diplomacy in 3.0", () => {
+  let state = createGame(world, 199, "cao", { landscape: true });
   state = saveSuccession(world, eraByYear(world, state), state, { heir: "cao-0", regent: "cao-1", abdicate: true });
   for (const to of ["yuan", "ce"]) state = proposePackage(world, state, {
     from: "cao", to, halt: true, pass: false, city: null, joint: null, grain: 0, treasury: 15,
@@ -247,8 +247,8 @@ test("standard Cao opening reaches peaceful succession and completed diplomacy i
   assert.equal(state.scenarioEnding.kind, "peace");
 });
 
-test("standard Liu Bei opening reaches the coalition ending in 2.0", () => {
-  let state = game(208, "liu");
+test("standard Liu Bei opening reaches the coalition ending in 3.0", () => {
+  let state = createGame(world, 208, "liu", { landscape: true });
   const allies = ["wu", "han"];
   state = queueOrder(world, state, { type: "build", city: "jiangxia", project: "commerce" });
   while (state.turn < 45 && gameOutcome(state) === "ongoing" && !coalitionCriteria(world, eraByYear(world, state), state).ready) {
@@ -267,8 +267,8 @@ test("standard Liu Bei opening reaches the coalition ending in 2.0", () => {
   assert.equal(restore(concludeCoalition(world, state)).scenarioEnding.kind, "coalition");
 });
 
-test("standard Jin opening can unify all 42 cities in 2.0", () => {
-  let state = game(265, "jin");
+test("standard Jin opening can unify all 42 cities in 3.0", () => {
+  let state = createGame(world, 265, "jin", { landscape: true });
   while (gameOutcome(state) === "ongoing" && state.turn < 70) {
     const era = eraByYear(world, state);
     for (let i = 0; i < seasonOrderLimit; i += 1) {

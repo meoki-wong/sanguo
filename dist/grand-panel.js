@@ -7,6 +7,8 @@ import {
   campaignCandidates, campaignQuote, campaignStatuses, manageGrandCampaign, reinforceGrandWing, reviseGrandSupply, saveGrandCampaign, wingNames,
 } from "./grand-campaign.js";
 import { configureGate, crossings, dispatchRoute, districtStatus, gateOwner, grandPriorities, saveDistrict, saveGrandNational } from "./grand-logistics.js";
+import { openingDifficulties, openingGoals } from "./landscape.js";
+import { travelModes } from "./landscape-terrain.js";
 
 function options(element, rows, preferred = element.value) {
   element.replaceChildren(...rows.map(([value, title]) => new Option(title, value)));
@@ -189,13 +191,18 @@ export function createGrandPanel(world, { snapshot, commit, locate, classic }) {
     options(find("wing-officer"), [["", role === "main" ? "选择主将" : "暂不编入"], ...candidates.map(({ officer, name, city, max }) =>
       [officer, name + " · " + city + " · 可派 " + max])], unit?.officer ?? "");
     find("wing-troops").value = unit?.troops ?? (role === "main" ? 1000 : 400);
+    find("wing-travel").value = unit?.travel ?? "land";
     updateWing();
   }
 
   function updateWing() {
     const role = value("wing-role");
-    const unit = campaignCandidates(world, snapshot().state, planDraft.target).find(({ officer }) => officer === value("wing-officer"));
-    if (unit) planDraft.wings[role] = { from: unit.from, officer: unit.officer, troops: number("wing-troops") };
+    const { state } = snapshot();
+    const unit = campaignCandidates(world, state, planDraft.target).find(({ officer }) => officer === value("wing-officer"));
+    find("wing-travel").closest("label").hidden = !state.landscape || !unit || unit.modes.length < 2;
+    const travel = options(find("wing-travel"), (unit?.modes ?? ["land"]).map((mode) => [mode, travelModes[mode]]));
+    if (unit) planDraft.wings[role] = { from: unit.from, officer: unit.officer, troops: number("wing-troops"),
+      ...(state.landscape ? { travel } : {}) };
     else delete planDraft.wings[role];
     find("wing-hint").textContent = unit ? cityName(world, unit.from) + "最多可派 " + unit.max + " 人，须留守 250 人。"
       : "可依次编入主攻、策应与护粮。";
@@ -343,6 +350,7 @@ export function createGrandPanel(world, { snapshot, commit, locate, classic }) {
   find("wing-role").onchange = showWingDraft;
   find("wing-officer").onchange = updateWing;
   find("wing-troops").oninput = updateWing;
+  find("wing-travel").onchange = updateWing;
   find("plan-next").onclick = () => { find("plan-step").value = steps[steps.indexOf(value("plan-step")) + 1]; showStep(); };
   find("plan-form").onsubmit = (event) => {
     event.preventDefault();
@@ -401,12 +409,31 @@ export function createOpeningEditor(world, accept) {
   let setup;
   let draft;
   const value = (key) => find(key).value;
+  const libraryKey = "sanguo.openings.v3";
+  let library = [];
+  try {
+    const stored = JSON.parse(localStorage.getItem(libraryKey) ?? "[]");
+    if (Array.isArray(stored)) library = stored.filter((item) => item && item.draft && typeof item.draft.title === "string").slice(-24);
+  } catch { /* Local storage may be unavailable in private browsing. */ }
+
+  function list() {
+    options(find("library"), [["", "选择同一时期与势力的剧本"], ...library.flatMap((item, index) =>
+      item.year === setup.era.year && item.player === setup.player ? [[String(index), item.draft.title]] : [])], "");
+  }
+
+  function request() {
+    return { ...draft, title: value("title").trim() };
+  }
+
+  function opening() {
+    return createGame(world, setup.era.year, setup.player, { landscape: true, opening: request() });
+  }
 
   function refresh() {
     const { era, player } = setup;
     const mode = value("mode");
     const owner = (key) => draft.owners[key] ?? era.ownership[key];
-    for (const key of ["cities", "stocks", "stations"]) find(key).hidden = key !== mode;
+    for (const key of ["cities", "stocks", "stations", "rules"]) find(key).hidden = key !== mode;
     const factions = era.factions.map(({ key, name }) => [key, name]);
     if (mode === "cities") {
       const city = options(find("city"), names(world.cities));
@@ -424,6 +451,12 @@ export function createOpeningEditor(world, accept) {
       const faction = people.find((entry) => entry.key === key).faction;
       options(find("station"), [["", "由剧本分配"], ...names(world.cities.filter(({ key }) => owner(key) === faction))], draft.stations[key] ?? "");
     }
+    if (mode === "rules") {
+      options(find("difficulty"), Object.entries(openingDifficulties), draft.difficulty);
+      options(find("goal"), Object.entries(openingGoals), draft.goal);
+      const rival = options(find("rival"), factions.filter(([key]) => key !== player));
+      find("credit").value = draft.relations[rival] ?? 0;
+    }
     const holdings = world.cities.filter(({ key }) => owner(key) === player).length;
     find("status").textContent = factionName(era, player) + " · " + holdings + " 座开局主城 · 已调整 " + Object.keys(draft.owners).length + " 城。";
     find("status").dataset.error = "false";
@@ -431,12 +464,41 @@ export function createOpeningEditor(world, accept) {
   }
 
   function reset() {
-    draft = { title: "", owners: {}, stocks: {}, stations: {} };
+    draft = { title: "", owners: {}, stocks: {}, stations: {}, difficulty: "normal", goal: "historic", relations: {} };
     find("title").value = setup.era.year + " 年 · 自定义";
     refresh();
   }
 
-  for (const id of ["mode", "city", "faction", "person"]) find(id).onchange = refresh;
+  for (const id of ["mode", "city", "faction", "person", "rival"]) find(id).onchange = refresh;
+  for (const id of ["difficulty", "goal"]) find(id).onchange = () => { draft[id] = value(id); };
+  find("credit").onchange = () => {
+    if (find("credit").checkValidity() && Number.isSafeInteger(find("credit").valueAsNumber)) {
+      draft.relations[value("rival")] = find("credit").valueAsNumber;
+    }
+  };
+  find("library").onchange = () => {
+    if (!value("library")) return;
+    draft = structuredClone(library[Number(value("library"))].draft);
+    find("title").value = draft.title;
+    refresh();
+  };
+  find("store").onclick = () => {
+    try {
+      opening();
+      const saved = { year: setup.era.year, player: setup.player, draft: request() };
+      const revised = [...library.filter((item) => item.year !== saved.year || item.player !== saved.player
+        || item.draft.title !== saved.draft.title), saved].slice(-24);
+      localStorage.setItem(libraryKey, JSON.stringify(revised));
+      library = revised;
+      list();
+      find("library").value = String(library.length - 1);
+      find("status").textContent = "已保存剧本「" + saved.draft.title + "」。";
+      find("status").dataset.error = "false";
+    } catch (error) {
+      find("status").textContent = error.message;
+      find("status").dataset.error = "true";
+    }
+  };
   find("owner").onchange = () => {
     const city = value("city");
     if (value("owner") === setup.era.ownership[city]) delete draft.owners[city];
@@ -457,7 +519,7 @@ export function createOpeningEditor(world, accept) {
   find("opening-form").onsubmit = (event) => {
     event.preventDefault();
     try {
-      accept(createGame(world, setup.era.year, setup.player, { grand: true, opening: { ...draft, title: value("title") } }));
+      accept(opening());
     } catch (error) {
       find("status").textContent = error.message;
       find("status").dataset.error = "true";
@@ -465,6 +527,7 @@ export function createOpeningEditor(world, accept) {
   };
   return { open(era, player) {
     setup = { era, player };
+    list();
     find("mode").value = "cities";
     reset();
     find("opening-dialog").showModal();

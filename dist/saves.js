@@ -5,7 +5,7 @@ export const saveFileLimit = 370_000;
 const gameFields = ["version", "year", "player", "turn", "factions", "cities", "order", "orders", "strategies",
   "stations", "treaties", "treatyOffers", "incomingTreaty", "stageCompletedAt", "delegationPriority", "delegationReserve", "history", "personnelHistory",
   "campaignMilestones", "campaignEvents", "officerService", "nationalPolicy", "policyOverrides", "armies", "theaters", "warBudget", "recruitedOfficers",
-  "scenarioEnding", "campaignRecord", "realm", "war", "polity", "grand"];
+  "scenarioEnding", "campaignRecord", "realm", "war", "polity", "grand", "landscape"];
 
 function gameData(state) {
   return Object.fromEntries(gameFields.filter((key) => Object.hasOwn(state, key)).map((key) => [key, state[key]]));

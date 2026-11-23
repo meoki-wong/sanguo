@@ -3,12 +3,20 @@ import { armyPhases, supplyRoute } from "./armies.js";
 import { militaryView, roadTerrain, terrainLabels } from "./war-intel.js";
 import { polityColors } from "./polities-data.js";
 import { crossings, dispatchRoute, gateOwner } from "./grand-logistics.js";
+import { convoyRoute } from "./landscape-economy.js";
+import { edgeWeather, seasonWeather } from "./landscape-terrain.js";
 
 const colors = {
   cao: "#416a91", wei: "#416a91", yuan: "#8c6a25", zhang: "#a55b42", shu: "#a1503a",
   biao: "#76588d", lu: "#984d67", ce: "#3d7965", wu: "#3d7965", ma: "#657743",
   gongsun: "#438089", shi: "#8d6446", jin: "#77548c", liu: "#a1503a", han: "#766191",
-  dong: "#743f4c", jiu: "#937443", jian: "#386c56", yan: "#8f6346",
+  dong: "#743f4c", jiu: "#937443", jian: "#386c56", yan: "#8f6346", yellow: "#a68b35", frontier: "#4e7a77",
+};
+const seasonalPalette = {
+  spring: ["#c3cbb6", "#aec6bb", "#8faeab", "#e7d7b2"],
+  summer: ["#c0c7ad", "#94b9b6", "#6a9ca4", "#d9d2a9"],
+  autumn: ["#d6c6a4", "#b9c2a6", "#8aa4a2", "#e8d2a1"],
+  winter: ["#d8ddd4", "#b2c5c8", "#91a9b7", "#e1dfce"],
 };
 
 export const forceColor = (key) => colors[key] || (key?.startsWith("spl-") ? polityColors[(Number(key.slice(4)) - 1) % polityColors.length] : "#776e57");
@@ -37,7 +45,7 @@ function labelBox(side, x, y, length) {
   return [x + 8, y - 9, x + width + 8, y + 9];
 }
 
-export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGate) {
+export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGate, onConvoy) {
   const canvas = stage.querySelector("canvas");
   const markerLayer = stage.querySelector(".map-markers");
   const armyLayer = stage.querySelector("#army-markers");
@@ -56,6 +64,41 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     grandLayer.append(token);
     return { entry, token, position: hull([cityPositions.get(entry.seat), cityPositions.get(entry.to)]) };
   });
+  let roadPins = [];
+  let pinSource;
+  function refreshRoadPins() {
+    if (pinSource?.state === mapState && pinSource.active === active) return;
+    pinSource = { state: mapState, active };
+    for (const { token } of roadPins) token.remove();
+    roadPins = [];
+    if (!mapState.landscape) return;
+    const faction = mapState.player;
+    const owned = (key) => mapState.cities[key].owner === faction;
+    if (!Object.keys(mapState.cities).some(owned)) return;
+    const from = active && owned(active) ? active : firstCity(world, mapState);
+    const potential = world.cities.filter(({ key }) => key !== from && owned(key))
+      .map(({ key }) => {
+        const land = convoyRoute(world, mapState, faction, from, key, "land");
+        const mode = land ? "land" : "water";
+        return { from, to: key, mode, route: land ?? convoyRoute(world, mapState, faction, from, key, mode) };
+      })
+      .filter(({ route }) => route).sort((a, b) => a.route.length - b.route.length).slice(0, 5);
+    const operations = mapState.landscape.convoys.filter((row) => row.faction === faction && row.status === "queued");
+    const roads = [...operations, ...potential.filter((item) => !operations.some((row) => row.from === item.from && row.to === item.to))];
+    for (const road of roads) {
+      const { from, to, id, route } = road;
+      const name = world.cities.find(({ key }) => key === from).name + "至" + world.cities.find(({ key }) => key === to).name + "粮道";
+      const token = pin(name, "landscape-road-marker");
+      token.textContent = id ? "运" : "粮";
+      token.title = name;
+      token.dataset.convoy = id ?? from + ":" + to;
+      token.dataset.water = String(road.mode === "water");
+      token.addEventListener("click", () => onConvoy?.({ from, to, id, mode: road.mode }));
+      grandLayer.append(token);
+      const index = Math.floor((route.length - 1) / 2);
+      roadPins.push({ road, token, position: hull([cityPositions.get(route[index]), cityPositions.get(route[index + 1])]) });
+    }
+  }
   const provinces = [...new Set(world.cities.map(({ region }) => region))].map((region) => {
     const token = document.createElement("span");
     token.className = "grand-region-marker";
@@ -86,9 +129,12 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
   const pointers = new Map();
   let layer = "cities";
   let pressedSnapshot;
+  let cityTouch;
   let mapState;
   let active;
   let target;
+  let routeOrigin;
+  let commandTargets;
   let routeType;
   let itinerary;
   let trade;
@@ -118,7 +164,9 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
   function scale(zoom, reference = center, destination = reference) {
     const x = camera.x + (reference[0] - center[0]) / camera.zoom;
     const y = camera.y + (reference[1] - center[1]) / camera.zoom;
-    if (mapState?.grand && Math.abs(zoom - camera.zoom) > .001) {
+    if (commandTargets) {
+      if (layer !== "cities") switchLayer("cities");
+    } else if (mapState?.grand && Math.abs(zoom - camera.zoom) > .001) {
       switchLayer(zoom < 1.04 ? "factions" : zoom < 1.46 ? "roads" : "cities");
     } else {
       if (zoom > camera.zoom && zoom > 1.16) switchLayer("cities");
@@ -169,18 +217,20 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
       title.textContent = city.name;
       token.append(dot, title);
       token.addEventListener("click", (event) => {
-        if (!event.detail || event.target.closest(".city-name-tag")) {
+        if (!event.detail) {
           onCity(city.key);
           return;
         }
+        const point = cityTouch && event.timeStamp - cityTouch.time < 450 ? cityTouch : { x: event.clientX, y: event.clientY };
+        cityTouch = undefined;
         // The closest visible pin owns the click when two hit areas overlap.
         const nearest = markers.filter(({ type, token }) => type === "city" && !token.hidden)
           .reduce((match, marker) => {
             const box = marker.token.getBoundingClientRect();
-            const distance = Math.hypot(event.clientX - box.left - box.width / 2, event.clientY - box.top - box.height / 2);
+            const distance = Math.hypot(point.x - box.left - box.width / 2, point.y - box.top - box.height / 2);
             return distance < match.distance ? { key: marker.entry.key, distance } : match;
           }, { key: city.key, distance: Infinity });
-        onCity(nearest.key);
+        onCity(nearest.distance > 6 && event.target.closest(".city-name-tag") ? city.key : nearest.key);
       });
       markers.push({ type: "city", entry: city, token, title });
       markerLayer.append(token);
@@ -265,12 +315,15 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
         token.disabled = !district?.populated;
       } else {
         token.dataset.active = String(active === entry.key);
+        if (commandTargets) token.dataset.commandTarget = String(commandTargets.has(entry.key));
+        else delete token.dataset.commandTarget;
         token.setAttribute("aria-pressed", String(active === entry.key));
         placed.push({ entry, token, title, x, y });
       }
     }
     const occupied = placed.map(({ x, y }) => [x - 5, y - 5, x + 5, y + 5]);
-    placed.sort((a, b) => Number(b.entry.key === active) - Number(a.entry.key === active));
+    const priority = ({ entry }) => entry.key === active ? 2 : commandTargets?.has(entry.key) ? 1 : 0;
+    placed.sort((a, b) => priority(b) - priority(a));
     for (const { entry, token, title, x, y } of placed) {
       const side = ["right", "left", "top", "bottom"].find((side) => {
         const box = labelBox(side, x, y, entry.name.length);
@@ -310,19 +363,29 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
       token.style.top = position[1] + "px";
     }
     const labels = [];
-    for (const { entry, position, token } of [...gates, ...provinces]) {
+    for (const { entry, position, token, road } of [...gates, ...roadPins, ...provinces]) {
       const [x, y] = toView(position);
-      const px = left + x * scale, py = top + y * scale;
+      let px = left + x * scale, py = top + y * scale;
       token.hidden = layer !== "roads" || !mapState.grand || !visible(px, py);
       if (token.hidden) continue;
-      const half = token.textContent.length * 6 + 3;
-      const box = [px - half, py - 7, px + half, py + 7];
-      token.hidden = labels.some((other) => intersects(box, other));
+      const half = token.textContent.length * 6 + (road ? 7 : 4);
+      const bounds = (x, y) => [x - half, y - 10, x + half, y + 10];
+      const offset = [[0, 0], [0, 23], [0, -23], [24, 0], [-24, 0]].find(([dx, dy]) => visible(px + dx, py + dy)
+        && px + dx >= half && px + dx <= rect.width - half && py + dy >= 10 && py + dy <= rect.height - 10
+        && !labels.some((other) => intersects(bounds(px + dx, py + dy), other)));
+      token.hidden = !offset;
       if (token.hidden) continue;
-      labels.push(box);
+      px += offset[0];
+      py += offset[1];
+      labels.push(bounds(px, py));
       token.style.left = px + "px";
       token.style.top = py + "px";
-      if (entry) token.dataset.closed = String(mapState.grand.closed[entry.key] === gateOwner(mapState, entry));
+      if (entry) {
+        const hazard = edgeWeather(mapState, entry.seat, entry.to);
+        token.dataset.closed = String(mapState.grand.closed[entry.key] === gateOwner(mapState, entry) || hazard.blocked);
+        token.dataset.hazard = String(hazard.cost > 0);
+        token.title = entry.name + " · " + hazard.label;
+      }
     }
   }
 
@@ -335,7 +398,7 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
   }
 
   function drawRoutes() {
-    const origin = world.cities.find(({ key }) => key === active);
+    const origin = world.cities.find(({ key }) => key === routeOrigin);
     if (!origin || layer !== "cities" || (camera.zoom < 1.6 && !target)) return;
     const web = new Path2D();
     for (const neighbor of world.cities.filter(({ key }) => origin.links.includes(key))) {
@@ -345,7 +408,7 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     ctx.setLineDash([3.5 / camera.zoom, 3 / camera.zoom]);
     trace(web, "#6d4f2d", 1.5, .74);
     ctx.setLineDash([]);
-    const route = itinerary ?? (target && origin.links.includes(target) ? [active, target] : null);
+    const route = itinerary ?? (target && origin.links.includes(target) ? [routeOrigin, target] : null);
     if (route) {
       const link = new Path2D();
       link.moveTo(...origin.position);
@@ -454,10 +517,11 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     if (canvas.height !== pixels[1]) canvas.height = pixels[1];
     const fit = fittedMap(rect);
     ctx.resetTransform();
+    const palette = seasonalPalette[mapState.landscape ? seasonWeather(mapState).key : "spring"];
     const water = ctx.createLinearGradient(0, 0, ...pixels);
-    water.addColorStop(0, "#c3cbb6");
-    water.addColorStop(.58, "#aec6bb");
-    water.addColorStop(1, "#8faeab");
+    water.addColorStop(0, palette[0]);
+    water.addColorStop(.58, palette[1]);
+    water.addColorStop(1, palette[2]);
     ctx.fillStyle = water;
     ctx.fillRect(0, 0, ...pixels);
     ctx.save();
@@ -467,7 +531,7 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     ctx.translate(-camera.x, -camera.y);
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
-    ctx.fillStyle = "#e7d7b2";
+    ctx.fillStyle = palette[3];
     ctx.fill(land, "evenodd");
     trace(grid, "#819582", .6, .3);
     for (const { key, path, populated } of territories) {
@@ -491,7 +555,10 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     }
     const zone = scenePaths.get(mapState.year).zones[active];
     if (zone && camera.zoom > 1.35) trace(zone, "#7d552b", 1.45, .8);
-    if (layer === "roads" && mapState.grand) drawStrategicRoads();
+    if (layer === "roads" && mapState.grand) {
+      refreshRoadPins();
+      drawStrategicRoads();
+    }
     drawRoutes();
     drawTheaterLines();
     drawArmyRoutes();
@@ -509,11 +576,38 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
       all.lineTo(...cityPositions.get(to));
     }
     trace(all, "#534d3a", 1.05, .74);
+    if (mapState.landscape) {
+      const streams = new Path2D();
+      const flooded = new Path2D();
+      const snowy = new Path2D();
+      for (const { key, links, position } of world.cities) for (const neighbor of links) {
+        if (key >= neighbor) continue;
+        const hazard = edgeWeather(mapState, key, neighbor);
+        const path = hazard.blocked ? flooded : hazard.terrain === "river" ? streams : hazard.cost ? snowy : null;
+        if (!path) continue;
+        path.moveTo(...position);
+        path.lineTo(...cityPositions.get(neighbor));
+      }
+      trace(streams, "#477e84", 2.25, .86);
+      trace(flooded, "#ab432d", 3, .93);
+      trace(snowy, "#f2efe0", 3.4, .89);
+    }
     for (const { entry } of gates) {
       const edge = new Path2D();
       edge.moveTo(...cityPositions.get(entry.seat));
       edge.lineTo(...cityPositions.get(entry.to));
-      trace(edge, mapState.grand.closed[entry.key] === gateOwner(mapState, entry) ? "#9c3922" : "#2b594c", 2.4, .94);
+      const hazard = edgeWeather(mapState, entry.seat, entry.to);
+      const closed = mapState.grand.closed[entry.key] === gateOwner(mapState, entry) || hazard.blocked;
+      trace(edge, closed ? "#a03826" : hazard.cost ? "#9b6c23" : "#2b594c", 2.4, .94);
+    }
+    for (const { road } of roadPins) {
+      const line = new Path2D();
+      line.moveTo(...cityPositions.get(road.route[0]));
+      for (const key of road.route.slice(1)) line.lineTo(...cityPositions.get(key));
+      ctx.save();
+      ctx.setLineDash(road.id ? [] : [4 / camera.zoom, 3 / camera.zoom]);
+      trace(line, road.mode === "water" ? "#3b819c" : "#f6d28b", road.id ? 3.9 : 2.4, .9);
+      ctx.restore();
     }
     const routes = Object.entries(mapState.grand.districts).filter(([key, value]) => key.startsWith(mapState.player + ":") && value.depot);
     for (const [, { depot }] of routes) {
@@ -566,6 +660,11 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     const sensitivity = event.deltaMode === 0 ? .00155 : .023;
     scale(camera.zoom * Math.exp(-event.deltaY * sensitivity), relativePoint(event));
   }, { passive: false });
+  // Touch-generated click coordinates can snap several pixels toward the browser's hit target.
+  stage.addEventListener("pointerup", (event) => {
+    cityTouch = event.pointerType === "touch" && event.target.closest(".city-pin")
+      ? { x: event.clientX, y: event.clientY, time: event.timeStamp } : undefined;
+  }, { capture: true });
   canvas.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
     const point = relativePoint(event);
@@ -604,11 +703,13 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     },
     showWarRoute(path) { warRoute = path; draw(); },
     zoom: (amount) => scale(camera.zoom * amount),
-    show(state, selected, destination, route, path) {
+    show(state, selected, destination, route, path, command) {
       const changed = state !== mapState;
       mapState = state;
       active = selected;
       target = destination;
+      routeOrigin = command?.from ?? selected;
+      commandTargets = command?.targets;
       routeType = route;
       itinerary = path;
       const era = eraByYear(world, state);

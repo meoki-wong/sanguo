@@ -372,6 +372,8 @@ def check_map(page):
 
 def city(page, key):
     view(page, "map")
+    if page.locator("#city-picker").is_hidden() and page.locator("#map-command-back").is_visible():
+        page.click("#map-command-back")
     page.select_option("#city-picker", key)
     if page.locator("#inspect-city").is_visible():
         page.click("#inspect-city")
@@ -394,6 +396,8 @@ def check_command_desk(browser, address, viewport):
     page.locator("#city-search").press("Enter")
     assert page.locator("#city-picker").input_value() == "nanzheng"
     assert page.locator("#workspace").get_attribute("data-view") == "map"
+    if page.locator("#city-picker").is_hidden():
+        page.click("#map-command-back")
     page.select_option("#city-picker", "xu")
     assert page.locator("#workspace").get_attribute("data-view") == "map"
     assert page.locator("#tab-governance").get_attribute("aria-selected") == "true"
@@ -1008,6 +1012,243 @@ for (const key of ['cao-1','cao-2','cao-roster-3']) state.stations[key]='luoyang
 console.log(JSON.stringify({state,selected:'luoyang'}));
 """
     return json.loads(subprocess.check_output(["node", "--input-type=module", "-e", source], cwd=ROOT, encoding="utf-8"))
+
+
+def play_landscape(browser, address, viewport):
+    mobile = viewport[0] <= 568
+    page, errors = new_page(browser, address, viewport, grand_fixture(), mobile=mobile)
+    use = page.tap if mobile else page.click
+
+    def press(section, name):
+        control = page.locator(section).get_by_role("button", name=name, exact=True)
+        (control.tap if mobile else control.click)()
+
+    def tap_city(key):
+        marker = page.locator(f'[data-city-pin="{key}"]')
+        box = marker.bounding_box()
+        assert box is not None
+        (page.touchscreen.tap if mobile else page.mouse.click)(
+            box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+
+    object_panel = "#map-landscape-command"
+    use("#open-menu")
+    use("#open-landscape-menu")
+    press("#landscape-dialog", "在此存档启用 3.0")
+    assert saved(page)["landscape"]["since"] == 0
+    close(page, "landscape-dialog")
+    assert page.locator("#map-weather").inner_text() == "春雨"
+    tap_city("luoyang")
+    use('[data-city-action="build"]')
+    page.select_option("#map-command-project", "farming")
+    use("#map-command-confirm")
+    use('[data-city-action="policy"]')
+    page.select_option("#map-landscape-policy", "equipment")
+    press(object_panel, "颁行")
+    press(object_panel, "收起")
+
+    use('[data-map-layer="roads"]')
+    use('[data-gate="changan:luoyang"]')
+    assert page.locator("#map-landscape-title").inner_text() == "函谷道"
+    assert page.locator(object_panel).get_by_role("button", name="封控关隘").is_disabled()
+    press(object_panel, "收起")
+    route = page.locator('[data-convoy="luoyang:xu"]:not([hidden])')
+    if not route.count():
+        route = page.locator(".landscape-road-marker:not([hidden])").first
+    assert route.count() == 1
+    (route.tap if mobile else route.click)()
+    assert "→" in page.locator("#map-landscape-title").inner_text()
+    page.fill("#map-convoy-count", "24")
+    press(object_panel, "安排本季运输")
+    assert saved(page)["landscape"]["convoys"][0]["amount"] == 24
+    press(object_panel, "收起")
+
+    use('[data-map-layer="cities"]')
+    tap_city("luoyang")
+    use('[data-city-action="attack"]')
+    tap_city("changan")
+    page.select_option("#map-command-method", "assault")
+    page.fill("#map-command-troops", "2800")
+    use("#map-command-confirm")
+    fit(page, ".map-panel")
+    first = advance(page, 1)
+    assert first["landscape"]["convoys"][0]["status"] == "delivered"
+    assert first["history"][-1]["finance"]["landscape"]["budget"]["treasury"] > 0
+    assert page.locator("#map-weather").inner_text() == "夏汛"
+    officer = next(row["officer"] for row in first["armies"] if row["faction"] == "cao")
+    marker = page.locator(f'[data-army-officer="{officer}"]')
+    (marker.tap if mobile else marker.click)()
+    assert "军团" in page.locator("#map-landscape-title").inner_text()
+    press(object_panel, "固守")
+    press(object_panel, "换粮仓")
+    fit(page, ".map-panel")
+    tap_city("xu")
+    assert next(row for row in saved(page)["armies"] if row["officer"] == officer)["depot"] == "xu"
+    press(object_panel, "陆路改令")
+    tap_city("changan")
+    press(object_panel, "收起")
+
+    use("#map-weather")
+    use('[data-landscape-tab="treaty"]')
+    page.select_option('[name="guest-a"]', "yuan")
+    page.select_option('[name="guest-b"]', "ce")
+    page.select_option('[name="target"]', "changan")
+    page.select_option('[name="aid"]', "8")
+    fit(page, "#landscape-dialog")
+    press("#landscape-dialog", "提交各方表决")
+    assert len(saved(page)["landscape"]["congresses"][0]["parties"]) == 3
+    fit(page, "#landscape-dialog")
+    close(page, "landscape-dialog")
+    second = advance(page, 2)
+    assert second["landscape"]["congresses"][0]["status"] in ("active", "rejected")
+    for turn in (3, 4):
+        state = advance(page, turn)
+    assert state["cities"]["changan"]["owner"] == "cao"
+    use('[data-map-layer="roads"]')
+    use('[data-gate="changan:luoyang"]')
+    press(object_panel, "封控关隘")
+    assert saved(page)["grand"]["closed"]["changan:luoyang"] == "cao"
+    press(object_panel, "解除封控")
+    press(object_panel, "整修 · 24 钱 8 粮")
+    assert "待整修" in page.locator(".landscape-brief").inner_text()
+    press(object_panel, "收起")
+    state = advance(page, 5)
+    assert state["landscape"]["bridges"]["changan:luoyang"] == 1
+    use("#map-weather")
+    use('[data-landscape-tab="replay"]')
+    assert page.locator(".landscape-timeline li").count()
+    fit(page, "#landscape-dialog")
+    close(page, "landscape-dialog")
+    page.reload()
+    page.locator("#map-weather").wait_for(state="visible")
+    assert saved(page) == state
+    fit(page, ".map-panel")
+    fit(page, "html")
+    assert not errors, errors
+    page.close()
+    print(f"{viewport}: 3.0 地图点击/触控，经营、封控与整修、粮道、军团换仓改令、议盟、攻占、复盘与刷新读档", flush=True)
+
+
+def play_landscape_opening(browser, address, viewport):
+    mobile = viewport[0] < 600
+    page, errors = new_page(browser, address, viewport, mobile=mobile)
+    use = page.tap if mobile else page.click
+
+    quick_opening(page, "208", "liu")
+    use("[data-city-pin='jiangxia']")
+    use("[data-city-action='attack']")
+    marker = page.locator("[data-city-pin='chaisang']")
+    box = marker.bounding_box()
+    (page.touchscreen.tap if mobile else page.mouse.click)(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.select_option("#map-command-method", "assault")
+    page.select_option("#map-command-travel", "water")
+    page.fill("#map-command-troops", "1200")
+    use("#map-command-confirm")
+    assert saved(page)["orders"][-1]["travel"] == "water"
+    first = advance(page, 1)
+    assert any(unit["travel"] == "water" for unit in first["armies"] if unit["faction"] == "liu")
+    for turn in (2, 3):
+        state = advance(page, turn)
+    assert any("水运" in step["text"] for row in state["landscape"]["replay"] for step in row["stages"])
+
+    view(page, "forces")
+    use("#open-campaign")
+    page.select_option("#era-select", "184")
+    page.select_option("#force-select", "yellow")
+    assert "收拢流民" in page.locator("#campaign-objective-title").inner_text()
+    page.select_option("#era-select", "234")
+    page.select_option("#force-select", "shu")
+    assert "重整前线屯仓" in page.locator("#campaign-objective-title").inner_text()
+    use("#open-custom-opening")
+    page.fill("#custom-title", "五丈原试演")
+    page.select_option("#custom-mode", "rules")
+    page.select_option("#custom-difficulty", "hard")
+    page.select_option("#custom-goal", "ports")
+    page.select_option("#custom-rival", "wei")
+    page.fill("#custom-credit", "26")
+    use("#custom-store")
+    assert "已保存剧本" in page.locator("#custom-status").inner_text()
+    use("#custom-reset")
+    page.select_option("#custom-library", label="五丈原试演")
+    assert page.locator("#custom-credit").input_value() == "26"
+    fit(page, "#custom-opening-dialog")
+    use("#custom-opening-form [type=submit]")
+    state = saved(page)
+    assert state["year"] == 234 and len(state["cities"]) == 42
+    assert state["landscape"]["custom"] == {"difficulty": "hard", "goal": "ports", "relations": {"wei": 26}}
+    assert not errors, errors
+    fit(page, "html")
+    page.close()
+    print(f"{viewport}: 3.0 水运军团实战、184 与 234 剧本、自定义难度目标与复用", flush=True)
+
+
+def play_map_city_commands(browser, address, viewport):
+    mobile = viewport[0] < 600
+    page, errors = new_page(browser, address, viewport, grand_fixture(), mobile=mobile)
+
+    def choose_site(key):
+        marker = page.locator(f'[data-city-pin="{key}"]')
+        box = marker.bounding_box()
+        assert box is not None
+        point = (box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        (page.touchscreen.tap if mobile else page.mouse.click)(*point)
+
+    def command(key):
+        page.click(f'[data-city-action="{key}"]')
+        fit(page, ".map-panel")
+        assert page.locator("#workspace").get_attribute("data-view") == "map"
+
+    choose_site("luoyang")
+    assert page.locator("#map-command-title").inner_text() == "洛阳"
+    command("appoint")
+    page.select_option("#map-command-appointee", "cao-0")
+    page.click("#map-command-confirm")
+    assert saved(page)["cities"]["luoyang"]["governor"] == "cao-0"
+    command("delegate")
+    page.select_option("#map-command-policy", "defense")
+    page.fill("#map-command-budget", "25")
+    page.click("#map-command-confirm")
+    assert saved(page)["cities"]["luoyang"]["delegateBudget"] == 25
+    command("build")
+    page.select_option("#map-command-project", "farming")
+    assert "18 钱" in page.locator("#map-command-quote").inner_text()
+    page.click("#map-command-confirm")
+    command("attack")
+    assert page.locator('[data-city-pin="changan"]').get_attribute("data-command-target") == "true"
+    assert page.locator('[data-city-pin="xu"]').get_attribute("data-command-target") == "false"
+    choose_site("changan")
+    assert page.locator("#map-command-title").inner_text() == "洛阳 → 长安"
+    page.select_option("#map-command-method", "siege")
+    page.fill("#map-command-troops", "2300")
+    fit(page, ".map-panel")
+    page.keyboard.press("Escape")
+    assert page.locator("#map-command-pick").is_visible()
+    choose_site("changan")
+    assert page.locator("#map-command-method").input_value() == "siege"
+    assert page.locator("#map-command-troops").input_value() == "2300"
+    page.click("#map-command-confirm")
+    assert saved(page)["orders"][-1]["stance"] == "siege"
+    command("transfer")
+    choose_site("xu")
+    assert "留守" in page.locator("#map-command-quote").inner_text()
+    page.click("#map-command-confirm")
+    assert saved(page)["orders"][-1]["to"] == "xu"
+    first = advance(page, 1)
+    assert any(unit["target"] == "changan" for unit in first["armies"])
+    page.click('[data-map-layer="cities"]')
+    choose_site("luoyang")
+    command("recruit")
+    assert "600 人" in page.locator("#map-command-quote").inner_text()
+    page.click("#map-command-confirm")
+    assert saved(page)["orders"][-1]["type"] == "recruit"
+    choose_site("changan")
+    command("attack")
+    assert "己方出发城" in page.locator("#map-command-instruction").inner_text()
+    page.select_option("#map-command-target", "luoyang")
+    assert page.locator("#map-command-title").inner_text() == "洛阳 → 长安"
+    assert not errors, errors
+    fit(page, "html")
+    page.close()
+    print(f"{viewport}: 地图任命、委任、建设、出征、调兵、征兵与草案返回", flush=True)
 
 
 def play_grand(browser, address, viewport):
@@ -1626,10 +1867,15 @@ def main():
     with isolated_game() as address, sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=browser_path, headless=True)
         try:
+            for viewport in ((1440, 900), (390, 844), (320, 360), (568, 320)):
+                play_landscape(browser, address, viewport)
+            for viewport in ((1440, 900), (390, 844)):
+                play_landscape_opening(browser, address, viewport)
             for viewport in ((320, 360), (568, 320), (844, 390)):
                 check_campaign_switching(browser, address, viewport)
             for viewport in ((1440, 900), (390, 844), (320, 360), (568, 320)):
                 check_command_desk(browser, address, viewport)
+                play_map_city_commands(browser, address, viewport)
             for viewport in ((1440, 900), (390, 844), (320, 360), (568, 320)):
                 play_grand(browser, address, viewport)
             for viewport in ((1440, 900), (320, 360)):

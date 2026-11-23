@@ -50,7 +50,8 @@ export function commercialRoad(world, state, from, to, sites) {
     return !occupation && !warBlockaded(state, key) && (owner === from || owner === to
       || [from, to].every((side) => markets.some((market) => between(market, owner, side)) || hasPassage(state, side, key)));
   };
-  const edge = (a, b) => openRoadEdge(state, from, a, b);
+  const edge = (a, b) => openRoadEdge(state, from, a, b)
+    || (state.landscape && openRoadEdge(state, from, a, b, false, "water"));
   if (sites) {
     if (!own(state, sites[0], from) || !own(state, sites[1], to) || !sites.every(usable)) return null;
     return roadPath(graph, sites[0], sites[1], usable, 5, edge);

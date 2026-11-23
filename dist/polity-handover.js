@@ -14,7 +14,7 @@ function recordAllegiance(state, key, from, to, turn) {
   changes.push({ from, to, turn });
 }
 
-function retreatCity(world, state, faction, origin) {
+export function retreatCity(world, state, faction, origin) {
   const graph = new Map(world.cities.map((city) => [city.key, city]));
   const owned = world.cities.filter(({ key }) => state.cities[key].owner === faction);
   const routes = owned.map(({ key }) => roadPath(graph, origin, key, (city) => state.cities[city].owner === faction))

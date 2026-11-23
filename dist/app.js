@@ -14,6 +14,7 @@ import { createRealmPanel } from "./realm-panel.js";
 import { createWarPanel } from "./war-panel.js";
 import { createPolityPanel } from "./polity-panel.js";
 import { createGrandPanel, createOpeningEditor } from "./grand-panel.js";
+import { createCityCommand } from "./city-command.js";
 import { concludePeace, currentEdict, peaceCriteria } from "./polity.js";
 import { courtFor, provinceRows } from "./polity-governance.js";
 import { intelLabels, intelSummary, militaryView, townIntel } from "./war-intel.js";
@@ -27,6 +28,10 @@ import { answerCampaignEvent, campaignEvent, campaignEventName, campaignRoute, o
 import { filteredReports, latestSeasonSummary, opponentBrief, opponentHoldings, territoryChanges } from "./chronicle.js";
 import { compareDelegationPresets, presetPolicies, zonePresets } from "./delegation-presets.js";
 import { legacyProposals, legacySnapshot } from "./legacy-turn.js";
+import { createLandscapeMap } from "./landscape-map.js";
+import { createLandscapeDesk } from "./landscape-desk.js";
+import { enableLandscape } from "./landscape.js";
+import { enableGrand } from "./grand.js";
 import { readTurnResponse, turnStreamType } from "./turn-stream.js";
 import { frontierAttackOpportunities, frontierCities, frontierDefensePressure, frontierGarrisons, frontierIntel,
   planFrontierExpeditions, planFrontierReinforcements } from "./frontier.js";
@@ -75,6 +80,9 @@ let warPanel;
 let polityPanel;
 let grandPanel;
 let openingEditor;
+let cityCommand;
+let landscapeMap;
+let landscapeDesk;
 let reviewPane = "realm";
 let deciding = false;
 let turnProgress;
@@ -157,6 +165,10 @@ function notify(message, error = false) {
 }
 
 function showView(view) {
+  if (view !== "map") {
+    cityCommand?.close();
+    landscapeMap?.close();
+  }
   find("workspace").dataset.view = view;
   for (const button of document.querySelectorAll("#view-switcher [data-view]")) {
     button.setAttribute("aria-pressed", String(button.dataset.view === view));
@@ -579,7 +591,7 @@ function renderCampaignPreview() {
   const year = Number(find("era-select").value);
   const player = find("force-select").value;
   const scenario = eraByYear(world, year);
-  const opening = createGame(world, year, player, { grand: true });
+  const opening = createGame(world, year, player, { landscape: true });
   campaignOpening = opening;
   pages["campaign-cities"] = pages["campaign-roster"] = 0;
   const { cities, troops } = forceTotals(opening, player);
@@ -3425,6 +3437,11 @@ function openJointPlan(draft) {
 }
 
 function renderMap() {
+  const command = cityCommand?.overlay() ?? landscapeMap?.overlay();
+  if (command) {
+    map.show(state, selected, command.to, command.type, command.route, command);
+    return;
+  }
   const attackActive = activeTab === "expedition" && !find("attack-form").hidden;
   const transferActive = activeTab === "reinforcement" && !find("transfer-form").hidden;
   const destination = attackActive ? find("target-picker").value : transferActive ? find("transfer-target").value : null;
@@ -3672,6 +3689,19 @@ function render() {
   if (find("diplomacy-dialog").open) renderDiplomacy();
   if (find("chronicle").open) renderReports();
   if (find("game-guide").open) renderGameGuide();
+  cityCommand?.sync();
+  landscapeMap?.sync();
+  if (find("landscape-dialog").open) landscapeDesk?.render();
+  const weather = find("map-weather");
+  weather.hidden = !state.landscape;
+  if (state.landscape) {
+    const season = landscapeMap.weather();
+    weather.textContent = season.name;
+    weather.title = season.description;
+    weather.dataset.season = season.key;
+  }
+  const roadTab = document.querySelector('[data-map-layer="roads"]');
+  roadTab.textContent = state.landscape ? "关隘粮道" : "军路";
   renderMap();
 }
 
@@ -3695,6 +3725,17 @@ function selectMapCity(key, locate = false) {
   if (key === selected && !locate) return;
   selectCity(key, locate, "map");
   selectTab(state.cities[key].owner === state.player ? "governance" : "expedition");
+  if (locate) {
+    landscapeMap?.close();
+    cityCommand?.open(key);
+  }
+}
+
+function clickMapCity(key) {
+  if (cityCommand?.pick(key) || landscapeMap?.pick(key)) return;
+  landscapeMap?.close();
+  selectMapCity(key);
+  cityCommand?.open(key);
 }
 
 function selectTab(id, focus = false) {
@@ -3711,6 +3752,8 @@ function selectTab(id, focus = false) {
 }
 
 function replaceGame(next, city) {
+  cityCommand?.close();
+  landscapeMap?.close();
   closeGameGuideMenus();
   for (const key of Object.keys(pages)) pages[key] = 0;
   garrisonTarget = frontierGarrisonTarget;
@@ -3835,6 +3878,7 @@ async function submitModelSettings(operation) {
 }
 
 function setDeciding(value) {
+  if (value) cityCommand?.close();
   deciding = value;
   for (const section of find("workspace").children) {
     if (!section.classList.contains("left-column")) section.inert = value;
@@ -4183,6 +4227,10 @@ function openCouncil(pane) {
 
 function settleTurn(operation, status) {
   const previousStage = state.stageCompletedAt;
+  if (state.landscape) {
+    cityCommand?.close();
+    landscapeMap?.close();
+  }
   mutate(operation, status);
   if (gameOutcome(state) !== "ongoing") openOutcome();
   else if (state.history.at(-1)?.entries.some((entry) => entry.type === "war"
@@ -4212,9 +4260,11 @@ async function takeTurn() {
   let next;
   let status = "本季已结算，摘要见奏报。";
   const serviceVersion = savedModel.turnVersion;
-  const legacy = serviceVersion !== turnVersion;
+  const legacy = serviceVersion !== turnVersion && (serviceVersion !== 26 || state.landscape);
   try {
-    if (legacy && state.grand) throw new Error("天下大势需要 2.0 模型服务。");
+    if (legacy && state.landscape) throw new Error("山河变局需要 3.0 模型服务。");
+    if (!(serviceVersion >= 26) && state.grand) throw new Error("天下大势需要 2.0 模型服务。");
+    if (!(serviceVersion >= 27) && [184, 234].includes(state.year)) throw new Error("旧版服务尚未加载此剧本。");
     if (!(serviceVersion >= 25) && state.polity) throw new Error("势力演变需要 1.3 模型服务。");
     if (!(serviceVersion >= 24) && state.war) throw new Error("战役情报需要 1.2 模型服务。");
     if (legacy && [190, 208, 219].includes(state.year) && !(serviceVersion >= 25)) throw new Error("旧版服务尚未加载此剧本。");
@@ -4265,7 +4315,9 @@ function wireControls() {
     find("orders-dialog").close();
     find("advance").click();
   });
-  find("open-grand-shortcut").addEventListener("click", () => grandPanel.open());
+  find("open-grand-shortcut").addEventListener("click", () => state.landscape ? landscapeDesk.open("summary") : grandPanel.open());
+  find("map-weather").addEventListener("click", () => landscapeDesk.open("summary"));
+  find("open-landscape-menu").addEventListener("click", () => { find("menu-dialog").close(); landscapeDesk.open(); });
   find("open-grand-menu").addEventListener("click", () => { find("menu-dialog").close(); grandPanel.open(); });
   find("open-custom-opening").addEventListener("click", () =>
     openingEditor.open(eraByYear(world, Number(find("era-select").value)), find("force-select").value));
@@ -4542,7 +4594,10 @@ function wireControls() {
   window.addEventListener("focus", discoverModel);
   find("city-picker").addEventListener("change", (event) => selectMapCity(event.target.value, true));
   for (const layer of document.querySelectorAll("[data-map-layer]")) {
-    layer.addEventListener("click", () => map.reset(layer.dataset.mapLayer));
+    layer.addEventListener("click", () => {
+      cityCommand?.close();
+      map.reset(layer.dataset.mapLayer);
+    });
   }
   find("zoom-in").addEventListener("click", () => map.zoom(1.32));
   find("zoom-out").addEventListener("click", () => map.zoom(1 / 1.32));
@@ -5007,7 +5062,7 @@ async function start() {
   } catch (error) {
     notify("自动存档无法读取，已载入初始剧本。 " + error.message, true);
   }
-  state ??= createGame(world, 199, "cao", { grand: true });
+  state ??= createGame(world, 199, "cao", { landscape: true });
   selected ??= state.year === 199 && state.player === "cao" ? "luoyang" : firstCity(world, state);
   find("boot").hidden = true;
   find("workspace").hidden = false;
@@ -5082,12 +5137,45 @@ async function start() {
     find("campaign-dialog").close();
     if (keepProgress()) notify("自定义战局已开局。");
   });
-  map = createMap(world, find("map-stage"), selectMapCity, (layer) => {
+  map = createMap(world, find("map-stage"), clickMapCity, (layer) => {
     for (const button of document.querySelectorAll("[data-map-layer]")) {
       button.setAttribute("aria-pressed", String(button.dataset.mapLayer === layer));
     }
-    document.querySelector(".map-hint").textContent = layer === "roads" ? "金色粮路 · 红色封控 · 方标粮仓" : "滚轮缩放 · 拖动地图";
-  }, (officer) => armyPanel.open(officer), (id) => theaterPanel.open(id), (key) => grandPanel.open("road", key));
+    document.querySelector(".map-hint").textContent = layer === "roads"
+      ? state.landscape ? "点关隘或粮道 · 红线为阻断" : "金色粮路 · 红色封控 · 方标粮仓" : "滚轮缩放 · 拖动地图";
+  }, (officer) => state.landscape ? openLandscapeMap("army", officer) : armyPanel.open(officer),
+  (id) => theaterPanel.open(id), (key) => state.landscape ? openLandscapeMap("gate", key) : grandPanel.open("road", key),
+  (route) => openLandscapeMap("convoy", route));
+  function openLandscapeMap(type, key) {
+    cityCommand?.close();
+    landscapeMap.open(type, key);
+  }
+  landscapeMap = createLandscapeMap(world, {
+    snapshot: () => ({ state, era: era() }),
+    commit: (next, message) => mutate(() => next, message),
+    redraw: renderMap,
+    showCities: () => map.setLayer("cities"),
+  });
+  landscapeDesk = createLandscapeDesk(world, {
+    snapshot: () => ({ state, era: era() }),
+    commit: (next, message) => mutate(() => next, message),
+    locate(layer, key, from) {
+      if (key) locateOnMap(key, "landscape-dialog");
+      else showView("map");
+      map.setLayer(layer);
+      if (from && from !== key) map.showWarRoute([from, key]);
+    },
+    original: (key) => grandPanel.open(key),
+    upgrade: () => mutate(() => enableLandscape(world, state.grand ? state : enableGrand(world, state)), "已将当前战局升级至山河变局。"),
+  });
+  cityCommand = createCityCommand(world, {
+    snapshot: () => ({ state, planned, era: era(), selected }),
+    commit: (next, message) => mutate(() => next, message),
+    showDetails: () => showView("city"),
+    showCities: () => map.setLayer("cities"),
+    openLandscape: openLandscapeMap,
+    redraw: renderMap,
+  });
   wireControls();
   wirePanels();
   find("view-switcher").hidden = false;

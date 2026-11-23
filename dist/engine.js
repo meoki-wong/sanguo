@@ -8,7 +8,7 @@ import { directTheaters, validTheaters } from "./theaters.js";
 import { knownOfficer } from "./personnel.js";
 import { recruitRivals } from "./recruitment.js";
 import { recordCampaign, validEnding } from "./endgame.js";
-import { beginWar, militaryView, roadTerrain, settleIntelligence, validIntelligence } from "./war-intel.js";
+import { beginWar, militaryView, settleIntelligence, validIntelligence } from "./war-intel.js";
 import { appendWarReports, settleCampaignTasks, stances, validWarRecords, warBlockaded, warEvents } from "./war-operations.js";
 import { finishWarRecovery, settleWarRecovery, validRecovery } from "./war-recovery.js";
 import { polityEra } from "./polities-data.js";
@@ -16,6 +16,8 @@ import { enablePolity, recordPolity, settlePolity, validPolity } from "./polity.
 import { settleAccords, updateCoalition, validAccords } from "./accords.js";
 import { incomeFactor, nationalDuty, noteRecruitment, officeSkill, realmPolicy, settlePopulation, settleRealmOffices, startRealm, validRealm } from "./realm.js";
 import { enableGrand, settleGrand, validGrand, validateOpening } from "./grand.js";
+import { enableLandscape, settleLandscape, validLandscape } from "./landscape.js";
+import { edgeWeather, weatherAllows } from "./landscape-terrain.js";
 import { directGrandCampaigns } from "./grand-campaign.js";
 
 export const projects = {
@@ -28,7 +30,7 @@ export const cityReserve = 250;
 export const seasonOrderLimit = 3;
 export const minimumMarch = 200;
 export const delegationPriorityLimit = 5;
-export const turnVersion = 26;
+export const turnVersion = 27;
 const personnelHistoryLimit = 256;
 const archivedQuarters = 12;
 const transferHopLimit = 3;
@@ -111,7 +113,7 @@ function requireCampaignOpen(state) {
   requireRule(gameOutcome(state) === "ongoing", "战局已结束。");
 }
 
-export function createGame(world, year, player, { realm = year === 208, war = false, polity = false, grand = false, opening } = {}) {
+export function createGame(world, year, player, { realm = year === 208, war = false, polity = false, grand = false, landscape = false, opening } = {}) {
   const era = eraByYear(world, year);
   requireRule(era && era.factions.some(({ key }) => key === player), "请选择拥有主城的势力。");
   validateOpening(world, era, player, opening);
@@ -171,7 +173,10 @@ export function createGame(world, year, player, { realm = year === 208, war = fa
   Object.assign(state.stations, opening?.stations);
   const ready = realm ? startRealm(world, state) : state;
   const warfare = war ? beginWar(world, ready) : ready;
-  if (grand || opening) return enableGrand(world, warfare, opening ? { title: opening.title.trim(), ownership } : null);
+  if (grand || landscape || opening) {
+    const ready = enableGrand(world, warfare, opening ? { title: opening.title.trim(), ownership } : null);
+    return landscape ? enableLandscape(world, ready, opening) : ready;
+  }
   return polity ? enablePolity(world, warfare) : warfare;
 }
 
@@ -474,7 +479,7 @@ function friendlyRoutes(world, state, faction, destination, hopLimit = Infinity)
   for (const current of queue) {
     if (distance.get(current) >= hopLimit) continue;
     for (const { key, links } of world.cities) {
-      if (distance.has(key) || !links.includes(current) || !owns(state, key, faction)) continue;
+      if (distance.has(key) || !links.includes(current) || !owns(state, key, faction) || !weatherAllows(state, key, current)) continue;
       distance.set(key, distance.get(current) + 1);
       queue.push(key);
     }
@@ -524,7 +529,7 @@ export function transferRoutes(world, state, from) {
     if (route.length > 1 && warBlockaded(state, route.at(-1))) continue;
     const city = cities.get(route.at(-1));
     for (const target of city.links) {
-      if (seen.has(target) || !owns(state, target)) continue;
+      if (seen.has(target) || !owns(state, target) || !weatherAllows(state, route.at(-1), target)) continue;
       seen.add(target);
       routes.push([...route, target]);
     }
@@ -540,7 +545,7 @@ export function transferRoutesTo(world, state, to) {
     const route = [key];
     for (let hops = distance.get(key); hops > 0; hops -= 1) {
       const from = route.at(-1);
-      route.push(cities.get(from).links.find((neighbor) => distance.get(neighbor) === hops - 1));
+      route.push(cities.get(from).links.find((neighbor) => distance.get(neighbor) === hops - 1 && weatherAllows(state, from, neighbor)));
     }
     return route;
   });
@@ -552,6 +557,7 @@ function validateTransferRoute(world, state, faction, order) {
     requireRule(owns(state, from, faction) && owns(state, to, faction), "只能在己方城池之间调兵。");
     const origin = world.cities.find(({ key }) => key === from);
     requireRule(origin.links.includes(to), "调兵目标须与出发城相邻。");
+    requireRule(weatherAllows(state, from, to), "此段军路受时令影响，请改道调兵。");
     return;
   }
   requireRule(Array.isArray(route) && route.length >= 3 && route.length <= transferHopLimit + 1
@@ -560,6 +566,7 @@ function validateTransferRoute(world, state, faction, order) {
   for (const [index, key] of route.entries()) {
     const city = world.cities.find((entry) => entry.key === key);
     requireRule(city && (index === route.length - 1 || city.links.includes(route[index + 1])), "跨城调兵路线无效。");
+    requireRule(!index || weatherAllows(state, route[index - 1], key), "跨城调兵路线受时令影响，请改道。");
     requireRule(owns(state, key, faction), cityName(world, key) + "已经易主，跨城调兵路线中断。");
     requireRule(!index || index === route.length - 1 || !warBlockaded(state, key), cityName(world, key) + "被封锁，须为援军改道。");
   }
@@ -583,6 +590,7 @@ export function validateOrder(world, state, faction, order) {
     const origin = world.cities.find(({ key }) => key === order.from);
     requireRule(owns(state, order.from, faction), "出征城池已经易主。");
     requireRule(origin.links.includes(order.to) && !owns(state, order.to, faction), "只能攻打相邻的非己方城池。");
+    requireRule(weatherAllows(state, order.from, order.to), "时令阻断直达陆路，请安排水运军团或另选道路。");
     requireRule(isHostile(state, faction, state.cities[order.to].owner), "该势力受停战或同盟保护。");
     const era = eraByYear(world, state);
     requireRule(availableAttackers(era, state, faction, order.from).some(({ key }) => key === order.officer), "请选择驻在出征城的待任武将或守将。");
@@ -816,8 +824,11 @@ export function defensiveStrength(era, target, state, key) {
 
 export function forecastAttack(era, state, order, faction = state.player, conditions = {}) {
   const leader = era.officers.find(({ key, faction: allegiance }) => key === order.officer && allegiance === faction);
-  const offense = Math.round(order.troops * (1 + officerSkill(state, leader, "command") / 120));
-  const terrain = state.war && roadTerrain(order.from, order.to);
+  const gear = Math.min(.14, (conditions.equipment ?? 0) * 22 / order.troops);
+  const weather = edgeWeather(state, order.from, order.to);
+  const travel = conditions.travel === "water" && weather.terrain === "river" ? 1.12 : 1 - Math.min(.15, weather.cost * .035);
+  const offense = Math.round(order.troops * (1 + officerSkill(state, leader, "command") / 120 + gear) * travel);
+  const terrain = state.war && weather.terrain;
   const ground = terrain === "pass" ? 1.12 : terrain === "river" ? 1.08 : 1;
   const defense = conditions.surrender ? Math.max(0, offense - 1)
     : Math.round(defensiveStrength(era, state.cities[order.to], state, order.to) * ground * (1 - (conditions.breach ?? 0) / 330));
@@ -925,6 +936,7 @@ function executeOrder(world, era, state, faction, order) {
   if (order.type === "mobilize") {
     const grain = mobilizeArmy(world, state, faction, order);
     return { type: "order", orderType: order.type, faction, city: order.from,
+      ...(state.landscape ? { operationTarget: order.to } : {}),
       text: describeOrder(world, era, order) + "。携带 " + grain + " 粮。" + (order.stance ? "拟施" + stances[order.stance] + "。" : "") };
   }
   if (order.type === "deploy" || order.type === "appoint-governor") {
@@ -1232,10 +1244,12 @@ export function forecastFinance(world, state, { includeProgramActions = false } 
   const ties = settleAccords(world, era, state, next, entries, {}, true);
   const politics = settlePolity(world, state, next, {}, entries, true);
   const grand = settleGrand(world, state, next, entries, {}, true);
+  const landscape = settleLandscape(world, next, {}, entries, true);
   const closing = funds(stock);
   return { ...openingLedger(state, income), ...(armyReturns ? { armyReturns } : {}),
     orders, delegation: spending({ treasury: beforePrograms.treasury - relief.treasury, grain: beforePrograms.grain - relief.grain }, afterDomestic),
-    ...(ties ? { realm: { ...ties, relief } } : {}), ...(politics ? { politics } : {}), ...(grand ? { grand } : {}), closing, programs };
+    ...(ties ? { realm: { ...ties, relief } } : {}), ...(politics ? { politics } : {}), ...(grand ? { grand } : {}),
+    ...(landscape ? { landscape } : {}), closing, programs };
 }
 
 export function forecastDelegationReserve(world, state, reserve) {
@@ -1409,10 +1423,12 @@ export function advanceQuarter(world, state, proposals = {}) {
   const ties = settleAccords(world, era, state, next, entries, proposals);
   const politics = settlePolity(world, state, next, proposals, entries);
   const grand = settleGrand(world, state, next, entries, proposals);
+  const landscape = settleLandscape(world, next, proposals, entries);
   const closing = funds(next.factions[next.player]);
   Object.assign(finance, { orders: spending({ ...afterIncome, grain: afterIncome.grain + armyReturns }, afterOrders),
     delegation: spending({ treasury: afterOrders.treasury - relief.treasury, grain: afterOrders.grain - relief.grain }, afterDomestic),
-    ...(ties ? { realm: { ...ties, relief } } : {}), ...(politics ? { politics } : {}), ...(grand ? { grand } : {}), closing, programs });
+    ...(ties ? { realm: { ...ties, relief } } : {}), ...(politics ? { politics } : {}), ...(grand ? { grand } : {}),
+    ...(landscape ? { landscape } : {}), closing, programs });
   next.turn += 1;
   next.orders = [];
   const currentEra = next.polity ? eraByYear(world, next) : era;
@@ -1588,6 +1604,7 @@ export function decodeSave(world, text) {
   requireRule(state.factions && Object.keys(state.factions).length === era.factions.length, "存档势力资料不全。");
   requireRule(validPolity(world, state, era, base), "存档势力演变、州郡或议案资料无效。");
   requireRule(validGrand(world, state, officers), "存档战略调度、联军编组或议约资料无效。");
+  requireRule(validLandscape(world, state), "存档时令、物流或多方议约资料无效。");
   requireRule(validCampaignProgress(state, officers), "存档战役或武将资历无效。");
   requireRule(state.nationalPolicy === undefined || validNationalPolicy(state.nationalPolicy), "存档国策无效。");
   const overrides = state.policyOverrides;

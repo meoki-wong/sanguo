@@ -5,6 +5,8 @@ import { roadPath } from "./roads.js";
 import { roadTerrain } from "./war-intel.js";
 import { warBlockaded } from "./war-operations.js";
 import { bounded, provinceKey } from "./polities-data.js";
+import { weatherAllows } from "./landscape-terrain.js";
+import { conferencePass } from "./landscape-treaty.js";
 
 export const grandPriorities = { growth: "发展", defense: "前线", recovery: "接管" };
 export const crossings = [
@@ -28,16 +30,20 @@ export function gateOwner(state, gate) {
 export function hasPassage(state, faction, key) {
   const owner = state.cities[key]?.owner;
   if (owner === faction) return true;
-  return Boolean(state.grand?.passes.some(({ from, to, expires, kind }) => kind === "pass" && expires > state.turn
+  return Boolean((conferencePass(state, faction, owner) || state.grand?.passes.some(({ from, to, expires, kind }) => kind === "pass" && expires > state.turn
     && !isHostile(state, faction, owner) && (from === faction && to === owner || from === owner && to === faction))
-    && !state.cities[key].occupation && !warBlockaded(state, key));
+    ) && !state.cities[key].occupation && !warBlockaded(state, key));
 }
 
-export function openRoadEdge(state, faction, from, to, finalAssault = false) {
+export function crossesGate(state, faction, from, to, finalAssault = false) {
   if (!state.grand || finalAssault) return true;
   const edge = [from, to].sort().join(":");
   const gate = crossings.find(({ key }) => key === edge);
   return !gate || gateOwner(state, gate) === faction || state.grand.closed[edge] !== gateOwner(state, gate);
+}
+
+export function openRoadEdge(state, faction, from, to, finalAssault = false, mode = "land") {
+  return crossesGate(state, faction, from, to, finalAssault) && weatherAllows(state, from, to, mode);
 }
 
 export function configureGate(state, key, closed) {

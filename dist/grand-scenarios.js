@@ -1,4 +1,16 @@
 const openings = {
+  184: {
+    title: "黄巾起事",
+    sides: {
+      han: ["汉廷", "平乱安民", "luoyang", 180, 164, 66, "luoyang changan wan xinye xiangyang chenliu xu jinyang", ["汉灵帝", "皇甫嵩", "朱儁", "卢植", "何进", "刘备", "曹操"]],
+      yellow: ["张角", "联结诸郡", "ye", 110, 145, 76, "ye pingyuan puyang nanpi beihai runan xiaopei xiapi shouchun", ["张角", "张宝", "张梁", "波才", "彭脱", "管亥"]],
+      frontier: ["刘虞", "绥靖北境", "ji", 100, 103, 71, "beiping ji xiangping", ["刘虞", "公孙瓒", "阎柔", "田豫"]],
+      biao: ["荆州诸郡", "安定郡县", "jiangling", 111, 122, 65, "jiangxia jiangling linxiang guiyang linyuan quanling shangyong", ["王叡", "刘表", "蔡瑁", "蒯越"]],
+      jian: ["孙坚", "整备江东", "moling", 105, 110, 72, "chaisang lujiang moling wu shanyin", ["孙坚", "程普", "黄盖", "韩当", "祖茂"]],
+      yan: ["益州诸郡", "保境护蜀", "chengdu", 120, 130, 65, "chengdu zitong jiangzhou yufu jianning yunnan nanzheng", ["郤俭", "刘焉", "张鲁", "张任"]],
+      ma: ["西凉诸部", "守住陇右", "tianshui", 93, 102, 64, "tianshui guzang anding", ["北宫伯玉", "李文侯", "韩遂", "马腾"]],
+    },
+  },
   190: {
     title: "关东联军",
     sides: {
@@ -22,6 +34,17 @@ const openings = {
         ["刘备", "诸葛亮", "关羽", "关平", "张飞", "赵云", "黄忠", "魏延", "马超", "法正", "廖化", "关兴"]],
       wu: ["孙权", "经营长江", "moling", 154, 161, 73, "jiangxia moling wu shanyin lujiang chaisang",
         ["孙权", "吕蒙", "陆逊", "甘宁", "周泰", "朱然", "蒋钦", "潘璋", "顾雍", "张昭"]],
+    },
+  },
+  234: {
+    title: "五丈原",
+    sides: {
+      wei: ["魏", "守住渭水", "luoyang", 220, 185, 71, "xiangping beiping ji nanpi pingyuan jinyang ye guzang tianshui anding changan beihai xiapi xiaopei shouchun puyang chenliu xu runan luoyang wan xinye xiangyang shangyong",
+        ["曹叡", "司马懿", "郭淮", "费曜", "陈群", "满宠", "杜袭", "夏侯霸", "辛毗", "秦朗"]],
+      shu: ["蜀", "北伐陇右", "chengdu", 160, 155, 71, "nanzheng zitong chengdu jiangzhou yufu jianning yunnan",
+        ["刘禅", "诸葛亮", "魏延", "杨仪", "姜维", "王平", "蒋琬", "费祎", "邓芝", "马岱"]],
+      wu: ["吴", "水陆牵制", "moling", 171, 168, 73, "jiangxia jiangling linxiang guiyang quanling linyuan moling wu shanyin lujiang chaisang",
+        ["孙权", "陆逊", "诸葛瑾", "朱然", "步骘", "潘璋", "顾雍", "全琮", "陆凯", "孙韶"]],
     },
   },
 };

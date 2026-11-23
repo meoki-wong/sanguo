@@ -5,6 +5,8 @@ import { officeSkill } from "./realm.js";
 import { militaryView, roadTerrain } from "./war-intel.js";
 import { resolveInvestment, stances, validArmyOperation, warBlockaded, warReport } from "./war-operations.js";
 import { hasPassage, openRoadEdge } from "./grand-logistics.js";
+import { edgeWeather, routeWeather, travelModes } from "./landscape-terrain.js";
+import { issueEquipment } from "./landscape-economy.js";
 
 export const armyLimit = 2;
 export const armyCapacity = (state) => state.grand ? 4 : armyLimit;
@@ -24,19 +26,22 @@ export function holdingArmies(state, faction, city) {
     && ["hold", "secured"].includes(army.phase)) ?? [];
 }
 
-export function marchRoute(world, state, faction, from, target) {
+export function marchRoute(world, state, faction, from, target, mode = "land") {
   if (!hasPassage(state, faction, from) || !state.cities[target] || owned(state, faction, target)
     || !isHostile(state, faction, state.cities[target].owner)) return null;
   return roadsBetween(cityIndex(world), from, target, (key) => key === target || hasPassage(state, faction, key), marchHops,
-    (a, b) => openRoadEdge(state, faction, a, b, b === target));
+    (a, b) => openRoadEdge(state, faction, a, b, b === target, mode));
 }
 
 export function supplyRoute(world, state, army, depot = army.depot) {
   const { faction, location } = army;
   if (!owned(state, faction, depot) || state.cities[depot].occupation || !hasPassage(state, faction, location) || warBlockaded(state, depot)) return null;
-  return roadsBetween(cityIndex(world), depot, location, (key) => hasPassage(state, faction, key)
-    && (!state.cities[key].occupation || key === location) && (key === location || !warBlockaded(state, key)), Infinity,
-  (a, b) => openRoadEdge(state, faction, a, b));
+  const graph = cityIndex(world);
+  const usable = (key) => hasPassage(state, faction, key)
+    && (!state.cities[key].occupation || key === location) && (key === location || !warBlockaded(state, key));
+  const routes = (army.travel === "water" ? ["water", "land"] : ["land"]).map((mode) =>
+    roadsBetween(graph, depot, location, usable, Infinity, (a, b) => openRoadEdge(state, faction, a, b, false, mode)));
+  return routes.find(Boolean) ?? null;
 }
 
 export function shippingCost(world, state, army, route) {
@@ -46,7 +51,9 @@ export function shippingCost(world, state, army, route) {
   const formation = state.grand?.campaigns.find(({ wings }) => Object.values(wings).some(({ officer }) => officer === army.officer));
   const escort = formation?.wings.escort && armyByOfficer(state, formation.wings.escort.officer);
   const protectedRoute = escort?.faction === army.faction && escort.troops >= 300 && escort.phase === "hold" && route.includes(escort.location);
-  return Math.max(0, route.length - 2 + difficult - Number(office >= 80) - (protectedRoute ? 2 : 0));
+  const byWater = army.travel === "water" && route.slice(1).every((key, index) => edgeWeather(state, route[index], key).terrain === "river");
+  return Math.max(0, route.length - 2 + difficult + routeWeather(state, route, byWater ? "water" : "land")
+    - Number(office >= 80) - (protectedRoute ? 2 : 0));
 }
 
 export function withdrawalRoute(world, state, army, to) {
@@ -61,8 +68,9 @@ export function mobilizationQuote(world, state, faction, order) {
   if (order.stance !== undefined && (!state.war || !Object.hasOwn(stances, order.stance))) throw new Error("请选择可用的军团战法。");
   if (factionArmies.length >= armyCapacity(state)) throw new Error("每个势力最多同时组建 " + armyCapacity(state) + " 支军团。");
   if (!owned(state, faction, from) || state.cities[from].occupation) throw new Error("集结城须为己方已完成整顿的城池。");
-  const route = marchRoute(world, state, faction, from, to);
-  if (!route) throw new Error("目标须在四段道路以内，沿途可由己方城池通行。");
+  if (order.travel !== undefined && (!state.landscape || !Object.hasOwn(travelModes, order.travel))) throw new Error("请选择可用的水陆行军方式。");
+  const route = marchRoute(world, state, faction, from, to, order.travel);
+  if (!route) throw new Error("目标须在四段可通行的水陆道路以内。");
   const era = eraByYear(world, state);
   if (!availableAttackers(era, state, faction, from).some(({ key }) => key === officer)) {
     throw new Error("请选择驻在集结城且可领兵的待任武将或守将。");
@@ -73,7 +81,9 @@ export function mobilizationQuote(world, state, faction, order) {
   }
   const ration = expeditionGrain(troops);
   if (state.factions[faction].grain < 2 * ration) throw new Error("组建军团需要两季随军粮。");
-  return { route, leave, ration, carried: 2 * ration, quarters: route.length + 1, battle: forecastAttack(era, state, order, faction) };
+  const equipment = Math.min(state.landscape?.equipment[from] ?? 0, Math.ceil(troops / 250));
+  return { route, leave, ration, carried: 2 * ration, quarters: route.length + 1, equipment,
+    battle: forecastAttack(era, state, order, faction, { travel: order.travel, equipment }) };
 }
 
 export function mobilizeArmy(world, state, faction, order) {
@@ -86,36 +96,45 @@ export function mobilizeArmy(world, state, faction, order) {
   state.factions[faction].grain -= carried;
   state.armies ??= [];
   state.armies.push({ faction, officer, troops, grain: carried, location: from, depot: from, target: to, route,
-    phase: "muster", prepared: false, assembledAt: state.turn, ...(order.stance ? { stance: order.stance } : {}) });
+    phase: "muster", prepared: false, assembledAt: state.turn, ...(order.stance ? { stance: order.stance } : {}),
+    ...(state.landscape ? { travel: order.travel ?? "land", equipment: issueEquipment(state, from, troops) } : {}) });
   return carried;
 }
 
 export function armyStatus(world, state, army) {
   const supply = supplyRoute(world, state, army);
   const ration = expeditionGrain(army.troops);
-  const routeClosed = army.route.slice(1, -1).some((key) => !owned(state, army.faction, key));
+  const routeClosed = army.route.slice(1).some((key, index) =>
+    !openRoadEdge(state, army.faction, army.route[index], key, key === army.target, army.phase === "retreat" ? "land" : army.travel)
+      || key !== army.target && !hasPassage(state, army.faction, key));
   return { supply, ration, routeClosed, reserveSeasons: Math.floor(army.grain / ration) };
 }
 
 export function orderArmy(world, state, army, order) {
   if (order.type === "hold") return { phase: "hold" };
+  if (order.type === "supply" && state.landscape) {
+    if (!supplyRoute(world, state, army, order.depot)) throw new Error("新粮仓与军团之间须有可通行的粮道。");
+    return { phase: army.phase, depot: order.depot };
+  }
   if (order.type === "retreat") {
     const route = withdrawalRoute(world, state, army, order.target);
     if (!route) throw new Error("没有通往该己方城池的撤军道路。");
     return { phase: "retreat", route, target: order.target };
   }
   if (order.stance !== undefined && (!state.war || !Object.hasOwn(stances, order.stance))) throw new Error("请选择可用的军团战法。");
-  const route = marchRoute(world, state, army.faction, army.location, order.target);
-  if (order.type !== "march" || !route || !supplyRoute(world, state, army, order.depot)) {
+  const travel = order.travel ?? army.travel ?? "land";
+  const route = marchRoute(world, state, army.faction, army.location, order.target, travel);
+  if (order.type !== "march" || !route || !supplyRoute(world, state, { ...army, travel }, order.depot)) {
     throw new Error("继续出征需要可通行的目标和补给城。");
   }
   return { phase: army.prepared ? "march" : "muster", route, target: order.target, depot: order.depot,
+    ...(state.landscape ? { travel } : {}),
     ...(order.stance !== undefined ? { stance: order.stance } : {}) };
 }
 
 export function redirectArmy(world, state, army, order) {
   const next = orderArmy(world, state, army, order);
-  if (next.phase !== "march" || next.target !== army.target || (next.stance && next.stance !== army.stance)) delete army.engagement;
+  if (order.type !== "supply" && (next.phase !== "march" || next.target !== army.target || (next.stance && next.stance !== army.stance))) delete army.engagement;
   Object.assign(army, next);
 }
 
@@ -150,6 +169,12 @@ export function commandArmy(world, state, officer, order) {
     plan.army = null;
     plan.paused = true;
     delete plan.report;
+  }
+  if (next.landscape) for (const plan of next.grand.campaigns) {
+    if (Object.values(plan.wings).some((wing) => wing.officer === officer) && ["ready", "active", "blocked"].includes(plan.status)) {
+      plan.status = "paused";
+      plan.note = "地图已接管该军团。";
+    }
   }
   if (next.war && order.type === "retreat") next.war.timeline = [...next.war.timeline,
     { turn: next.turn, event: "retreat", faction: next.player, city: order.target, officer, text: "接管军团并下令撤回。" }].slice(-120);
@@ -193,7 +218,7 @@ function steerOpponent(world, era, state, army) {
     releaseArmy(state, army);
     return;
   }
-  const route = marchRoute(world, state, army.faction, army.location, army.target);
+  const route = marchRoute(world, state, army.faction, army.location, army.target, army.travel);
   const ownedCities = world.cities.filter(({ key }) => owned(state, army.faction, key));
   const depot = supplyRoute(world, state, army) ? army.depot : ownedCities
     .map(({ key }) => ({ key, road: supplyRoute(world, state, army, key) })).filter(({ road }) => road)
@@ -272,13 +297,29 @@ export function settleArmies(world, era, state, existing, fight, { playerOnly = 
       continue;
     }
     if (army.phase !== "march" && army.phase !== "retreat") continue;
-    const destination = army.route[1];
+    const mode = army.phase === "retreat" ? "land" : army.travel ?? "land";
+    let destination = army.route[1];
+    if (state.landscape && destination && !openRoadEdge(state, army.faction, army.location, destination, destination === army.target, mode)) {
+      const diversion = army.phase === "retreat" ? withdrawalRoute(world, state, army, army.target)
+        : marchRoute(world, state, army.faction, army.location, army.target, mode);
+      const hazard = edgeWeather(state, army.location, destination);
+      if (diversion) {
+        army.route = diversion;
+        destination = diversion[1];
+        note(hazard.label + "影响行程，军团改道经" + cityName(world, destination) + "。");
+      } else {
+        army.phase = "hold";
+        delete army.engagement;
+        note(hazard.label + "阻断行程，军团就地固守。");
+        continue;
+      }
+    }
     if (army.phase === "retreat" && destination !== army.target && warBlockaded(state, destination)) {
       army.phase = "hold";
       report("withdraw-blocked", "撤回途中有城被围，军团停步并请求改道。", spent);
       continue;
     }
-    if (hasPassage(state, army.faction, destination) && openRoadEdge(state, army.faction, army.location, destination)) {
+    if (hasPassage(state, army.faction, destination) && openRoadEdge(state, army.faction, army.location, destination, false, mode)) {
       army.location = destination;
       army.route = army.route.slice(1);
       const arrived = destination === army.target;
@@ -300,7 +341,14 @@ export function settleArmies(world, era, state, existing, fight, { playerOnly = 
     }
     const order = { type: "attack", from: army.location, to: destination, officer: army.officer, troops: army.troops };
     const attack = (unit, conditions) => {
-      const entry = fight(unit, order, conditions);
+      const detail = state.landscape ? { ...conditions, travel: mode, equipment: unit.equipment ?? 0 } : conditions;
+      const ration = unit.grain;
+      const entry = fight(unit, order, detail);
+      if (state.landscape) {
+        unit.equipment = Math.floor((unit.equipment ?? 0) * .7);
+        const hazard = edgeWeather(state, order.from, order.to);
+        entry.text += travelModes[mode] + " · " + hazard.label + " · 军械 " + detail.equipment + " · 随军粮 " + ration + "。";
+      }
       if (entry.type === "capture") {
         captured.add(destination);
         report("captured", "战役攻占" + cityName(world, destination) + "，已开始接管。");
@@ -330,6 +378,8 @@ export function validArmies(world, state, officers) {
       || !Number.isSafeInteger(army.assembledAt) || army.assembledAt < 0 || army.assembledAt >= state.turn
       || ![army.depot, army.location, army.target].every((key) => cities.has(key))
       || !Number.isSafeInteger(army.troops) || army.troops < 1 || !Number.isSafeInteger(army.grain) || army.grain < 0
+      || (army.travel !== undefined && (!state.landscape || !Object.hasOwn(travelModes, army.travel)))
+      || (army.equipment !== undefined && (!state.landscape || !Number.isSafeInteger(army.equipment) || army.equipment < 0 || army.equipment > 1000))
       || !Array.isArray(army.route) || army.route[0] !== army.location || army.route.at(-1) !== army.target
       || new Set(army.route).size !== army.route.length || !army.route.every((key, index) => cities.has(key)
         && (!index || cities.get(army.route[index - 1]).links.includes(key))) || !validArmyOperation(state, army)) return false;

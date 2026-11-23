@@ -1,7 +1,7 @@
 import {
   appoint, availableAttackers, availableForPosting, cityName, cityReserve, factionName, forecastAttack, gameOutcome,
   minimumMarch, pendingExpedition, projects, queueOrder, recruitment, seasonOrderLimit, setGovernance, transferGrain,
-  transferRoutes, validateOrder,
+  transferOfficer, transferRoutes, validateOrder,
 } from "./engine.js";
 import { armyCapacity, marchRoute, mobilizationQuote } from "./armies.js";
 import { isHostile } from "./diplomacy.js";
@@ -9,15 +9,17 @@ import { knownOfficer } from "./personnel.js";
 import { intelSummary, queueScout, scoutCost } from "./war-intel.js";
 import { officerSkill } from "./campaign.js";
 import { forceColor } from "./map.js";
+import { travelModes, weatherAllows } from "./landscape-terrain.js";
 
 const number = new Intl.NumberFormat("zh-CN");
 const format = (value) => number.format(value);
-const actionNames = { attack: "出征", transfer: "调兵", build: "建设", recruit: "征兵", appoint: "任命", delegate: "委任", scout: "侦察", details: "详情" };
-const roles = { governor: "太守", commander: "守将" };
+const actionNames = { attack: "出征", transfer: "调兵", build: "建设", recruit: "征兵", appoint: "任命", delegate: "委任",
+  scout: "侦察", convoy: "粮运", policy: "州郡", details: "详情" };
+const roles = { governor: "太守", commander: "守将", station: "调驻" };
 const governance = { direct: "收回委任", auto: "自主发展", farming: "屯田", commerce: "商贸", defense: "城防", recruit: "征兵" };
 const methods = { attack: "本季直接进攻", assault: "军团强攻", siege: "军团围困", blockade: "军团封锁" };
 
-export function createCityCommand(world, { snapshot, commit, showDetails, redraw, showCities }) {
+export function createCityCommand(world, { snapshot, commit, showDetails, redraw, showCities, openLandscape }) {
   const get = (id) => document.getElementById("map-command-" + id);
   const root = document.getElementById("map-city-command");
   const panel = root.closest(".map-panel");
@@ -29,6 +31,7 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
   let action;
   let candidates = new Map();
   let selection;
+  let movementDraft;
   const stage = panel.querySelector(".map-stage");
   const town = (key) => cityName(world, key);
   const sites = new Map(world.cities.map((entry) => [entry.key, entry]));
@@ -46,6 +49,7 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
   function field(key, label, input) {
     input.id = "map-command-" + key;
     const wrapper = document.createElement("label");
+    wrapper.dataset.commandField = key;
     const text = document.createElement("span");
     text.textContent = label;
     wrapper.append(text, input);
@@ -91,7 +95,7 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
     get("title").textContent = phase === "edit" && from ? town(from) + " → " + town(to) : town(city);
     root.style.setProperty("--city-force", forceColor(holding.owner));
     const base = factionName(era, holding.owner);
-    let brief = base + " · " + intelSummary(state, state.player, city) + (holding.occupation ? " · 整顿中" : "");
+    let brief = base + " · 驻军 " + intelSummary(state, state.player, city) + (holding.occupation ? " · 整顿中" : "");
     if (phase !== "menu" && action) brief = actionNames[action];
     else if (holding.owner === state.player) {
       const local = state.orders.filter(({ city: at, from, to }) => [at, from, to].includes(city)).length;
@@ -105,11 +109,13 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
   function menu(focus) {
     candidates = new Map();
     selection = null;
+    movementDraft = null;
     action = null;
     const { state } = snapshot();
     const own = state.cities[city].owner === state.player;
     const choices = gameOutcome(state) !== "ongoing" ? [] : own
-      ? ["attack", "transfer", "build", "recruit", "appoint", "delegate"] : ["attack", ...(state.war ? ["scout"] : [])];
+      ? ["attack", "transfer", "build", "recruit", "appoint", "delegate", ...(state.landscape ? ["convoy", "policy"] : [])]
+      : ["attack", ...(state.war ? ["scout"] : [])];
     actions.replaceChildren(...[...choices, "details"].map((key) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -133,7 +139,7 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
     if (focus) stage.querySelector('[data-city-pin="' + previous + '"]:not([hidden])')?.focus({ preventScroll: true });
   }
 
-  function attackChoices(world, from, to) {
+  function attackChoices(from, to) {
     const { state, planned, era } = snapshot();
     if (planned.cities[from].owner !== state.player || !isHostile(planned, state.player, planned.cities[to].owner)) return null;
     const max = planned.cities[from].troops - cityReserve;
@@ -141,11 +147,13 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
       .filter((person) => !pendingExpedition(state, person.key) && knownOfficer(state, person))
       .sort((a, b) => officerSkill(state, b, "command") - officerSkill(state, a, "command"));
     if (max < minimumMarch || !officers.length) return null;
-    const direct = sites.get(from).links.includes(to);
+    const direct = sites.get(from).links.includes(to) && weatherAllows(planned, from, to);
     const corps = (planned.armies ?? []).filter(({ faction }) => faction === state.player).length;
-    const route = state.war && !planned.cities[from].occupation && corps < armyCapacity(state)
-      ? marchRoute(world, planned, state.player, from, to) : null;
-    return direct || route ? { from, to, max, officers, direct, route } : null;
+    const canMuster = state.war && !planned.cities[from].occupation && corps < armyCapacity(state);
+    const land = canMuster && marchRoute(world, planned, state.player, from, to);
+    const water = canMuster && state.landscape && marchRoute(world, planned, state.player, from, to, "water");
+    const route = land || water;
+    return direct || route ? { from, to, max, officers, direct, route, land, water } : null;
   }
 
   function routesForCity() {
@@ -160,7 +168,7 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
     }
     const own = state.cities[city].owner === state.player;
     const entries = world.cities.filter(({ key }) => key !== city).map(({ key }) =>
-      [key, attackChoices(world, own ? city : key, own ? key : city)]);
+      [key, attackChoices(own ? city : key, own ? key : city)]);
     return new Map(entries.filter(([, option]) => option));
   }
 
@@ -170,8 +178,9 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
     const { state } = snapshot();
     const source = action === "attack" && state.cities[city].owner !== state.player;
     if (!candidates.size) {
+      const transferring = action === "transfer";
       menu();
-      const text = action === "transfer" ? "当前没有可调兵的路线，或出发城留守兵力不足。"
+      const text = transferring ? "当前没有可调兵的路线，或出发城留守兵力不足。"
         : !isHostile(state, state.player, state.cities[city].owner) && source ? "这座城受协定保护，约定有效时无法进攻。"
           : "暂无可用的出征路线。出发城需要武将、足够兵力与可通行的道路。";
       message(text);
@@ -190,6 +199,10 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
       const current = city;
       close();
       showDetails(current);
+      return;
+    }
+    if (key === "convoy" || key === "policy") {
+      openLandscape(key, key === "convoy" ? { from: city } : city);
       return;
     }
     if (["attack", "transfer", "recruit", "build"].includes(key) && state.orders.length >= seasonOrderLimit) {
@@ -221,10 +234,12 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
     const skill = role === "governor" ? "governance" : "command";
     const current = state.cities[city][role];
     const officers = era.officers.filter((person) => person.faction === state.player && knownOfficer(state, person)
+      && (role !== "station" || state.stations[person.key] !== city)
       && (person.key === current || availableForPosting(state, person.key)));
     officers.sort((a, b) => officerSkill(state, b, skill) - officerSkill(state, a, skill));
-    replaceOptions(get("appointee"), [["", "暂缺"], ...officers.map((person) => [person.key,
-      person.name + " · " + (role === "governor" ? "政务" : "统率") + " " + officerSkill(state, person, skill)])], current ?? "");
+    replaceOptions(get("appointee"), [["", role === "station" ? "选择调驻的武将" : "暂缺"], ...officers.map((person) => [person.key,
+      person.name + " · " + (role === "station" ? town(state.stations[person.key])
+        : (role === "governor" ? "政务" : "统率") + " " + officerSkill(state, person, skill))])], current ?? "");
   }
 
   function editor() {
@@ -232,13 +247,19 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
     const { state, planned } = snapshot();
     if (action === "attack") {
       const rows = Object.entries(methods).filter(([mode]) => mode === "attack" ? selection.direct : selection.route);
-      selectField("method", "方式", rows, selection.direct ? "attack" : "siege");
-      selectField("officer", "主将", selection.officers.map((person) => [person.key, person.name + " · " + officerSkill(state, person, "command")]));
+      const preferred = rows.some(([key]) => key === movementDraft?.method) ? movementDraft.method : selection.direct ? "attack" : "siege";
+      selectField("method", "方式", rows, preferred);
+      if (state.landscape && selection.water) {
+        selectField("travel", "水陆", Object.entries(travelModes).filter(([mode]) => mode === "water" || selection.land || selection.direct),
+          movementDraft?.travel);
+      }
+      selectField("officer", "主将", selection.officers.map((person) => [person.key, person.name + " · " + officerSkill(state, person, "command")]),
+        movementDraft?.officer);
     }
     if (action === "attack" || action === "transfer") {
       const available = planned.factions[state.player].grain;
       const sensible = action === "transfer" ? 600 : available * (selection.direct ? 100 : 50);
-      const amount = Math.max(minimumMarch, Math.min(selection.max, sensible));
+      const amount = Math.max(minimumMarch, Math.min(selection.max, movementDraft?.troops || sensible));
       numberField("troops", "兵力", amount, minimumMarch, selection.max).required = true;
     }
     if (action === "build") {
@@ -273,8 +294,9 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
     const troops = get("troops").valueAsNumber;
     if (action === "transfer") return { type: "transfer", from, to, troops, ...(route.length > 2 ? { route } : {}) };
     const mode = get("method").value;
+    const travel = get("travel")?.value;
     return { type: mode === "attack" ? "attack" : "mobilize", from, to, troops, officer: get("officer").value,
-      ...(mode === "attack" ? {} : { stance: mode }) };
+      ...(mode === "attack" ? {} : { stance: mode, ...(travel ? { travel } : {}) }) };
   }
 
   function plan() {
@@ -282,8 +304,13 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
     if (action === "appoint") {
       const role = get("role").value;
       const key = get("appointee").value;
-      if ((state.cities[city][role] ?? "") === key) throw new Error("请选择新的任命安排。");
       const person = era.officers.find((entry) => entry.key === key);
+      if (role === "station") {
+        if (!person) throw new Error("请选择要调驻的空闲武将。");
+        return { confirm: "确认调驻", summary: person.name + "将由" + town(state.stations[key]) + "调驻" + town(city) + "。",
+          apply: () => transferOfficer(world, state, key, city) };
+      }
+      if ((state.cities[city][role] ?? "") === key) throw new Error("请选择新的任命安排。");
       return { confirm: "确认任命", summary: person ? person.name + "将赴" + town(city) + "担任" + roles[role] + "。" : "将解除此城当前" + roles[role] + "的任命。",
         apply: () => appoint(world, state, city, role, key || null) };
     }
@@ -328,7 +355,8 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
     }
     if (item.type === "mobilize") {
       const estimate = mobilizationQuote(world, planned, state.player, item);
-      summary = "预计 " + estimate.quarters + " 季到位 · 随军 " + estimate.carried + " 粮 · 留守 " + format(estimate.leave);
+      summary = "预计 " + estimate.quarters + " 季到位 · 随军 " + estimate.carried + " 粮 · 留守 " + format(estimate.leave)
+        + (state.landscape ? " · 军械 " + estimate.equipment : "");
     }
     return { confirm: "加入政令", summary, apply: () => queueOrder(world, state, item) };
   }
@@ -336,6 +364,7 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
   function estimate() {
     const confirm = get("confirm");
     try {
+      if (get("travel")) get("travel").disabled = get("method").value === "attack";
       const preview = plan();
       confirm.textContent = preview.confirm;
       get("quote").textContent = preview.summary;
@@ -352,7 +381,10 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
 
   function back() {
     if (phase === "menu") close(true);
-    else if (phase === "edit" && selection) picking();
+    else if (phase === "edit" && selection) {
+      movementDraft = { method: get("method")?.value, travel: get("travel")?.value, officer: get("officer")?.value, troops: get("troops").valueAsNumber };
+      picking();
+    }
     else menu(true);
   }
 
@@ -396,7 +428,8 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
       if (!phase) return null;
       if (phase === "pick") return { picking: true, targets: new Set(candidates.keys()) };
       if (!selection) return {};
-      const route = action === "attack" && get("method")?.value === "attack" ? [selection.from, selection.to] : selection.route;
+      const route = action !== "attack" ? selection.route : get("method")?.value === "attack" ? [selection.from, selection.to]
+        : get("travel")?.value === "water" ? selection.water : selection.land;
       return { from: selection.from, to: selection.to, type: action, route };
     },
   };

@@ -10,10 +10,12 @@ import { aiSettlements, settleNegotiations } from "./polity-settlements.js";
 const events = new Set(["policy", "warning", "crisis", "recovered", "split", "critical", "court-warning", "succession", "regency",
   "court-crisis", "delivered", "union", "breach", "signed", "rejected", "petition", "protection-ended", "edict", "edict-approved", "edict-declined"]);
 const edicts = {
+  184: { title: "抚恤流离", focus: "relief", treasury: 12, grain: 26, text: "发放赈粮，安顿流离家庭。" },
   190: { title: "联军筹粮", focus: "relief", treasury: 15, grain: 20, text: "以巡仓和赈济稳住诸郡，保障联军后方。" },
   199: { title: "抚定州郡", focus: "relief", treasury: 16, grain: 16, text: "拨钱粮赈助压力最高的州郡，缓和民心与交接压力。" },
   208: { title: "重开江津", focus: "trade", treasury: 20, grain: 10, text: "修复商贸并扶持港埠，将商路收入转为长期恢复。" },
   219: { title: "清理江道", focus: "trade", treasury: 20, grain: 12, text: "组织郡县修整江边市集和渡口，恢复商贸与民生。" },
+  234: { title: "督造屯堡", focus: "guard", treasury: 22, grain: 16, text: "增设前线屯堡，稳住边境驻防。" },
   262: { title: "安辑边屯", focus: "guard", treasury: 18, grain: 14, text: "拨钱粮安置边屯，稳定军心和地方驻防。" },
   265: { title: "安置新附", focus: "relief", treasury: 20, grain: 18, text: "优先赈济整顿中的州郡，并帮助恢复地方税粮。" },
 };
@@ -22,8 +24,8 @@ export function enablePolity(world, state) {
   if (state.polity) return state;
   const next = startRealm(world, state);
   const era = eraByYear(world, state.year);
-  const initialHeads = { wei: "曹奂", shu: "刘禅", jin: "司马炎", han: "韩玄",
-    wu: [208, 219].includes(state.year) ? "孙权" : state.year === 265 ? "孙皓" : "孙休" };
+  const initialHeads = { wei: state.year === 234 ? "曹叡" : "曹奂", shu: "刘禅", jin: "司马炎", han: state.year === 184 ? "汉灵帝" : "韩玄",
+    wu: [208, 219, 234].includes(state.year) ? "孙权" : state.year === 265 ? "孙皓" : "孙休" };
   const courts = Object.fromEntries(Object.keys(next.factions).filter((key) => livingSide(next, key))
     .map((key) => {
       const title = initialHeads[key] ?? factionName(era, key);
@@ -201,7 +203,7 @@ export function validPolity(world, state, era, base) {
   if (state.polity === undefined) return true;
   const data = state.polity;
   if (!plain(data) || !state.realm || !bounded(data.since, 0, state.turn) || !bounded(data.serial, 0, 1000000)
-    || !bounded(data.calm, 0, state.turn) || !bounded(data.peaceDeals, 0, data.serial + (state.grand?.serial ?? 0))
+    || !bounded(data.calm, 0, state.turn) || !bounded(data.peaceDeals, 0, data.serial + (state.grand?.serial ?? 0) + (state.landscape?.sequence ?? 0))
     || (data.lastBreach !== null && !bounded(data.lastBreach, data.since, state.turn))) return false;
   const factions = Object.keys(state.factions);
   const side = (key) => factions.includes(key);

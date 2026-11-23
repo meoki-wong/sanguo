@@ -1,6 +1,7 @@
 import { accordCredit } from "./accords.js";
 import { protectionBetween } from "./polities-data.js";
 import { grandArmistice } from "./grand-diplomacy.js";
+import { conferencePass } from "./landscape-treaty.js";
 
 export const treatyTerms = {
   truce: { name: "停战", seasons: 2, treasury: 12 },
@@ -13,7 +14,8 @@ export function treatyWith(state, first, second) {
   if (first === second) return null;
   const treaty = state.treaties?.find(({ sides, expires }) => expires > state.turn && sides.includes(first) && sides.includes(second));
   const protection = protectionBetween(state, first, second);
-  const charter = grandArmistice(state, first, second);
+  const congress = conferencePass(state, first, second);
+  const charter = grandArmistice(state, first, second) ?? (congress && { expires: congress.until });
   return treaty ?? (protection || charter ? { kind: "truce", sides: [first, second].sort(),
     expires: Math.max(protection?.expires ?? 0, charter?.expires ?? 0), ...(protection ? { protection: true } : { charter: true }) } : null);
 }

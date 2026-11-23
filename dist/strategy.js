@@ -7,6 +7,8 @@ import { armyCapacity, marchRoute, mobilizationQuote, supplyRoute } from "./armi
 import { opponentFrontOrder } from "./theaters.js";
 import { militaryView } from "./war-intel.js";
 import { alliedDuty, pactTarget } from "./accords.js";
+import { weatherAllows } from "./landscape-terrain.js";
+import { congressTarget } from "./landscape-treaty.js";
 
 function goalDuration(goal) {
   return goal.since < 4 ? 3 : goal.type === "defend" ? 5 : 4;
@@ -40,6 +42,7 @@ export function assessGoal(state, faction, goal, adaptive = true) {
 }
 
 function attackFrom(era, state, faction, from, to) {
+  if (!weatherAllows(state, from, to)) return null;
   const troops = Math.min(state.cities[from].troops - cityReserve, state.factions[faction].grain * 100);
   if (troops < minimumMarch) return null;
   const officer = availableAttackers(era, state, faction, from).sort((a, b) => b.command - a.command)[0];
@@ -97,9 +100,26 @@ function campaignAssembly(world, era, state, faction, owned, goal) {
   return options.sort((a, b) => b.score - a.score)[0]?.order ?? null;
 }
 
+function navalAssembly(world, era, state, faction, goal) {
+  if (!state.landscape || state.armies?.some((army) => army.faction === faction && army.target === goal.target)
+    || !marchRoute(world, state, faction, goal.city, goal.target, "water")) return null;
+  const from = goal.city;
+  const troops = Math.min(2600, state.cities[from].troops - 700, (state.factions[faction].grain - 20) * 50);
+  const officer = availableAttackers(era, state, faction, from).sort((a, b) => b.command - a.command)[0];
+  if (!officer || troops < 850) return null;
+  const order = { type: "mobilize", from, to: goal.target, officer: officer.key, troops, stance: "assault", travel: "water" };
+  const forecast = forecastAttack(era, state, order, faction, { travel: order.travel });
+  if (!forecast.wins) return null;
+  try { validateOrder(world, state, faction, order); return order; } catch { return null; }
+}
+
 function pactAssembly(world, era, state, faction, goal) {
   const { city, target } = goal;
-  const base = attackFrom(era, state, faction, city, target);
+  const water = state.landscape && marchRoute(world, state, faction, city, target, "water");
+  const base = attackFrom(era, state, faction, city, target) ?? (water && {
+    type: "attack", from: city, to: target, troops: Math.min(state.cities[city].troops - cityReserve, state.factions[faction].grain * 50),
+    officer: availableAttackers(era, state, faction, city).sort((a, b) => b.command - a.command)[0]?.key, travel: "water",
+  });
   if (!base || state.cities[city].occupation || state.armies?.some((army) => army.faction === faction && army.target === target)) return null;
   const troops = Math.min(2000, base.troops - 500);
   if (troops < 850 || state.factions[faction].grain < 24 + 2 * expeditionGrain(troops)) return null;
@@ -199,7 +219,7 @@ function actionsFor(world, era, state, faction, owned, goal, allowDeployment, al
 
   const attack = attackFrom(era, state, faction, city, goal.target);
   const canWin = attack && forecastAttack(era, state, attack, faction).wins;
-  const campaign = allowArmies && campaignAssembly(world, era, state, faction, owned, goal);
+  const campaign = allowArmies && (campaignAssembly(world, era, state, faction, owned, goal) ?? navalAssembly(world, era, state, faction, goal));
   return [canWin ? attack : null, campaign, deployment, reinforcing, recruiting].filter(Boolean);
 }
 
@@ -280,7 +300,7 @@ export function factionPlans(world, era, state, faction, {
     goals = [danger, ...goals.filter((goal) => !sameGoal(goal, danger))];
   }
   if (cut) goals = [cut, ...goals.filter((goal) => !sameGoal(goal, cut))];
-  const alliedTarget = !recovering && !danger && pactTarget(state, faction);
+  const alliedTarget = !recovering && !danger && (congressTarget(state, faction) ?? pactTarget(state, faction));
   const alliedCity = alliedTarget && owned.find(({ links }) => links.includes(alliedTarget));
   const pactGoal = alliedCity && { type: "expand", city: alliedCity.key, target: alliedTarget, threshold: 1, since: state.turn };
   const agenda = state.grand?.agendas[faction];

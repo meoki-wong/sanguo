@@ -11,6 +11,8 @@ import { intelLabels, intelSummary, militaryView, townIntel } from "./dist/war-i
 import { stances } from "./dist/war-operations.js";
 import { politicalChoices, politicalDescription } from "./dist/polity.js";
 import { agendaChoices, agendas } from "./dist/grand.js";
+import { observerReport } from "./dist/landscape.js";
+import { voteOptions } from "./dist/landscape-treaty.js";
 
 const priorities = {
   cao: "先攒钱粮，选择能站稳的进攻机会。",
@@ -29,7 +31,7 @@ const priorities = {
   han: "守住荆南，利用沿江通商维持地方自主。",
 };
 
-function makePrompt(world, era, state, faction, plan, accords, political, strategy) {
+function makePrompt(world, era, state, faction, plan, accords, political, strategy, ballots) {
   const known = militaryView(state, faction);
   const stock = state.factions[faction];
   const totals = forceTotals(state, faction);
@@ -66,6 +68,7 @@ function makePrompt(world, era, state, faction, plan, accords, political, strate
       + "余" + (expires - state.turn) + "季");
   const policy = realmPolicy(state, faction);
   const reserve = realmReserve(state, faction);
+  const outlook = observerReport(world, state, faction);
   const diplomacy = activeAccords(state, faction).map(({ kind, from, to, expires, target }) => {
     const partner = from === faction ? to : from;
     return factionName(era, partner) + accordKinds[kind] + "余" + (expires - state.turn) + "季，信用 " + accordCredit(state, faction, partner)
@@ -80,7 +83,7 @@ function makePrompt(world, era, state, faction, plan, accords, political, strate
       + (record.seen === undefined ? "" : "第" + record.seen + "季");
   }) : [];
   return [
-    { role: "system", content: "你在虚构回合制游戏《经略三国》中独立执政。每个政令候选对应一个目标和本季行动。返回 JSON，choice 为政令候选编号字符串，reason 为 20 字以内的中文理由。可用 accord 选择外交候选、politics 选择州郡或朝局候选、agenda 选择未来四季的方针。依据本势力钱粮、守备和关系取舍。" },
+    { role: "system", content: "你在虚构回合制游戏《经略三国》中独立执政。每个政令候选对应一个目标和本季行动。返回 JSON，choice 为政令候选编号字符串，reason 为 20 字以内的中文理由。可用 accord 选择外交候选、politics 选择州郡或朝局候选、agenda 选择未来四季的方针。votes 可按议约编号返回 yes 或 no。依据本势力钱粮、守备和关系取舍。" },
     { role: "user", content: [
       name + " · 第 " + (Math.floor(state.turn / 4) + 1) + " 年" + seasons[state.turn % 4] + "季",
       "施政倾向 " + (priorities[faction] ?? "安集新附州郡，稳固地方驻防与钱粮"),
@@ -94,6 +97,13 @@ function makePrompt(world, era, state, faction, plan, accords, political, strate
       ...(diplomacy.length ? ["通商与履约 " + diplomacy.join("、")] : []),
       ...(recentAccords.length ? ["近季外交 " + recentAccords.join(" ")] : []),
       ...(watched.length ? ["本方军情 " + watched.join("、") + "。按区间估算。"] : []),
+      ...(outlook ? ["时令 " + outlook.weather + "，本方军械 " + outlook.equipment,
+        ...outlook.cities.map(({ city, source, age, confidence, troops }) => city + " " + intelLabels[source]
+          + (age === null ? "" : " " + age + " 季前 · " + confidence + "可信 · 驻军 " + troops.join("–"))),
+        ...outlook.politics.map(({ host, status, target, delivered, ownContribution }) =>
+          factionName(era, host) + "召集的" + target + "议约 " + status + "。交纳军粮 " + delivered + "，我方行动 " + ownContribution + " 季。")] : []),
+      ...ballots.map(({ id, target, host, relation, aid, openMarket, border }) => "议约 " + id + " " + factionName(era, host)
+        + "邀请共取" + target + "，信用 " + relation + "，每季粮援 " + aid + (openMarket ? "，互市" : "") + (border ? "，互开边界" : "")),
       ...accords.map(({ to, kind, grain, target }, index) => `外交 T${index} 向${factionName(era, to)}提议${accordKinds[kind]}`
         + (target ? cityName(world, target) : grain ? grain + " 粮" : "")),
       ...political.map(({ id, directive }) => "朝局 " + id + " " + politicalDescription(era, directive)),
@@ -126,8 +136,9 @@ export function createPlanner({
     const accords = accordCandidates(world, era, state, faction);
     const political = politicalChoices(world, era, state, faction);
     const strategy = agendaChoices(world, state, faction);
+    const ballots = voteOptions(world, state, faction);
     try {
-      const output = await client.decide(makePrompt(world, era, state, faction, plan, accords, political, strategy), deadline);
+      const output = await client.decide(makePrompt(world, era, state, faction, plan, accords, political, strategy, ballots), deadline);
       const selected = plan.choices.find(({ id }) => id === output?.choice);
       if (!selected || typeof output?.reason !== "string" || !output.reason.trim()) {
         return { source: "fallback", reason: "模型政令格式无效" };
@@ -135,10 +146,12 @@ export function createPlanner({
       const choice = accords.find((_, index) => output.accord === "T" + index);
       const politics = political.find(({ id }) => id === output.politics);
       const agenda = strategy.find(({ id }) => id === output.agenda);
+      const votes = Object.fromEntries(ballots.flatMap(({ id }) => ["yes", "no"].includes(output.votes?.[id]) ? [[id, output.votes[id]]] : []));
       return { source: "model", goal: selected.goal, order: selected.order,
         ...(choice || output.accord === "" ? { accord: choice ?? null } : {}),
         ...(politics || output.politics === "" ? { politics: politics?.id ?? "" } : {}),
         ...(agenda ? { agenda: agenda.id } : {}),
+        ...(Object.keys(votes).length ? { votes } : {}),
         reason: output.reason.replace(/\s+/g, " ").trim().slice(0, 64) };
     } catch (error) {
       let cause = "模型服务暂不可用";

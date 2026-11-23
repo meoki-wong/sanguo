@@ -1,4 +1,5 @@
 import { isHostile } from "./diplomacy.js";
+import { customObjective } from "./landscape.js";
 
 export const frontierGarrisonTarget = 1800;
 const farmingTarget = 2;
@@ -9,8 +10,15 @@ function objective(title, description, required, rows) {
 }
 
 export function scenarioObjective(world, era, state) {
+  const custom = customObjective(world, state);
+  if (custom) return custom;
   const owned = world.cities.filter(({ key }) => state.cities[key].owner === state.player)
     .map((city) => ({ city, holding: state.cities[city.key] }));
+  if (era.year === 184) return objective("收拢流民", "两座辖城达到 2 级屯田，并结束整顿。", 2,
+    owned.map((row) => ({ ...row, met: !row.holding.occupation && row.holding.farming >= 2 })));
+  if (era.year === 234) return objective("重整前线屯仓", "两座前线辖城城防达到 2 级、屯田达到 1 级。", 2,
+    owned.filter(({ city }) => city.links.some((key) => isHostile(state, state.player, state.cities[key].owner)))
+      .map((row) => ({ ...row, met: !row.holding.occupation && row.holding.defense >= 2 && row.holding.farming >= 1 })));
   if (era.year === 190) return objective("立足一方", "守住两座主城，并把两城的驻军提升到 1,600。", 2,
     owned.map((row) => ({ ...row, met: row.holding.troops >= 1600 && !row.holding.occupation })));
   if (era.year === 219) {

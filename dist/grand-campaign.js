@@ -3,6 +3,7 @@ import { availableAttackers, cityName, cityReserve, eraByYear, expeditionGrain, 
 import { isHostile } from "./diplomacy.js";
 import { realmReserve } from "./realm.js";
 import { bounded } from "./polities-data.js";
+import { travelModes } from "./landscape-terrain.js";
 
 export const wingNames = { main: "主攻", support: "策应", escort: "护粮" };
 export const campaignStatuses = { ready: "待出发", active: "执行中", blocked: "需要指挥", recovering: "接管中", complete: "已完成", paused: "已暂停" };
@@ -15,15 +16,17 @@ export function campaignCandidates(world, state, target) {
   const faction = state.player;
   const reserved = new Set((state.theaters ?? []).flatMap(({ commander, army }) => [commander, army]));
   return world.cities.flatMap(({ key, name }) => {
-    if (state.cities[key].owner !== faction || state.cities[key].occupation || state.cities[key].troops - cityReserve < 200
-      || !marchRoute(world, state, faction, key, target)) return [];
+    if (state.cities[key].owner !== faction || state.cities[key].occupation || state.cities[key].troops - cityReserve < 200) return [];
+    const modes = Object.keys(travelModes).filter((mode) => marchRoute(world, state, faction, key, target, mode));
+    if (!modes.length) return [];
     return availableAttackers(era, state, faction, key).filter(({ key }) => !reserved.has(key))
-      .map((person) => ({ officer: person.key, name: person.name, from: key, city: name, max: state.cities[key].troops - cityReserve }));
+      .map((person) => ({ officer: person.key, name: person.name, from: key, city: name, max: state.cities[key].troops - cityReserve, modes }));
   });
 }
 
 function orderFor(plan, role, unit) {
-  return { type: "mobilize", from: unit.from, to: plan.target, officer: unit.officer, troops: unit.troops, stance: stance[role] };
+  return { type: "mobilize", from: unit.from, to: plan.target, officer: unit.officer, troops: unit.troops, stance: stance[role],
+    ...(unit.travel ? { travel: unit.travel } : {}) };
 }
 
 export function validCampaignShape(state, plan, officers) {
@@ -32,7 +35,8 @@ export function validCampaignShape(state, plan, officers) {
     && (plan.backup === null || Object.hasOwn(state.cities, plan.backup)) && bounded(plan.grain, 12, 150)
     && bounded(plan.floor, 200, 6000) && typeof plan.recover === "boolean" && Object.hasOwn(campaignStatuses, plan.status)
     && plan.wings && plan.wings.main && Object.entries(plan.wings).every(([role, unit]) => Object.hasOwn(wingNames, role)
-      && unit && officers.has(unit.officer) && Object.hasOwn(state.cities, unit.from) && bounded(unit.troops, 200, 30000))
+      && unit && officers.has(unit.officer) && Object.hasOwn(state.cities, unit.from) && bounded(unit.troops, 200, 30000)
+      && (unit.travel === undefined || state.landscape && Object.hasOwn(travelModes, unit.travel)))
     && new Set(Object.values(plan.wings).map(({ officer }) => officer)).size === Object.keys(plan.wings).length
     && (plan.aid === undefined || plan.aid && Object.hasOwn(plan.wings, plan.aid.role) && bounded(plan.aid.troops, 200, 2000))
     && bounded(plan.lost, 0, 3) && (plan.note === null || typeof plan.note === "string" && plan.note.length <= 180);
@@ -59,8 +63,8 @@ export function campaignQuote(world, state, plan) {
       const order = orderFor(plan, role, unit);
       const quote = mobilizationQuote(world, draft, state.player, order);
       const route = role === "escort" ? [unit.from] : quote.route;
-      if (!supplyRoute(world, draft, { faction: state.player, location: unit.from, depot: plan.depot })
-        && !supplyRoute(world, draft, { faction: state.player, location: unit.from, depot: plan.backup })) {
+      if (!supplyRoute(world, draft, { faction: state.player, location: unit.from, depot: plan.depot, travel: unit.travel })
+        && !supplyRoute(world, draft, { faction: state.player, location: unit.from, depot: plan.backup, travel: unit.travel })) {
         return { ready: false, reason: "至少一个编组无法接入指定粮仓。", wings };
       }
       wings.push({ role, ...unit, route, grain: quote.carried, quarters: role === "escort" ? 1 : quote.quarters });
@@ -240,7 +244,7 @@ export function directGrandCampaigns(world, state, runOrder, logistics, entries)
       if (depot !== plan.depot) alternate = true;
       unit.depot = depot;
       if (role !== "escort" && unit.phase === "hold" && !unit.engagement && plan.status === "blocked"
-        && marchRoute(world, state, faction, unit.location, plan.target)) {
+        && marchRoute(world, state, faction, unit.location, plan.target, unit.travel)) {
         redirectArmy(world, state, unit, { type: "march", target: plan.target, depot, stance: stance[role] });
       }
       logistics.set(unit.officer, { limit: () => remaining, charge: (grain) => { remaining -= grain; } });

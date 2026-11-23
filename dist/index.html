@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="./game.css">
   <link rel="stylesheet" href="./command-desk.css">
   <link rel="stylesheet" href="./grand.css">
+  <link rel="stylesheet" href="./landscape.css">
   <link rel="stylesheet" href="./city-command.css">
   <script type="module" src="./app.js"></script>
 </head>
@@ -77,7 +78,8 @@
     <section class="center-column" aria-label="地图和奏报">
       <section class="panel map-panel">
         <div class="map-heading">
-          <div class="section-heading"><h2>天下图</h2><span class="muted" id="city-total"></span></div>
+          <div class="section-heading"><h2>天下图</h2><span class="muted" id="city-total"></span>
+            <button type="button" id="map-weather" class="quiet" aria-haspopup="dialog" hidden></button></div>
           <div class="map-tools" role="group" aria-label="地图视图">
             <button type="button" data-map-layer="cities" aria-pressed="true">城池</button>
             <button type="button" data-map-layer="factions" aria-pressed="false">势力</button>
@@ -112,6 +114,15 @@
             </div>
           </form>
           <p id="map-command-message" role="status" hidden></p>
+        </section>
+        <section id="map-landscape-command" class="map-city-command" aria-labelledby="map-landscape-title" hidden>
+          <header class="map-command-header">
+            <strong id="map-landscape-title"></strong><p class="landscape-brief"></p>
+            <button type="button" class="quiet landscape-back">收起</button>
+          </header>
+          <div class="landscape-fields"></div>
+          <div class="map-command-actions"></div>
+          <p class="landscape-notice" role="status" hidden></p>
         </section>
         <div class="map-footer">
           <label for="city-picker">定位</label>
@@ -251,6 +262,14 @@
     </div>
   </dialog>
 
+  <dialog id="landscape-dialog" aria-labelledby="landscape-title">
+    <div class="dialog-content">
+      <div class="dialog-heading"><h2 id="landscape-title">山河变局</h2>
+        <button type="button" class="quiet" data-close="landscape-dialog">返回地图</button></div>
+      <nav class="landscape-tabs" aria-label="山河变局"></nav>
+      <div id="landscape-body" aria-live="polite"></div>
+    </div>
+  </dialog>
   <dialog id="grand-dialog" aria-labelledby="grand-title">
     <div class="dialog-content">
       <div class="dialog-heading"><h2 id="grand-title">天下大势</h2><button type="button" class="quiet" data-close="grand-dialog">返回</button></div>
@@ -345,6 +364,7 @@
             <label class="grand-field">编组<select id="grand-wing-role"></select></label>
             <label class="grand-field">领军<select id="grand-wing-officer"></select></label>
             <label class="grand-field">派兵<input type="number" id="grand-wing-troops" min="200" max="30000"></label>
+            <label class="grand-field" hidden>水陆<select id="grand-wing-travel"></select></label>
             <p id="grand-wing-hint"></p>
           </section>
           <section id="grand-step-review" class="grand-pane" hidden>
@@ -401,8 +421,9 @@
     <form class="dialog-content" id="custom-opening-form">
       <div class="dialog-heading"><h2 id="custom-opening-title">自定义开局</h2><button type="button" class="quiet" data-close="custom-opening-dialog">返回</button></div>
       <label class="grand-field">剧本名<input id="custom-title" maxlength="24" required></label>
+      <label class="grand-field">已存剧本<select id="custom-library"></select></label>
       <label class="grand-field">调整项目<select id="custom-mode">
-        <option value="cities">城池归属</option><option value="stocks">势力钱粮</option><option value="stations">人物驻地</option>
+        <option value="cities">城池归属</option><option value="stocks">势力钱粮</option><option value="stations">人物驻地</option><option value="rules">难度与关系</option>
       </select></label>
       <section class="grand-fields" id="custom-cities">
         <label>城池<select id="custom-city"></select></label><label>归属<select id="custom-owner"></select></label>
@@ -415,9 +436,15 @@
       <section class="grand-fields" id="custom-stations" hidden>
         <label>人物<select id="custom-person"></select></label><label>驻地<select id="custom-station"></select></label>
       </section>
+      <section class="grand-fields" id="custom-rules" hidden>
+        <label>难度<select id="custom-difficulty"></select></label><label>目标<select id="custom-goal"></select></label>
+        <label>交涉势力<select id="custom-rival"></select></label>
+        <label>初始信用<input type="number" id="custom-credit" min="-30" max="40" step="1"></label>
+      </section>
       <p id="custom-status" class="grand-note" role="status"></p>
       <div class="grand-actions">
         <button type="button" class="quiet" id="custom-reset">重置</button>
+        <button type="button" class="quiet" id="custom-store">保存剧本</button>
         <button type="submit" class="primary">开始自定义战局</button>
       </div>
     </form>
@@ -1511,6 +1538,7 @@
         <button type="button" id="open-theaters">战区</button>
         <button type="button" id="open-war">战役指挥</button>
         <button type="button" id="open-grand-menu">天下大势</button>
+        <button type="button" id="open-landscape-menu">山河变局</button>
         <button type="button" id="open-polity">天下演变</button>
         <button type="button" id="open-realm">天下格局</button>
         <button type="button" id="open-recruitment">招揽人才</button>
