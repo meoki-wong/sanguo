@@ -8,7 +8,7 @@ import { opponentFrontOrder } from "./theaters.js";
 import { militaryView } from "./war-intel.js";
 import { alliedDuty, pactTarget } from "./accords.js";
 import { weatherAllows } from "./landscape-terrain.js";
-import { congressTarget } from "./landscape-treaty.js";
+import { congressDuty, congressTarget } from "./landscape-treaty.js";
 
 function goalDuration(goal) {
   return goal.since < 4 ? 3 : goal.type === "defend" ? 5 : 4;
@@ -125,7 +125,7 @@ function pactAssembly(world, era, state, faction, goal) {
   if (troops < 850 || state.factions[faction].grain < 24 + 2 * expeditionGrain(troops)) return null;
   const duty = alliedDuty(state, faction, target);
   const order = { ...base, type: "mobilize", troops, ...(state.war ? {
-    stance: duty === "diversion" ? "blockade" : duty === "relief" ? "assault" : "siege",
+    stance: duty === "diversion" || congressDuty(state, faction, target) === "screen" ? "blockade" : duty === "relief" ? "assault" : "siege",
   } : {}) };
   const { offense, defense } = forecastAttack(era, state, order, faction);
   if (offense < defense * .6) return null;

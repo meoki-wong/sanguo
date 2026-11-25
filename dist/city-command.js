@@ -14,12 +14,12 @@ import { travelModes, weatherAllows } from "./landscape-terrain.js";
 const number = new Intl.NumberFormat("zh-CN");
 const format = (value) => number.format(value);
 const actionNames = { attack: "出征", transfer: "调兵", build: "建设", recruit: "征兵", appoint: "任命", delegate: "委任",
-  scout: "侦察", convoy: "粮运", policy: "州郡", details: "详情" };
+  scout: "侦察", convoy: "粮运", policy: "州郡", province: "州郡委任", battle: "会战", strategic: "战区", details: "详情" };
 const roles = { governor: "太守", commander: "守将", station: "调驻" };
 const governance = { direct: "收回委任", auto: "自主发展", farming: "屯田", commerce: "商贸", defense: "城防", recruit: "征兵" };
 const methods = { attack: "本季直接进攻", assault: "军团强攻", siege: "军团围困", blockade: "军团封锁" };
 
-export function createCityCommand(world, { snapshot, commit, showDetails, redraw, showCities, openLandscape }) {
+export function createCityCommand(world, { snapshot, commit, showDetails, redraw, showCities, openLandscape, openBattle, openProvince, strategyAt, openStrategy }) {
   const get = (id) => document.getElementById("map-command-" + id);
   const root = document.getElementById("map-city-command");
   const panel = root.closest(".map-panel");
@@ -114,8 +114,10 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
     const { state } = snapshot();
     const own = state.cities[city].owner === state.player;
     const choices = gameOutcome(state) !== "ongoing" ? [] : own
-      ? ["attack", "transfer", "build", "recruit", "appoint", "delegate", ...(state.landscape ? ["convoy", "policy"] : [])]
+      ? ["attack", "transfer", "build", "recruit", "appoint", "delegate", ...(state.landscape ? ["convoy", state.century ? "province" : "policy"] : [])]
       : ["attack", ...(state.war ? ["scout"] : [])];
+    if (state.frontline && gameOutcome(state) === "ongoing") choices.push("battle");
+    if (strategyAt?.(city)) choices.unshift("strategic");
     actions.replaceChildren(...[...choices, "details"].map((key) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -195,6 +197,24 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
 
   function start(key) {
     const { state } = snapshot();
+    if (key === "province") {
+      const target = city;
+      close();
+      openProvince(target);
+      return;
+    }
+    if (key === "strategic") {
+      const front = strategyAt(city);
+      close();
+      if (front) openStrategy(front.id);
+      return;
+    }
+    if (key === "battle") {
+      const objective = city;
+      close();
+      openBattle(objective);
+      return;
+    }
     if (key === "details") {
       const current = city;
       close();

@@ -4,6 +4,7 @@ import { provincePolicies, settlementKinds, territoryAt } from "./polities-data.
 import { answerEdict, currentEdict, enablePolity, peaceCriteria } from "./polity.js";
 import { courtBacking, courtCandidates, courtFor, provincialBudget, provinceRows, saveProvincePolicy, saveSuccession } from "./polity-governance.js";
 import { cancelSettlement, proposeSettlement, respondSettlement, settlementDraft, settlementTerms } from "./polity-settlements.js";
+import { strategicPost } from "./sandtable-posts.js";
 
 export function createPolityPanel(world, { snapshot, commit, locate, conclude, seasonTitle }) {
   const find = (id) => document.getElementById("polity-" + id);
@@ -252,6 +253,19 @@ export function createPolityPanel(world, { snapshot, commit, locate, conclude, s
       ctx.arc(x, y, (key === places ? 3.5 : 1.4) / scale, 0, Math.PI * 2);
       ctx.fill();
     });
+    for (const historical of state.sandtable?.journal.find((item) => item.turn === turn)?.posts ?? []) {
+      const post = strategicPost(historical.key);
+      if (!post) continue;
+      const [a, b] = [post.seat, post.to].map((key) => world.cities.find((entry) => entry.key === key).position);
+      const size = 4 / scale;
+      const x = (a[0] + b[0] - size) / 2;
+      const y = (a[1] + b[1] - size) / 2;
+      ctx.fillStyle = forceColor(historical.owner);
+      ctx.strokeStyle = historical.closed ? "#ffe3a4" : "#332b22";
+      ctx.lineWidth = 1 / scale;
+      ctx.fillRect(x, y, size, size);
+      ctx.strokeRect(x, y, size, size);
+    }
     const counts = {};
     for (const owner of Object.values(owners)) counts[owner] = (counts[owner] ?? 0) + 1;
     canvas.setAttribute("aria-label", find("quarter-title").textContent + " · " + Object.entries(counts)

@@ -32,6 +32,23 @@ import { createLandscapeMap } from "./landscape-map.js";
 import { createLandscapeDesk } from "./landscape-desk.js";
 import { enableLandscape } from "./landscape.js";
 import { enableGrand } from "./grand.js";
+import { createStatecraftDesk } from "./statecraft-desk.js";
+import { enableStatecraft } from "./statecraft.js";
+import { createSandtableDesk } from "./sandtable-desk.js";
+import { enableSandtable, interruption } from "./sandtable.js";
+import { createFrontlineDesk } from "./frontline-desk.js";
+import { enableFrontline, visibleBattles } from "./frontline.js";
+import { createHighCommandDesk } from "./high-command-desk.js";
+import { enableHighCommand, urgentCommands } from "./high-command.js";
+import { dynastyNotices, enableDynasty } from "./dynasty.js";
+import { createDynastyDesk } from "./dynasty-desk.js";
+import { enableStrategy9, strategicAlerts9, strategicFronts9 } from "./strategy-nine.js";
+import { createStrategyDesk } from "./strategy-desk.js";
+import { beginStewardship, enableReign, reignAlerts, reignFrame, resolveReignAlert } from "./reign.js";
+import { createReignDesk } from "./reign-desk.js";
+import { enableCentury, openCases15, reopenChapter15 } from "./century.js";
+import { centuryPendingCount, createCenturyDesk } from "./century-desk.js";
+import { orderMarketRelief } from "./reign-economy.js";
 import { readTurnResponse, turnStreamType } from "./turn-stream.js";
 import { frontierAttackOpportunities, frontierCities, frontierDefensePressure, frontierGarrisons, frontierIntel,
   planFrontierExpeditions, planFrontierReinforcements } from "./frontier.js";
@@ -53,9 +70,11 @@ const zoneLabels = { front: "前线", rear: "后方" };
 const reinforcementBlockers = { queue: "政令队列已满", grain: "储粮不足以调兵", donor: "暂无可调援军", planned: "本案已为该城拟令" };
 const defensePressureLabels = { treaty: "协定保护", interior: "无相邻敌方", unavailable: "邻敌无法出征" };
 const autoSlot = "jinglue-sanguo:auto:v1";
+const preCenturySlot = "jinglue-sanguo:before-century";
 const manualSlot = "jinglue-sanguo:manual:v1";
 const manualSlots = [manualSlot, "jinglue-sanguo:manual-2:v1", "jinglue-sanguo:manual-3:v1"];
 const opponentModeSlot = "jinglue-sanguo:opponents:v1";
+const cloudModelSlot = "jinglue-sanguo:cloud-model:v1";
 const sources = { model: "模型", rules: "规则", fallback: "规则接管" };
 const progressLabels = { pending: "待处理", model: "已拟定", fallback: sources.fallback };
 const modelOperationLabels = { models: "正在读取模型列表…", test: "正在测试连接…", settings: "正在保存模型设置…" };
@@ -83,11 +102,27 @@ let openingEditor;
 let cityCommand;
 let landscapeMap;
 let landscapeDesk;
+let statecraftDesk;
+let sandtableDesk;
+let frontlineDesk;
+let highCommandDesk;
+let dynastyDesk;
+let strategyDesk;
+let reignDesk;
+let centuryDesk;
+let lastAutoSave;
+let requestingTurn = false;
+let lastTurnClick = -1000;
+let reignLens;
+let dynastyMap = false;
+let dynastyFrame;
+let advancingYear = false;
 let reviewPane = "realm";
 let deciding = false;
 let turnProgress;
 let modelReady = false;
 let savedModel = {};
+let cloudModel;
 let editingModel = false;
 let stagedBackup;
 let stagedOverwrite;
@@ -206,7 +241,9 @@ function readSave(key) {
 }
 
 function writeSave(key) {
-  localStorage.setItem(key, JSON.stringify({ state, selected }));
+  const record = JSON.stringify({ state, selected });
+  localStorage.setItem(key, record);
+  if (key === autoSlot) lastAutoSave = record;
 }
 
 function describeSave(snapshot) {
@@ -591,7 +628,7 @@ function renderCampaignPreview() {
   const year = Number(find("era-select").value);
   const player = find("force-select").value;
   const scenario = eraByYear(world, year);
-  const opening = createGame(world, year, player, { landscape: true });
+  const opening = createGame(world, year, player, { century: true });
   campaignOpening = opening;
   pages["campaign-cities"] = pages["campaign-roster"] = 0;
   const { cities, troops } = forceTotals(opening, player);
@@ -641,7 +678,8 @@ function renderCampaignDetails() {
   const rows = pageOf(matching, "campaign-roster", size, renderCampaignDetails).map(({ person, stationName }) => {
     const row = make("li");
     row.dataset.officer = person.key;
-    row.append(make("strong", person.name), make("span", stationName || "无驻地", "muted"),
+    const army = armyByOfficer(opening, person.key);
+    row.append(make("strong", person.name), make("span", army ? "军团 · " + cityName(world, army.location) : stationName || "无驻地", "muted"),
       make("span", "统率 " + person.command + " · 政务 " + person.governance));
     return row;
   });
@@ -1123,11 +1161,13 @@ function battleReportButton(entry, turn, origin = "chronicle") {
 function appendReportActions(detail, entry, turn) {
   const locate = reportLocateButton(entry.city);
   const battle = battleReportButton(entry, turn);
+  const replay = entry.battleId && visibleBattles(state).find(({ id }) => id === entry.battleId);
+  const dispatch = entry.campaign && state.highCommand?.campaigns.find(({ id, side }) => id === entry.campaign && side === state.player);
   const council = entry.type === "event" || entry.type === "milestone";
   const currentArmy = entry.armyOfficer && armyByOfficer(state, entry.armyOfficer);
   const army = currentArmy && currentArmy.assembledAt === entry.assembledAt ? currentArmy : null;
   const theater = entry.theater && state.theaters?.find(({ id }) => id === entry.theater);
-  if (!locate && !battle && !entry.personnelChange && !council && !army && !theater) return;
+  if (!locate && !battle && !replay && !dispatch && !entry.personnelChange && !council && !army && !theater) return;
   const actions = make("div", undefined, "report-actions");
   if (council) {
     const open = make("button", "查看", "quiet");
@@ -1152,6 +1192,25 @@ function appendReportActions(detail, entry, turn) {
     actions.append(open);
   }
   if (battle) actions.append(battle);
+  if (dispatch) {
+    const open = make("button", "军议处置", "quiet");
+    open.type = "button";
+    open.onclick = () => {
+      find("chronicle").close();
+      highCommandDesk.open(undefined, dispatch.id);
+    };
+    actions.append(open);
+  }
+  if (replay) {
+    const open = make("button", "回看会战", "quiet");
+    open.type = "button";
+    open.addEventListener("click", () => {
+      find("chronicle").close();
+      find("opponent-brief-dialog").close();
+      frontlineDesk.open("replay", replay.id);
+    });
+    actions.append(open);
+  }
   if (entry.personnelChange) actions.append(officerLink(entry.personnelChange.officer, "chronicle", "档案"));
   if (canInspectOccupation(state, entry)) {
     const occupation = make("button", "整顿", "quiet");
@@ -2617,9 +2676,10 @@ function showFinanceRows(ledger) {
   const amount = (number, signed, negative = false) => number
     ? (negative ? "−" : signed ? "+" : "") + formatted.format(number)
     : "0";
-  const { opening, tax, trade, gifts, orders, delegation, closing, armyReturns, realm, politics, grand } = ledger;
-  const incoming = (key) => (politics?.in[key] ?? 0) + (grand?.in[key] ?? 0);
-  const outgoing = (key) => (politics?.budget[key] ?? 0) + (politics?.out[key] ?? 0) + (grand?.budget[key] ?? 0) + (grand?.out[key] ?? 0);
+  const { opening, tax, trade, gifts, orders, delegation, closing, armyReturns, realm, politics, grand, landscape, statecraft, sandtable, dynasty, reign, century } = ledger;
+  const accounts = [politics, grand, landscape, statecraft, sandtable, dynasty, reign, century];
+  const incoming = (key) => accounts.reduce((total, account) => total + (account?.in[key] ?? 0), 0);
+  const outgoing = (key) => accounts.reduce((total, account) => total + (account?.budget[key] ?? 0) + (account?.out[key] ?? 0), 0);
   const rows = [
     ["期初结存", opening, false],
     [incoming("treasury") || incoming("grain") ? "税粮、援粮及交割" : realm?.aidIn ? "税粮及援粮" : armyReturns ? "税粮及随军归粮" : "城池税粮",
@@ -3028,7 +3088,7 @@ function confirmBudgetTopUp() {
 }
 
 function locateOnMap(key, dialog) {
-  find(dialog).close();
+  if (dialog) find(dialog).close();
   if (dialog === "stage-detail-dialog") closeStageParents();
   if (dialog === "chronicle") find("opponent-brief-dialog").close();
   if (dialog === "garrisons-dialog") find("holdings-dialog").close();
@@ -3437,7 +3497,7 @@ function openJointPlan(draft) {
 }
 
 function renderMap() {
-  const command = cityCommand?.overlay() ?? landscapeMap?.overlay();
+  const command = statecraftDesk?.overlay() ?? cityCommand?.overlay() ?? landscapeMap?.overlay();
   if (command) {
     map.show(state, selected, command.to, command.type, command.route, command);
     return;
@@ -3692,6 +3752,33 @@ function render() {
   cityCommand?.sync();
   landscapeMap?.sync();
   if (find("landscape-dialog").open) landscapeDesk?.render();
+  if (find("statecraft-dialog").open) statecraftDesk?.render();
+  if (find("sandtable-dialog").open) sandtableDesk?.render();
+  frontlineDesk?.render();
+  highCommandDesk?.render();
+  dynastyDesk?.render();
+  strategyDesk?.render();
+  reignDesk?.render();
+  document.body.toggleAttribute("data-century", Boolean(state.century));
+  const pending = find("century-pending");
+  pending.hidden = !state.century;
+  if (state.century) {
+    const count = centuryPendingCount(state);
+    pending.textContent = count ? "待决 " + count : "待决";
+    pending.dataset.urgent = String(Boolean(count));
+  }
+  centuryDesk?.render();
+  find("open-sandtable-map").hidden = !state.sandtable;
+  find("open-frontline-map").hidden = !state.frontline;
+  if (state.frontline) {
+    const button = find("open-frontline-map");
+    const urgent = reignAlerts(state).length + strategicAlerts9(state).length + dynastyNotices(state).length + urgentCommands(state).length;
+    const title = state.century ? "全国国策" : state.reign ? "王朝政务" : state.strategy9 ? "全国方略" : state.dynasty ? "天下经略" : state.highCommand ? "全国军议" : "会战指挥";
+    button.textContent = title + (!state.century && urgent ? " · " + urgent : "");
+    button.dataset.urgent = String(urgent > 0);
+  }
+  find("open-frontline-menu").textContent = "国势与战局";
+  statecraftDesk?.syncMap();
   const weather = find("map-weather");
   weather.hidden = !state.landscape;
   if (state.landscape) {
@@ -3701,7 +3788,7 @@ function render() {
     weather.dataset.season = season.key;
   }
   const roadTab = document.querySelector('[data-map-layer="roads"]');
-  roadTab.textContent = state.landscape ? "关隘粮道" : "军路";
+  roadTab.textContent = state.sandtable ? "据点粮道" : state.landscape ? "关隘粮道" : "军路";
   renderMap();
 }
 
@@ -3732,7 +3819,21 @@ function selectMapCity(key, locate = false) {
 }
 
 function clickMapCity(key) {
-  if (cityCommand?.pick(key) || landscapeMap?.pick(key)) return;
+  if (dynastyFrame) return;
+  if (reignLens && state.cities[key].owner === state.player) {
+    if (reignLens === "economy") { reignDesk.open("markets", key); return; }
+    if (reignLens === "regions") {
+      const region = world.cities.find((city) => city.key === key).region;
+      if (state.century) centuryDesk.open("local", region);
+      else reignDesk.open("staff", region);
+      return;
+    }
+  }
+  if (dynastyMap && state.dynasty && state.cities[key].owner === state.player) {
+    dynastyDesk.open("supply", key);
+    return;
+  }
+  if (statecraftDesk?.pick(key) || cityCommand?.pick(key) || landscapeMap?.pick(key)) return;
   landscapeMap?.close();
   selectMapCity(key);
   cityCommand?.open(key);
@@ -3754,6 +3855,11 @@ function selectTab(id, focus = false) {
 function replaceGame(next, city) {
   cityCommand?.close();
   landscapeMap?.close();
+  strategyDesk?.close();
+  reignDesk?.close();
+  centuryDesk?.close();
+  centuryDesk?.reset();
+  statecraftDesk?.reset();
   closeGameGuideMenus();
   for (const key of Object.keys(pages)) pages[key] = 0;
   garrisonTarget = frontierGarrisonTarget;
@@ -3762,6 +3868,9 @@ function replaceGame(next, city) {
   find("roster-filter").value = "all";
   find("roster-sort").value = "governance";
   state = next;
+  try { lastAutoSave = localStorage.getItem(autoSlot); } catch { lastAutoSave = undefined; }
+  toggleReignMap(null);
+  toggleDynastyMap(false);
   selected = city || firstCity(world, state);
   attackDraft = {};
   transferDraft = {};
@@ -3792,6 +3901,15 @@ async function discoverModel() {
     if (!response.ok) return;
     const status = await response.json();
     if (savedModel !== before) return;
+    if (status.sessionScoped) {
+      try {
+        const config = JSON.parse(sessionStorage.getItem(cloudModelSlot));
+        if (typeof config?.baseUrl === "string" && typeof config.model === "string" && typeof config.apiKey === "string") {
+          cloudModel = config;
+          Object.assign(status, { ready: true, baseUrl: config.baseUrl, model: config.model, hasKey: Boolean(config.apiKey) });
+        }
+      } catch { /* Storage can be disabled. */ }
+    }
     let preference;
     try { preference = localStorage.getItem(opponentModeSlot); } catch { /* game remains playable */ }
     showModelStatus(status, preference);
@@ -3838,6 +3956,7 @@ async function submitModelSettings(operation) {
   const modelInfo = {
     baseUrl: find("model-base-url").value, apiKey: find("model-api-key").value, model: model.value,
   };
+  if (!modelInfo.apiKey.trim() && cloudModel?.baseUrl === modelInfo.baseUrl.trim()) modelInfo.apiKey = cloudModel.apiKey;
   for (const id of fields) find(id).disabled = true;
   modelMessage(modelOperationLabels[operation]);
   try {
@@ -3865,6 +3984,10 @@ async function submitModelSettings(operation) {
       modelMessage(count ? "已读取 " + count + " 个模型。可在模型 ID 中选择。" : "服务未列出模型，请手动填写模型 ID。");
       return;
     }
+    if (result.sessionScoped) {
+      cloudModel = { baseUrl: result.baseUrl, model: result.model, apiKey: modelInfo.apiKey.trim() };
+      try { sessionStorage.setItem(cloudModelSlot, JSON.stringify(cloudModel)); } catch { /* Use it until this page closes. */ }
+    }
     showModelStatus({ ...savedModel, ...result }, "model");
     try { localStorage.setItem(opponentModeSlot, "model"); } catch { /* optional preference */ }
     find("model-settings").close();
@@ -3888,6 +4011,7 @@ function setDeciding(value) {
   find("opponent-mode").disabled = value;
   find("open-menu").disabled = value;
   find("open-advice").disabled = value;
+  find("century-pending").disabled = value;
   find("open-chronicle").disabled = value;
   for (const button of document.querySelectorAll("[data-command-action], #turn-orders")) button.disabled = value;
   renderResources();
@@ -3913,9 +4037,11 @@ function openOutcome() {
   const peace = state.scenarioEnding?.kind === "peace";
   const ending = state.scenarioEnding && (coalition ? coalitionCriteria(world, era(), state) : peace
     ? peaceCriteria(world, state) : scenarioEndingCriteria(world, state));
-  find("outcome-title").textContent = ending ? ending.title : { ongoing: "剧本目标", victory: "统一天下", defeat: "势力覆灭" }[result];
+  const fulfilled = Boolean(state.reign?.stewardship?.finished && result === "victory");
+  find("outcome-title").textContent = state.century?.concluded ? "本章结卷" : fulfilled ? "守成篇结卷" : ending ? ending.title : { ongoing: "剧本目标", victory: "统一天下", defeat: "势力覆灭" }[result];
   find("outcome-campaign").textContent = state.year + " 年 · " + era().title + " · " + factionName(era(), state.player);
-  find("outcome-summary").textContent = coalition ? "已达成联盟结局。复盘可查看盟友疆域和人才履历。"
+  find("outcome-summary").textContent = state.century?.concluded ? "这一章的疆域、任命与条约已记入纪事，可由原局继续下一章。"
+    : fulfilled ? "完成交班、裁撤战时征发，并连续六季维持国家运转。" : coalition ? "已达成联盟结局。复盘可查看盟友疆域和人才履历。"
     : peace ? "已达成天下承平。复盘可查看国政、疆域及人物履历。"
     : ending ? "已达成本剧本的战役结局。可回顾疆域、战役和人物履历。" : {
     ongoing: "占领全部主城即可获胜，失去全部城池则战败。",
@@ -3936,6 +4062,8 @@ function openOutcome() {
     find("stage-progress").dataset.completed = String(completed);
   }
   find("outcome-restart").hidden = result === "ongoing";
+  find("outcome-stewardship").hidden = result !== "victory" || !state.reign || !state.century && Boolean(state.reign.stewardship);
+  find("outcome-stewardship").textContent = state.century ? "继续下一章" : "进入守成篇";
   find("open-ending-record").textContent = result === "ongoing" ? "战役结局" : "战役复盘";
   find("outcome-dialog").showModal();
 }
@@ -4232,7 +4360,14 @@ function settleTurn(operation, status) {
     landscapeMap?.close();
   }
   mutate(operation, status);
+  if (dynastyFrame) toggleDynastyMap(false);
   if (gameOutcome(state) !== "ongoing") openOutcome();
+  else if (reignAlerts(state).some(({ turn }) => turn === state.turn)) notify("王朝政务收到新的待决奏报。");
+  else if (strategicAlerts9(state).some(({ turn }) => turn === state.turn)) notify("全国方略收到新的战区或年度急报。");
+  else if (dynastyNotices(state).some(({ turn }) => turn === state.turn)) notify("天下经略收到新急报。");
+  else if (urgentCommands(state).some(({ alert }) => alert.turn === state.turn - 1)) notify("有新的战役急报。可从地图「全国军议」处理。");
+  else if (visibleBattles(state)[0]?.turn === state.turn - 1) notify(state.highCommand ? "本季有会战结果，可从「全国军议」回看。"
+    : "本季有会战结果，可从地图「会战指挥 → 战报回看」查看。");
   else if (state.history.at(-1)?.entries.some((entry) => entry.type === "war"
     && (entry.faction === state.player || entry.participants?.includes(state.player)) && ["isolated", "relieved", "withdraw-blocked", "strained"].includes(entry.event))) {
     notify("有战役待决，可从「奏报」打开对应军团或战区。");
@@ -4246,8 +4381,36 @@ function settleTurn(operation, status) {
   else if (state.realm?.proposals.some((item) => item.to === state.player && item.submitted === state.turn)) notify("有新的通商或合兵提案，可从「天下格局 → 外交」答复。");
 }
 
-async function takeTurn() {
-  if (deciding || find("advance").disabled) return;
+function saveChangedInAnotherTab() {
+  try { return lastAutoSave !== undefined && localStorage.getItem(autoSlot) !== lastAutoSave; }
+  catch { return false; }
+}
+
+async function takeTurn(batch) {
+  if (!state.century) return resolveTurn(batch);
+  if (requestingTurn || batch !== true && performance.now() - lastTurnClick < 500) return;
+  requestingTurn = true;
+  if (batch !== true) lastTurnClick = performance.now();
+  const settle = async () => {
+    if (saveChangedInAnotherTab()) {
+      notify("另一页已更新战局。请重新载入当前进度后再推进。", true);
+      return;
+    }
+    await resolveTurn(batch);
+  };
+  try {
+    if (!navigator.locks) await settle();
+    else await navigator.locks.request("jinglue-sanguo:turn", { ifAvailable: true }, async (lock) => {
+      if (lock) await settle();
+      else notify("另一页正在结算，请稍候。");
+    });
+  } finally {
+    requestingTurn = false;
+  }
+}
+
+async function resolveTurn(batch) {
+  if (deciding || find("advance").disabled || advancingYear && batch !== true) return;
   const opponents = activeOpponents();
   if (!modelReady || find("opponent-mode").value !== "model" || !opponents.length) {
     settleTurn(() => advanceQuarter(world, state), "本季已结算，摘要见奏报。");
@@ -4260,8 +4423,20 @@ async function takeTurn() {
   let next;
   let status = "本季已结算，摘要见奏报。";
   const serviceVersion = savedModel.turnVersion;
-  const legacy = serviceVersion !== turnVersion && (serviceVersion !== 26 || state.landscape);
+  const compatible = serviceVersion === turnVersion || serviceVersion === 34 && !state.century || serviceVersion === 33 && !state.reign || serviceVersion === 32 && !state.strategy9 || serviceVersion === 31 && !state.dynasty
+    || serviceVersion === 30 && !state.highCommand || serviceVersion === 29 && !state.frontline
+    || serviceVersion === 28 && !state.sandtable || serviceVersion === 27 && !state.statecraft
+    || serviceVersion === 26 && !state.landscape;
+  const legacy = !compatible;
   try {
+    if (legacy && state.century) throw new Error("山河百年需要 15.0 模型服务。");
+    if (legacy && state.reign) throw new Error("王朝兴替需要 10.0 模型服务。");
+    if (legacy && state.strategy9) throw new Error("诸侯争衡需要 9.0 模型服务。");
+    if (legacy && state.dynasty) throw new Error("天下秩序需要 8.0 模型服务。");
+    if (legacy && state.highCommand) throw new Error("全国军议需要 7.0 模型服务。");
+    if (legacy && state.frontline) throw new Error("山河会战需要 6.0 模型服务。");
+    if (legacy && state.sandtable) throw new Error("天下沙盘需要 5.0 模型服务。");
+    if (legacy && state.statecraft) throw new Error("战线与天下需要 4.0 模型服务。");
     if (legacy && state.landscape) throw new Error("山河变局需要 3.0 模型服务。");
     if (!(serviceVersion >= 26) && state.grand) throw new Error("天下大势需要 2.0 模型服务。");
     if (!(serviceVersion >= 27) && [184, 234].includes(state.year)) throw new Error("旧版服务尚未加载此剧本。");
@@ -4273,7 +4448,7 @@ async function takeTurn() {
     const response = await fetch("/api/turn", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: turnStreamType + ", application/json" },
-      body: JSON.stringify({ state: requestState }),
+      body: JSON.stringify({ state: requestState, ...(savedModel.sessionScoped && cloudModel ? { modelConfig: cloudModel } : {}) }),
       signal: AbortSignal.timeout(80_000),
     });
     if (!response.ok) throw new Error("模型结算暂不可用");
@@ -4295,7 +4470,32 @@ async function takeTurn() {
     turnProgress = undefined;
     setDeciding(false);
   }
+  if (snapshot.century && (state !== snapshot || saveChangedInAnotherTab())) {
+    notify("战局已在另一处更新，本次结算未覆盖存档。", true);
+    return;
+  }
   settleTurn(() => next, status);
+}
+
+async function takeYear() {
+  if (!state.sandtable || advancingYear || deciding) return;
+  advancingYear = true;
+  try {
+    for (let step = 0; step < 4; step++) {
+      const before = state;
+      await takeTurn(true);
+      if (state.turn !== before.turn + 1 || state.player !== before.player || state.year !== before.year) return;
+      const crisis = openCases15(state).find(({ turn, urgent }) => turn === state.turn && urgent);
+      if (crisis) { notify("连续推进已停。 " + crisis.text); return; }
+      const urgent = [...reignAlerts(state), ...strategicAlerts9(state), ...dynastyNotices(state)].find(({ turn }) => turn === state.turn);
+      if (urgent) { notify("连续推进已停。 " + urgent.text); return; }
+      const reason = interruption(before, state);
+      if (reason) { notify("连续推进已停。 " + reason); return; }
+    }
+    notify("四季已结算，详情见奏报。");
+  } finally {
+    advancingYear = false;
+  }
 }
 
 function openCampaign() {
@@ -4304,6 +4504,49 @@ function openCampaign() {
   find("campaign-roster-sort").value = "command";
   renderCampaignPreview();
   find("campaign-dialog").showModal();
+}
+
+function toggleDynastyMap(enabled, frame, key) {
+  if (enabled && reignLens) toggleReignMap(null);
+  dynastyMap = enabled;
+  dynastyFrame = frame;
+  if (enabled) {
+    cityCommand?.close();
+    landscapeMap?.close();
+    showView("map");
+    selectTab("governance");
+    map.setLayer("cities");
+    if (key) map.locate(key);
+  }
+  map?.dynastyView(enabled, frame);
+  const exit = find("dynasty-map-return");
+  exit.hidden = !enabled;
+  exit.textContent = frame ? "退出回看" : "退出粮运图";
+  exit.dataset.replay = String(Boolean(frame));
+  if (enabled) document.querySelector(".map-hint").textContent = frame
+    ? seasonTitle(frame.turn - 1) + " · 纪事回看" : "点本方城池查粮运 · 朱红为中断或受灾";
+  else document.querySelector(".map-hint").textContent = "滚轮缩放 · 拖动地图";
+}
+
+function toggleReignMap(mode, impact = [], key) {
+  reignLens = mode;
+  const tools = find("reign-map-tools");
+  tools.hidden = !mode;
+  if (mode) {
+    toggleDynastyMap(false);
+    cityCommand?.close();
+    landscapeMap?.close();
+    showView("map");
+    find("reign-map-lens").value = mode;
+    map.setLayer(mode === "diplomacy" ? "factions" : "cities");
+    if (key) map.locate(key);
+    document.querySelector(".map-hint").textContent = {
+      economy: impact.length ? "国策预演 · 红色为库存减少" : "点城看民仓 · 赭红为缺粮与阻塞",
+      regions: "点城看州郡主官、授权和事权",
+      diplomacy: "绿色连线为履约中的盟约集团", war: "查看真实军团、关隘和战区",
+    }[mode];
+  } else document.querySelector(".map-hint").textContent = "滚轮缩放 · 拖动地图";
+  map?.setReignMap(mode, impact);
 }
 
 function wireControls() {
@@ -4318,6 +4561,32 @@ function wireControls() {
   find("open-grand-shortcut").addEventListener("click", () => state.landscape ? landscapeDesk.open("summary") : grandPanel.open());
   find("map-weather").addEventListener("click", () => landscapeDesk.open("summary"));
   find("open-landscape-menu").addEventListener("click", () => { find("menu-dialog").close(); landscapeDesk.open(); });
+  find("open-statecraft-menu").addEventListener("click", () => { find("menu-dialog").close(); statecraftDesk.open(); });
+  find("open-sandtable-menu").addEventListener("click", () => { find("menu-dialog").close(); sandtableDesk.open(); });
+  find("open-frontline-menu").addEventListener("click", () => { find("menu-dialog").close(); highCommandDesk.open(); });
+  find("open-dynasty-menu").addEventListener("click", () => { find("menu-dialog").close(); dynastyDesk.open(); });
+  find("open-strategy-nine-menu").addEventListener("click", () => { find("menu-dialog").close(); strategyDesk.open(); });
+  find("open-reign-menu").addEventListener("click", () => { find("menu-dialog").close(); reignDesk.open(); });
+  find("century-pending").addEventListener("click", () => centuryDesk.open("pending"));
+  find("open-century-menu").addEventListener("click", () => { find("menu-dialog").close(); centuryDesk.open(); });
+  find("download-century-backup").addEventListener("click", () => {
+    try {
+      const backup = readSave(preCenturySlot);
+      if (backup) downloadSave(backup);
+    } catch (error) { notify(error.message, true); }
+  });
+  find("reign-map-lens").addEventListener("change", (event) => toggleReignMap(event.target.value));
+  find("reign-map-close").addEventListener("click", () => toggleReignMap(null));
+  find("outcome-stewardship").addEventListener("click", () => {
+    find("outcome-dialog").close();
+    mutate(() => state.century ? reopenChapter15(world, state) : beginStewardship(world, state), "新章开始，先安排交班及战时体制调整。");
+    if (state.century) centuryDesk.open("court");
+    else reignDesk.open();
+  });
+  find("open-frontline-map").addEventListener("click", () => state.century ? centuryDesk.open("policy") : state.reign ? reignDesk.open() : state.strategy9 ? strategyDesk.open() : state.dynasty ? dynastyDesk.open()
+    : state.highCommand ? highCommandDesk.open() : frontlineDesk.open());
+  find("dynasty-map-return").addEventListener("click", () => toggleDynastyMap(false));
+  find("open-sandtable-map").addEventListener("click", () => sandtableDesk.open());
   find("open-grand-menu").addEventListener("click", () => { find("menu-dialog").close(); grandPanel.open(); });
   find("open-custom-opening").addEventListener("click", () =>
     openingEditor.open(eraByYear(world, Number(find("era-select").value)), find("force-select").value));
@@ -4431,7 +4700,11 @@ function wireControls() {
     }
   });
 
-  find("open-menu").addEventListener("click", () => find("menu-dialog").showModal());
+  find("open-menu").addEventListener("click", () => {
+    try { find("download-century-backup").hidden = !localStorage.getItem(preCenturySlot); }
+    catch { find("download-century-backup").hidden = true; }
+    find("menu-dialog").showModal();
+  });
   find("open-game-guide").addEventListener("click", openGameGuide);
   find("guide-open-campaign").addEventListener("click", openCampaign);
   find("guide-open-model").addEventListener("click", openModelSettings);
@@ -5057,12 +5330,16 @@ async function start() {
   world = enrichWorld(oldWorld);
   if (world.cities.length !== 42) throw new Error("地图数据需要包含 42 座主城。");
   try {
+    lastAutoSave = localStorage.getItem(autoSlot);
     const saved = readSave(autoSlot);
-    if (saved) ({ state, selected } = saved);
+    if (saved) {
+      ({ state, selected } = saved);
+      lastAutoSave = localStorage.getItem(autoSlot);
+    }
   } catch (error) {
     notify("自动存档无法读取，已载入初始剧本。 " + error.message, true);
   }
-  state ??= createGame(world, 199, "cao", { landscape: true });
+  state ??= createGame(world, 199, "cao", { century: true });
   selected ??= state.year === 199 && state.player === "cao" ? "luoyang" : firstCity(world, state);
   find("boot").hidden = true;
   find("workspace").hidden = false;
@@ -5141,11 +5418,115 @@ async function start() {
     for (const button of document.querySelectorAll("[data-map-layer]")) {
       button.setAttribute("aria-pressed", String(button.dataset.mapLayer === layer));
     }
-    document.querySelector(".map-hint").textContent = layer === "roads"
+    if (!dynastyMap && !reignLens) document.querySelector(".map-hint").textContent = layer === "roads"
       ? state.landscape ? "点关隘或粮道 · 红线为阻断" : "金色粮路 · 红色封控 · 方标粮仓" : "滚轮缩放 · 拖动地图";
-  }, (officer) => state.landscape ? openLandscapeMap("army", officer) : armyPanel.open(officer),
+  }, (officer) => state.frontline ? frontlineDesk.open("formation", officer) : state.landscape ? openLandscapeMap("army", officer) : armyPanel.open(officer),
   (id) => theaterPanel.open(id), (key) => state.landscape ? openLandscapeMap("gate", key) : grandPanel.open("road", key),
-  (route) => openLandscapeMap("convoy", route));
+  (route) => openLandscapeMap("convoy", route), (id) => openStatecraft("fronts", id), (key) => sandtableDesk.open("post", key),
+  (id) => {
+    const row = strategicFronts9(state).find(({ campaign }) => campaign === id);
+    if (row) strategyDesk.open("fronts", row.id);
+    else highCommandDesk.open(undefined, id);
+  }, (key) => dynastyDesk.open("supply", key));
+  frontlineDesk = createFrontlineDesk(world, {
+    snapshot: () => ({ state, era: era() }),
+    commit: (next, message) => mutate(() => next, message),
+    upgrade: (current) => enableFrontline(enableSandtable(current.statecraft ? current : enableStatecraft(current.landscape ? current
+      : enableLandscape(world, current.grand ? current : enableGrand(world, current))))),
+    armyDetails: (officer) => { frontlineDesk.close(); openLandscapeMap("army", officer); },
+    locate: (key) => locateOnMap(key, "frontline-dialog"),
+    advance: () => { frontlineDesk.close(); find("advance").click(); },
+  });
+  highCommandDesk = createHighCommandDesk(world, {
+    snapshot: () => ({ state, era: era() }),
+    commit: (next, message) => mutate(() => next, message),
+    upgrade: (current) => enableHighCommand(enableFrontline(enableSandtable(current.statecraft ? current : enableStatecraft(
+      current.landscape ? current : enableLandscape(world, current.grand ? current : enableGrand(world, current)))))),
+    locate: (key) => locateOnMap(key, "high-command-dialog"),
+    battlefield: (key) => frontlineDesk.open("plan", key),
+    coalition: (key) => frontlineDesk.open("coalition", key),
+    report: (id) => frontlineDesk.open("replay", id),
+    politics: () => openStatecraft("regions"),
+    advance: () => find("advance").click(),
+    batch: takeYear,
+  });
+  const upgradeDynasty = (current) => enableDynasty(enableHighCommand(enableFrontline(enableSandtable(current.statecraft ? current
+    : enableStatecraft(current.landscape ? current : enableLandscape(world, current.grand ? current : enableGrand(world, current)))))));
+  dynastyDesk = createDynastyDesk(world, {
+    snapshot: () => ({ state, era: era() }),
+    commit: (next, message) => mutate(() => next, message),
+    upgrade: upgradeDynasty,
+    locate: (key) => locateOnMap(key, "dynasty-dialog"),
+    military: () => highCommandDesk.open(),
+    talent: () => find("open-recruitment").click(),
+    advance: () => find("advance").click(),
+    batch: takeYear,
+    layer: (key) => toggleDynastyMap(true, undefined, key),
+    atlas: (frame) => toggleDynastyMap(true, frame),
+  });
+  strategyDesk = createStrategyDesk(world, {
+    snapshot: () => ({ state, era: era() }),
+    commit: (next, message) => mutate(() => next, message),
+    upgrade: (current) => enableStrategy9(upgradeDynasty(current)),
+    map() {
+      cityCommand?.close();
+      landscapeMap?.close();
+      toggleDynastyMap(false);
+      showView("map");
+      map.setLayer("factions");
+      map.showStrategicImpact([]);
+    },
+    impact(rows) {
+      showView("map");
+      map.setLayer("factions");
+      map.showStrategicImpact(rows);
+      document.querySelector(".map-hint").textContent = "方略草案 · 点战区查看额度影响";
+    },
+    locate: (key) => locateOnMap(key, "strategy-nine-dialog"),
+    battle: (key) => frontlineDesk.open("plan", key),
+    military: (id) => highCommandDesk.open(undefined, id),
+    replay: () => frontlineDesk.open("replay"),
+    dynasty: (tab) => dynastyDesk.open(tab),
+    advance: () => find("advance").click(),
+    batch: takeYear,
+    timeline: (turn) => toggleDynastyMap(true, state.dynasty.timelines.find((row) => row.turn === turn)),
+  });
+  reignDesk = createReignDesk(world, {
+    snapshot: () => ({ state, era: era() }),
+    commit: (next, message) => mutate(() => next, message),
+    upgrade: (current) => enableReign(enableStrategy9(upgradeDynasty(current))),
+    strategy: (tab) => strategyDesk.open(tab),
+    dynasty: (tab, key) => dynastyDesk.open(tab, key),
+    map: (lens, impact, key) => toggleReignMap(lens, impact, key),
+    timeline: (turn) => toggleDynastyMap(true, reignFrame(world, state, turn)),
+    talent: () => find("open-recruitment").click(),
+    battle: (key) => frontlineDesk.open("plan", key),
+    replay: (id) => frontlineDesk.open("replay", id),
+    advance: () => find("advance").click(),
+    batch: takeYear,
+  });
+  centuryDesk = createCenturyDesk(world, {
+    snapshot: () => state,
+    commit: (next, message) => mutate(() => next, message),
+    upgrade: (current) => {
+      localStorage.setItem(preCenturySlot, JSON.stringify({ state: current, selected }));
+      return enableCentury(enableReign(enableStrategy9(upgradeDynasty(current))));
+    },
+    advance: () => find("advance").click(),
+    batch: takeYear,
+    diplomacy: () => openDiplomacyDialog("incoming"),
+    staff: (region) => reignDesk.open("staff", region),
+    administration: () => dynastyDesk.open(),
+    leagues: () => reignDesk.open("leagues"),
+    talent: () => find("open-recruitment").click(),
+    strategy: () => strategyDesk.open(),
+    replay: () => frontlineDesk.open("replay"),
+    reopen: (current) => reopenChapter15(world, current),
+    relief: (item) => (current) => resolveReignAlert(world, orderMarketRelief(current, item.city), item.id, "read"),
+    map: ([mode, key]) => toggleReignMap(mode, [], key),
+    history: (frame) => toggleDynastyMap(true, frame),
+    locate: (key) => locateOnMap(key),
+  });
   function openLandscapeMap(type, key) {
     cityCommand?.close();
     landscapeMap.open(type, key);
@@ -5168,12 +5549,56 @@ async function start() {
     original: (key) => grandPanel.open(key),
     upgrade: () => mutate(() => enableLandscape(world, state.grand ? state : enableGrand(world, state)), "已将当前战局升级至山河变局。"),
   });
+  function openStatecraft(pane, id) {
+    cityCommand?.close();
+    landscapeMap?.close();
+    statecraftDesk.open(pane, id);
+  }
+  statecraftDesk = createStatecraftDesk(world, {
+    snapshot: () => ({ state, era: era() }),
+    commit: (next, message) => mutate(() => next, message),
+    upgrade: () => enableStatecraft(state.landscape ? state : enableLandscape(world, state.grand ? state : enableGrand(world, state))),
+    showCities: () => { cityCommand?.close(); landscapeMap?.close(); showView("map"); map.setLayer("cities"); },
+    redraw: renderMap,
+    locate: (key) => locateOnMap(key, "statecraft-dialog"),
+    diplomacy: () => landscapeDesk.open("treaty"),
+    replay: () => landscapeDesk.open("replay"),
+  });
+  sandtableDesk = createSandtableDesk(world, {
+    snapshot: () => ({ state, era: era() }),
+    commit: (next, message) => mutate(() => next, message),
+    upgrade: () => enableSandtable(state.statecraft ? state : enableStatecraft(state.landscape ? state
+      : enableLandscape(world, state.grand ? state : enableGrand(world, state)))),
+    replace(next) { replaceGame(next); keepProgress(); },
+    locate(key, turn) {
+      locateOnMap(key, "sandtable-dialog");
+      if (turn !== undefined) {
+        polityPanel.open("archive");
+        const picker = find("polity-quarter");
+        if (turn >= Number(picker.min) && turn <= Number(picker.max)) {
+          picker.value = String(turn);
+          picker.dispatchEvent(new Event("input"));
+        }
+      }
+    },
+    batch: takeYear,
+    council: () => openStatecraft("nation"),
+    operations: () => openStatecraft("fronts"),
+    diplomacy: () => landscapeDesk.open("treaty"),
+    roads: () => { cityCommand?.close(); landscapeMap?.close(); showView("map"); map.setLayer("roads"); },
+    battle: (key) => state.highCommand ? highCommandDesk.open(key) : frontlineDesk.open("plan", key),
+  });
   cityCommand = createCityCommand(world, {
     snapshot: () => ({ state, planned, era: era(), selected }),
     commit: (next, message) => mutate(() => next, message),
     showDetails: () => showView("city"),
     showCities: () => map.setLayer("cities"),
     openLandscape: openLandscapeMap,
+    openBattle: (key) => state.highCommand ? highCommandDesk.open(key) : frontlineDesk.open("plan", key),
+    openProvince: (key) => centuryDesk.open("local", world.cities.find((city) => city.key === key).region),
+    strategyAt: (key) => strategicFronts9(state).find((row) => row.seat === key || state.highCommand.campaigns
+      .some(({ id, point, target }) => id === row.campaign && (point === key || target === key))),
+    openStrategy: (id) => state.century ? centuryDesk.open("local", id) : strategyDesk.open("fronts", id),
     redraw: renderMap,
   });
   wireControls();

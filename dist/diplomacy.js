@@ -2,6 +2,9 @@ import { accordCredit } from "./accords.js";
 import { protectionBetween } from "./polities-data.js";
 import { grandArmistice } from "./grand-diplomacy.js";
 import { conferencePass } from "./landscape-treaty.js";
+import { limitedPeace } from "./sandtable-war.js";
+import { dynastyTreaty } from "./dynasty-treaties.js";
+import { leagueAccord, reignGuarantee, reignRecognition } from "./reign-leagues.js";
 
 export const treatyTerms = {
   truce: { name: "停战", seasons: 2, treasury: 12 },
@@ -15,7 +18,14 @@ export function treatyWith(state, first, second) {
   const treaty = state.treaties?.find(({ sides, expires }) => expires > state.turn && sides.includes(first) && sides.includes(second));
   const protection = protectionBetween(state, first, second);
   const congress = conferencePass(state, first, second);
-  const charter = grandArmistice(state, first, second) ?? (congress && { expires: congress.until });
+  const peace = limitedPeace(state, first, second);
+  const settlement = dynastyTreaty(state, first, second);
+  const commune = leagueAccord(state, first, second);
+  const recognition = reignRecognition(state, first, second);
+  const guarantee = reignGuarantee(state, first, second);
+  const charter = grandArmistice(state, first, second) ?? (congress && { expires: congress.until }) ?? (peace && { expires: peace.until })
+    ?? (settlement && { expires: settlement.until }) ?? (commune && { expires: commune.until }) ?? (recognition && { expires: recognition.until })
+    ?? (guarantee && { expires: guarantee.until });
   return treaty ?? (protection || charter ? { kind: "truce", sides: [first, second].sort(),
     expires: Math.max(protection?.expires ?? 0, charter?.expires ?? 0), ...(protection ? { protection: true } : { charter: true }) } : null);
 }

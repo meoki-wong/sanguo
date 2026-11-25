@@ -10,7 +10,7 @@ const int = (value, low, high) => Number.isSafeInteger(value) && value >= low &&
 
 export const warEvents = new Set(["ordered", "prepared", "moving", "encircled", "pressure", "breach", "relieved", "surrender",
   "blockaded", "diverted", "assault", "captured", "secured", "retreat", "returned", "isolated", "withdraw-blocked", "resupplied",
-  "scouted", "scout-blocked", "support", "allied", "strained", "restored", "aid", "road", "milestone", "held"]);
+  "scouted", "scout-blocked", "support", "allied", "strained", "restored", "aid", "road", "milestone", "held", "field-clash", "post-battle", "war-treaty"]);
 
 export function warReport(event, faction, city, text, detail = {}) {
   return { type: "war", event, faction, city, text, ...detail };

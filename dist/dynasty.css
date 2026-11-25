@@ -1,0 +1,72 @@
+#dynasty-dialog {
+  width: min(41rem, calc(100dvw - .75rem));
+  border-color: #9d8961;
+  color: #f0e1c8;
+  background: #272820;
+  box-shadow: 0 18px 65px #141510d4;
+}
+#dynasty-dialog .dialog-content { padding: .85rem; gap: .65rem; }
+#dynasty-dialog .dialog-heading { justify-content: space-between; }
+.dynasty-nav { display: grid; grid-template-columns: repeat(8, minmax(0,1fr)); gap: .3rem; }
+.dynasty-nav button { width: 100%; }
+.dynasty-nav button[aria-pressed="true"] {
+  color: #fff2d4; background: #624c31; border-color: #d4ad70;
+}
+.dynasty-body { display: grid; gap: .55rem; min-width: 0; }
+.dynasty-body p, .dynasty-notice { margin: 0; color: #e1d3b5; font-size: .84rem; line-height: 1.38; }
+.dynasty-notice { color: #f7cb82; }
+.dynasty-notice:empty, .dynasty-nav:empty, .dynasty-row:empty { display: none; }
+.dynasty-heading { padding: .6rem .7rem; border: 1px solid #77694d; background: #333327; }
+.dynasty-heading h3 { margin: 0 0 .19rem; color: #fff0d2; font-size: 1.1rem; }
+.dynasty-heading p { color: #ecddbc; }
+.dynasty-heading.dynasty-summary {
+  min-height: 5rem;
+  background: linear-gradient(90deg, #1d251fe9, #24271e9c, #24281e63),
+    url("./assets/battlefield-atlas.webp") right 12% / 200% auto;
+  align-content: end;
+}
+.dynasty-heading.dynasty-supply { border-left: .22rem solid #caab72; }
+.dynasty-row { display: flex; align-items: end; flex-wrap: wrap; gap: .35rem; min-width: 0; }
+.dynasty-field { display: grid; gap: .13rem; min-width: 0; font-size: .75rem; color: #e5d1ac; }
+.dynasty-field select { min-width: 0; max-width: min(15rem, 58vw); }
+.dynasty-field input[type="number"] { width: 4.25rem; }
+.dynasty-field:has(input[type="checkbox"]) {
+  display: flex; flex-direction: row-reverse; justify-content: flex-end; align-items: center;
+  padding: .24rem .42rem; min-height: 1.9rem; border: 1px solid #6e6248; border-radius: .15rem;
+}
+.dynasty-field input[type="checkbox"] { min-height: 0; accent-color: #d9ad6d; }
+.dynasty-forecast { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .28rem; }
+.dynasty-forecast p { padding: .35rem; border: 1px solid #7a694c; font-variant-numeric: tabular-nums; }
+#dynasty-map-return[data-replay="true"] { background: #644631; color: #fff0d1; }
+#dynasty-map-return {
+  position: absolute; z-index: 9; top: .35rem; right: 1.95rem;
+  min-height: 1.8rem; padding: .15rem .42rem; font-size: .76rem;
+}
+#map-stage[data-dynasty-layer="true"] #open-sandtable-map { visibility: hidden; }
+#map-stage[data-dynasty-layer="true"] #map-markers { z-index: 4; }
+#map-stage[data-dynasty-layer="true"] :is(#army-markers, #grand-markers, .statecraft-front-layer) button {
+  pointer-events: none; opacity: .55;
+}
+#map-stage[data-dynasty-replay="true"] :is(#army-markers, #grand-markers, .statecraft-front-layer) { visibility: hidden; }
+.dynasty-freight-pin[data-blocked="true"] { border-color: #ad563e; }
+#open-frontline-map[data-urgent="true"] { font-weight: 720; }
+@media (max-width: 600px) {
+  .dynasty-nav { grid-template-columns: repeat(4, minmax(0,1fr)); }
+}
+@media (max-width: 600px) and (min-height: 431px) {
+  #dynasty-dialog button, #dynasty-dialog select, #dynasty-dialog input[type="number"] { min-height: 2.5rem; }
+  .dynasty-field:has(input[type="checkbox"]) { min-height: 2.25rem; }
+}
+@media (max-height: 430px) {
+  #dynasty-dialog .dialog-content { padding: .44rem; gap: .31rem; }
+  .dynasty-body, .dynasty-row, .dynasty-nav { gap: .24rem; }
+  #dynasty-dialog button, #dynasty-dialog select, #dynasty-dialog input[type="number"] {
+    min-height: 1.58rem; padding: .1rem .28rem; font-size: .74rem;
+  }
+  #dynasty-dialog .dynasty-field, #dynasty-dialog p { font-size: .72rem; line-height: 1.22; }
+  .dynasty-heading { padding: .25rem .38rem; }
+  .dynasty-heading h3 { margin-bottom: .12rem; font-size: .9rem; }
+  .dynasty-heading.dynasty-summary { min-height: 3.1rem; }
+  .dynasty-field:has(input[type="checkbox"]) { min-height: 1.42rem; }
+  #dynasty-map-return { top: .2rem; min-height: 1.43rem; font-size: .68rem; }
+}

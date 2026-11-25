@@ -22,8 +22,8 @@ export function allegianceAt(state, person, turn = state.turn) {
 export function polityEra(base, state, turn = state.turn) {
   const history = state.polity;
   if (!history || (!history.parties?.length && !Object.keys(history.allegiances ?? {}).length)) return base;
-  const additions = (history.parties ?? []).map(({ key, name, city, position, leader }) => ({
-    key, name, position, path: "", stats: [0, 0, 50], trait: "地方建政", city, leader,
+  const additions = (history.parties ?? []).map(({ key, name, city, position, leader, cause }) => ({
+    key, name, position, path: "", stats: [0, 0, 50], trait: cause === "uprising" ? "乡民推举" : cause === "independence" ? "州郡自立" : "地方建政", city, leader,
   }));
   const founders = additions.map(({ key, leader, name, city }) => ({
     key: leader, faction: key, home: city, name: name + "推举的主将", governance: 73, command: 78,

@@ -35,7 +35,7 @@ export function scenarioEndingCriteria(world, state) {
 }
 
 export function concludeScenario(world, state) {
-  if (gameOutcome(state) !== "ongoing" || !scenarioEndingCriteria(world, state).ready) throw new Error("请先达成剧本条件并结清待执行政令。");
+  if (state.reign?.stewardship || gameOutcome(state) !== "ongoing" || !scenarioEndingCriteria(world, state).ready) throw new Error("请先达成剧本条件并结清待执行政令。");
   const next = structuredClone(state);
   next.scenarioEnding = { turn: state.turn };
   next.incomingTreaty = null;
@@ -44,7 +44,7 @@ export function concludeScenario(world, state) {
 
 export function concludeCoalition(world, state) {
   const era = eraByYear(world, state);
-  if (gameOutcome(state) !== "ongoing" || !coalitionCriteria(world, era, state).ready) throw new Error("联盟条件尚未满足。");
+  if (state.reign?.stewardship || gameOutcome(state) !== "ongoing" || !coalitionCriteria(world, era, state).ready) throw new Error("联盟条件尚未满足。");
   return { ...state, scenarioEnding: { turn: state.turn, kind: "coalition" }, incomingTreaty: null };
 }
 

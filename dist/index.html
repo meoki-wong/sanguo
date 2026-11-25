@@ -10,7 +10,15 @@
   <link rel="stylesheet" href="./command-desk.css">
   <link rel="stylesheet" href="./grand.css">
   <link rel="stylesheet" href="./landscape.css">
+  <link rel="stylesheet" href="./statecraft.css">
+  <link rel="stylesheet" href="./sandtable.css">
   <link rel="stylesheet" href="./city-command.css">
+  <link rel="stylesheet" href="./frontline.css">
+  <link rel="stylesheet" href="./high-command.css">
+  <link rel="stylesheet" href="./dynasty.css">
+  <link rel="stylesheet" href="./strategy-nine.css">
+  <link rel="stylesheet" href="./reign.css">
+  <link rel="stylesheet" href="./century.css">
   <script type="module" src="./app.js"></script>
 </head>
 <body>
@@ -27,6 +35,7 @@
     <div class="turn-tools">
       <div class="turn-date" id="turn-date" aria-live="polite">第 1 年 · 春季</div>
       <button type="button" class="quiet" id="open-advice">议事</button>
+      <button type="button" class="quiet" id="century-pending" aria-haspopup="dialog" hidden>待决</button>
       <button type="button" class="quiet" id="open-chronicle">奏报</button>
       <button type="button" class="quiet" id="open-menu">菜单</button>
       <button type="button" class="turn-orders" id="turn-orders" aria-haspopup="dialog">政令 <span id="turn-order-count">0</span></button>
@@ -93,6 +102,14 @@
           <div class="map-markers" id="map-markers"></div>
           <div class="map-markers" id="army-markers"></div>
           <div class="map-markers" id="grand-markers"></div>
+          <div id="statecraft-map-bar" aria-label="全国与战区" hidden></div>
+          <button type="button" id="open-sandtable-map" hidden>天下沙盘</button>
+          <button type="button" id="open-frontline-map" aria-haspopup="dialog" hidden><span aria-hidden="true">⚑</span> 会战指挥</button>
+          <button type="button" id="dynasty-map-return" hidden>退出粮运图</button>
+          <div id="reign-map-tools" hidden>
+            <select id="reign-map-lens" aria-label="全国地图视图"><option value="regions">政区</option><option value="economy">经济</option><option value="diplomacy">外交</option><option value="war">战争</option></select>
+            <button type="button" id="reign-map-close">退出</button>
+          </div>
           <span class="north" aria-hidden="true"><span></span>北</span>
         </div>
         <section id="map-city-command" class="map-city-command" aria-labelledby="map-command-title" hidden>
@@ -262,6 +279,71 @@
     </div>
   </dialog>
 
+  <dialog id="century-dialog" aria-labelledby="century-title">
+    <div class="dialog-content century-content">
+      <header class="dialog-heading"><h2 id="century-title">山河百年</h2><button type="button" class="quiet" data-close="century-dialog">回地图</button></header>
+      <nav aria-label="全国政务"></nav>
+      <div class="century-body"></div>
+      <p class="century-feedback" role="status"></p>
+    </div>
+  </dialog>
+  <dialog id="reign-dialog" aria-labelledby="reign-title">
+    <div class="dialog-content">
+      <div class="dialog-heading"><h2 id="reign-title">王朝兴替</h2><button type="button" class="quiet" data-close="reign-dialog">返回地图</button></div>
+      <nav class="dynasty-nav" aria-label="王朝兴替分页"></nav>
+      <div class="dynasty-body"></div>
+      <p class="dynasty-notice" role="status"></p>
+    </div>
+  </dialog>
+  <dialog id="strategy-nine-dialog" aria-labelledby="strategy-nine-title">
+    <div class="dialog-content">
+      <div class="dialog-heading"><h2 id="strategy-nine-title">诸侯争衡</h2><button type="button" class="quiet" data-close="strategy-nine-dialog">返回地图</button></div>
+      <nav class="dynasty-nav" aria-label="诸侯争衡分页"></nav>
+      <div class="dynasty-body"></div>
+      <p class="dynasty-notice" role="status"></p>
+    </div>
+  </dialog>
+  <dialog id="dynasty-dialog" aria-labelledby="dynasty-title">
+    <div class="dialog-content">
+      <div class="dialog-heading"><h2 id="dynasty-title">天下秩序</h2><button type="button" class="quiet" data-close="dynasty-dialog">返回地图</button></div>
+      <nav class="dynasty-nav" aria-label="天下经略分页"></nav>
+      <div class="dynasty-body"></div>
+      <p class="dynasty-notice" role="status"></p>
+    </div>
+  </dialog>
+  <dialog id="high-command-dialog" aria-labelledby="high-command-title">
+    <div class="dialog-content">
+      <div class="dialog-heading"><h2 id="high-command-title">全国军议</h2><button type="button" class="quiet" data-close="high-command-dialog">返回地图</button></div>
+      <nav class="high-command-nav" aria-label="军议分页"></nav>
+      <div class="high-command-body"></div>
+      <p class="high-command-notice" role="status"></p>
+    </div>
+  </dialog>
+  <dialog id="frontline-dialog" aria-labelledby="frontline-title">
+    <div class="dialog-content">
+      <div class="dialog-heading"><h2 id="frontline-title">山河会战</h2><button type="button" class="quiet" data-close="frontline-dialog">返回地图</button></div>
+      <nav class="frontline-tabs" aria-label="会战指挥"></nav>
+      <div class="frontline-body"></div>
+      <p class="frontline-feedback" role="status"></p>
+    </div>
+  </dialog>
+  <dialog id="sandtable-dialog" aria-labelledby="sandtable-title">
+    <div class="dialog-content">
+      <div class="dialog-heading"><h2 id="sandtable-title">天下沙盘</h2><button type="button" class="quiet" data-close="sandtable-dialog">返回地图</button></div>
+      <nav class="sandtable-actions" aria-label="沙盘指挥"></nav>
+      <div id="sandtable-body"></div>
+      <p id="sandtable-error" role="status" hidden></p>
+    </div>
+  </dialog>
+  <dialog id="statecraft-dialog" aria-labelledby="statecraft-title">
+    <div class="dialog-content">
+      <div class="dialog-heading"><h2 id="statecraft-title">总揽天下</h2>
+        <button type="button" class="quiet" data-close="statecraft-dialog">返回地图</button></div>
+      <nav class="statecraft-controls" aria-label="全国政务"></nav>
+      <div id="statecraft-body"></div>
+      <p id="statecraft-notice" role="status" hidden></p>
+    </div>
+  </dialog>
   <dialog id="landscape-dialog" aria-labelledby="landscape-title">
     <div class="dialog-content">
       <div class="dialog-heading"><h2 id="landscape-title">山河变局</h2>
@@ -423,7 +505,7 @@
       <label class="grand-field">剧本名<input id="custom-title" maxlength="24" required></label>
       <label class="grand-field">已存剧本<select id="custom-library"></select></label>
       <label class="grand-field">调整项目<select id="custom-mode">
-        <option value="cities">城池归属</option><option value="stocks">势力钱粮</option><option value="stations">人物驻地</option><option value="rules">难度与关系</option>
+        <option value="cities">城池归属</option><option value="stocks">势力钱粮</option><option value="stations">人物驻地</option><option value="rules">难度与关系</option><option value="command">开局战区</option>
       </select></label>
       <section class="grand-fields" id="custom-cities">
         <label>城池<select id="custom-city"></select></label><label>归属<select id="custom-owner"></select></label>
@@ -440,6 +522,11 @@
         <label>难度<select id="custom-difficulty"></select></label><label>目标<select id="custom-goal"></select></label>
         <label>交涉势力<select id="custom-rival"></select></label>
         <label>初始信用<input type="number" id="custom-credit" min="-30" max="40" step="1"></label>
+      </section>
+      <section class="grand-fields" id="custom-command" hidden>
+        <label>任务<select id="custom-mission"></select></label><label>目标<select id="custom-objective"></select></label>
+        <label>粮仓<select id="custom-warehouse"></select></label><label>仓粮<input id="custom-warehouse-stock" type="number" min="1" max="200"></label>
+        <label>停战方<select id="custom-ceasefire"></select></label><label><input id="custom-assemble" type="checkbox">开局已集结</label>
       </section>
       <p id="custom-status" class="grand-note" role="status"></p>
       <div class="grand-actions">
@@ -1526,7 +1613,8 @@
 
   <dialog id="menu-dialog" aria-labelledby="menu-title">
     <div class="dialog-content">
-      <h2 id="menu-title">游戏菜单</h2>
+      <div class="dialog-heading"><h2 id="menu-title">游戏菜单</h2><button type="button" id="open-frontline-menu">山河会战</button><button type="button" id="open-sandtable-menu">天下沙盘</button></div>
+      <div class="dynasty-row"><button type="button" id="open-century-menu">山河百年</button><button type="button" id="open-reign-menu">王朝兴替</button><button type="button" id="open-strategy-nine-menu">诸侯争衡</button><button type="button" id="open-dynasty-menu">天下秩序</button></div>
       <div class="menu-items">
         <button type="button" id="save-game">存档</button>
         <button type="button" id="load-game">读档</button>
@@ -1539,10 +1627,12 @@
         <button type="button" id="open-war">战役指挥</button>
         <button type="button" id="open-grand-menu">天下大势</button>
         <button type="button" id="open-landscape-menu">山河变局</button>
+        <button type="button" id="open-statecraft-menu">总揽天下</button>
         <button type="button" id="open-polity">天下演变</button>
         <button type="button" id="open-realm">天下格局</button>
         <button type="button" id="open-recruitment">招揽人才</button>
         <button type="button" id="open-saves">存档管理</button>
+        <button type="button" id="download-century-backup" hidden>导出升级前存档</button>
       </div>
       <footer class="credits">
         疆域及城址参考
@@ -1655,6 +1745,7 @@
       </section>
       <div class="dialog-actions">
         <button type="button" id="outcome-restart" hidden>新开局</button>
+        <button type="button" id="outcome-stewardship" hidden>进入守成篇</button>
         <button type="button" id="open-ending-record">战役结局</button>
         <button type="button" class="quiet" id="outcome-council">战役路线</button>
         <button type="button" class="primary" id="outcome-map">返回地图</button>

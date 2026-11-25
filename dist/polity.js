@@ -8,7 +8,9 @@ import {
 import { aiSettlements, settleNegotiations } from "./polity-settlements.js";
 
 const events = new Set(["policy", "warning", "crisis", "recovered", "split", "critical", "court-warning", "succession", "regency",
-  "court-crisis", "delivered", "union", "breach", "signed", "rejected", "petition", "protection-ended", "edict", "edict-approved", "edict-declined"]);
+  "court-crisis", "delivered", "union", "breach", "signed", "rejected", "petition", "protection-ended", "edict", "edict-approved", "edict-declined",
+  "talent", "loyalty-warning", "defection", "uprising", "independence", "crisis-response", "military-warning", "military-mutiny", "military-settled",
+  "post-battle", "war-treaty"]);
 const edicts = {
   184: { title: "抚恤流离", focus: "relief", treasury: 12, grain: 26, text: "发放赈粮，安顿流离家庭。" },
   190: { title: "联军筹粮", focus: "relief", treasury: 15, grain: 20, text: "以巡仓和赈济稳住诸郡，保障联军后方。" },
@@ -169,9 +171,10 @@ export function recordPolity(world, state, entries) {
   const digest = entries.flatMap(({ type, event, faction, text, city, participants, officer }) => {
     if (type === "capture") return [{ turn: state.turn, event: "territory", faction, city,
       text: cityName(world, city) + "易主。", ...(participants ? { participants } : {}) }];
-    const detail = type === "polity" || type === "grand" && (faction === state.player || participants?.includes(state.player))
+    const strategicWar = type === "war" && ["post-battle", "war-treaty"].includes(event);
+    const detail = type === "polity" || strategicWar || type === "grand" && (faction === state.player || participants?.includes(state.player))
       || type === "diplomacy" && participants?.includes(state.player);
-    return detail ? [{ turn: state.turn, event: type === "polity" ? event : type === "grand" ? "grand" : "treaty", faction,
+    return detail ? [{ turn: state.turn, event: type === "polity" || strategicWar ? event : type === "grand" ? "grand" : "treaty", faction,
       text: type === "grand" ? text.slice(0, 260) : text,
       ...(city ? { city } : {}), ...(participants ? { participants } : {}), ...(officer ? { officer } : {}) }] : [];
   });
@@ -190,12 +193,13 @@ export function peaceCriteria(world, state) {
     { name: "稳定辖城", value: houses.filter(({ occupation }) => !occupation).length, target: Math.max(1, Math.ceil(houses.length * .8)) },
     { name: "治所已安定", value: Number(core?.owner === state.player && !core?.occupation), target: 1 },
   ];
+  if (state.dynasty) tests.push({ name: "财政与地方连续稳定", value: state.dynasty.continuity.peace, target: 3 });
   return { title: "天下承平", tests, ready: Boolean(data && !state.orders.length && tests.every(({ value, target }) => value >= target)
     && ![...data.offers, ...data.deals].some(({ from, to }) => [from, to].includes(state.player))) };
 }
 
 export function concludePeace(world, state) {
-  if (gameOutcome(state) !== "ongoing" || !peaceCriteria(world, state).ready) throw new Error("请完成承平条件并结清待决议案。");
+  if (state.reign?.stewardship || gameOutcome(state) !== "ongoing" || !peaceCriteria(world, state).ready) throw new Error("请完成承平条件并结清待决议案。");
   return { ...state, scenarioEnding: { turn: state.turn, kind: "peace" }, incomingTreaty: null };
 }
 
@@ -203,7 +207,8 @@ export function validPolity(world, state, era, base) {
   if (state.polity === undefined) return true;
   const data = state.polity;
   if (!plain(data) || !state.realm || !bounded(data.since, 0, state.turn) || !bounded(data.serial, 0, 1000000)
-    || !bounded(data.calm, 0, state.turn) || !bounded(data.peaceDeals, 0, data.serial + (state.grand?.serial ?? 0) + (state.landscape?.sequence ?? 0))
+    || !bounded(data.calm, 0, state.turn) || !bounded(data.peaceDeals, 0, data.serial + (state.grand?.serial ?? 0) + (state.landscape?.sequence ?? 0) + (state.dynasty?.serial ?? 0)
+      + (state.sandtable?.serial ?? 0))
     || (data.lastBreach !== null && !bounded(data.lastBreach, data.since, state.turn))) return false;
   const factions = Object.keys(state.factions);
   const side = (key) => factions.includes(key);
@@ -214,6 +219,7 @@ export function validPolity(world, state, era, base) {
   if (!Array.isArray(data.parties) || factions.length > maximumPolities
     || !data.parties.every((item, index) => item && item.key === "spl-" + (index + 1) && item.leader === item.key + "-head"
       && side(item.key) && side(item.origin) && item.key !== item.origin && date(item.turn) && city(item.city)
+      && (item.cause === undefined || state.statecraft && ["uprising", "independence"].includes(item.cause) || state.sandtable && item.cause === "mutiny")
       && world.cities.some((site) => site.key === item.city && site.region === item.region && site.name + "军" === item.name
         && Array.isArray(item.position) && item.position.length === 2 && item.position.every((coordinate, i) => coordinate === site.position[i])))) return false;
   for (const item of data.parties) baseOfficers.set(item.leader, item.key);

@@ -3,6 +3,7 @@ import { crossesGate, crossings, dispatchRoute, gateOwner, hasPassage } from "./
 import { roadPath } from "./roads.js";
 import { warBlockaded } from "./war-operations.js";
 import { routeWeather, travelModes, weatherAllows } from "./landscape-terrain.js";
+import { dynastyPass } from "./dynasty-treaties.js";
 
 export const commodities = { grain: "军粮", equipment: "军械" };
 export const regionalPolicies = { equipment: "军械工坊", market: "商埠互市", recovery: "赈济修复" };
@@ -11,7 +12,7 @@ const own = (state, faction, key) => state.cities[key]?.owner === faction;
 const stable = (state, key) => state.cities[key] && !state.cities[key].occupation && !warBlockaded(state, key);
 
 export function marketAccess(state, a, b) {
-  return state.landscape?.congresses.some((record) => record.status === "active" && record.market
+  return dynastyPass(state, a, b) || state.landscape?.congresses.some((record) => record.status === "active" && record.market
     && record.parties.includes(a) && record.parties.includes(b) && state.turn < record.until);
 }
 
@@ -103,6 +104,7 @@ export function settleEconomy(world, state, account, entries) {
   }
   data.repairs = [];
   for (const shipment of data.convoys.filter(({ status }) => status === "queued")) {
+    if (state.frontline && shipment.heldAt === state.turn) continue;
     const { faction, from, to, amount, cargo } = shipment;
     const quote = quoteConvoy(world, state, shipment);
     if (!quote?.affordable) {

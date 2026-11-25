@@ -212,7 +212,7 @@ export function settleGovernance(world, era, state, entries, turn, ledger, forec
         status.warning = status.crisis = null;
         entries.push(polityEntry("recovered", faction, row.region + "局势平稳，地方警报解除。", { city: row.cities[0] }));
       }
-      if (status.crisis !== null && turn - status.crisis >= 2 && status.pressure >= 92 && count(state, faction) >= 3) {
+      if (!state.statecraft && status.crisis !== null && turn - status.crisis >= 2 && status.pressure >= 92 && count(state, faction) >= 3) {
         const capital = openingCapital(era, faction);
         const selected = row.cities.filter((key) => key !== capital && cityPressure(state, key) >= 43)
           .sort((a, b) => cityPressure(state, b) - cityPressure(state, a)).slice(0, Math.min(2, count(state, faction) - 1));

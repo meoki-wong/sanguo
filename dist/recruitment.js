@@ -7,7 +7,7 @@ export function recruitmentChoices(world, state, faction = state.player) {
     .map((person) => ({ person, ready: state.turn >= person.reserve.turn && stock.treasury >= person.reserve.fee }));
 }
 
-function sign(state, candidate, city) {
+export function signOfficer(state, candidate, city) {
   state.recruitedOfficers = [...(state.recruitedOfficers ?? []), candidate.key];
   state.stations[candidate.key] = city;
   state.factions[candidate.faction].treasury -= candidate.reserve.fee;
@@ -20,7 +20,7 @@ export function recruitOfficer(world, state, key, city) {
   const choice = recruitmentChoices(world, state).find(({ person }) => person.key === key);
   if (!choice?.ready) throw new Error("当前还无法招揽此人。");
   const next = structuredClone(state);
-  sign(next, choice.person, city);
+  signOfficer(next, choice.person, city);
   previewOrders(world, next);
   return next;
 }
@@ -32,7 +32,7 @@ export function recruitRivals(world, era, state) {
     const city = firstCity(world, state, key);
     const choice = recruitmentChoices(world, state, key).find(({ ready }) => ready);
     if (!choice || state.cities[city].occupation) return [];
-    sign(state, choice.person, city);
+    signOfficer(state, choice.person, city);
     return [{ type: "recruit-officer", faction: key, city, text: choice.person.name + "接受招揽，已入仕。" }];
   });
 }

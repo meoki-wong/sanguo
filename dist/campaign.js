@@ -46,8 +46,10 @@ export function settleCampaignRoute(world, era, state) {
 
 const historicalEvents = {
   184: { title: "乡里归耕", description: "拨粮 28 安置流民，屯田提升一级。", cost: { grain: 28 }, project: "farming" },
+  190: { title: "联军立寨", description: "拨钱 24 为联军修整营垒，城防提升一级。", cost: { treasury: 24 }, project: "defense" },
   199: { title: "流民归耕", description: "赈济迁来的百姓，拨粮 35，屯田提升一级。", cost: { grain: 35 }, project: "farming" },
   208: { title: "修缮江埠", description: "拨钱 28 修整渡口与仓行，商贸提升一级。", cost: { treasury: 28 }, project: "commerce" },
+  219: { title: "汉水修圩", description: "拨粮 26 安顿河畔屯户，屯田提升一级。", cost: { grain: 26 }, project: "farming" },
   234: { title: "渭水屯兵", description: "拨钱 30 修筑前线工事，城防提升一级。", cost: { treasury: 30 }, project: "defense" },
   262: { title: "修缮粮道", description: "稳固边城的转运道路，拨钱 32，城防提升一级。", cost: { treasury: 32 }, project: "defense" },
   265: { title: "州郡归心", description: "安置新附州郡，拨钱 36，商贸提升一级，民心增加 5。", cost: { treasury: 36 }, project: "commerce" },

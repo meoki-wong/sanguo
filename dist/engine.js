@@ -4,6 +4,15 @@ import { funds, openingLedger, programResults, spending, validLedger, validResou
 import { assessGoal, compatibleGoal, factionPlans, validGoal, validGoalResult } from "./strategy.js";
 import { awardService, officerSkill, settleCampaignEvent, settleCampaignRoute, settleCommandService, validCampaignProgress } from "./campaign.js";
 import { armyByOfficer, armyGarrison, holdingArmies, mobilizationQuote, mobilizeArmy, settleArmies, validArmies } from "./armies.js";
+import { defenseUnits, deployOpeningFormations, enableFrontline, formationOf, prepareFrontline, reconcileFormations, recordFormationLoss,
+  recordTownBattle, settleReinforcementPromises, validFrontline } from "./frontline.js";
+import { enableHighCommand, prepareCommand, settleCommand, settleCommandRecovery, validHighCommand } from "./high-command.js";
+import { archiveDynasty, dynastyLevyRefused, dynastyTaxRate, enableDynasty, settleDynasty, validDynasty } from "./dynasty.js";
+import { enableStrategy9, levyRate9, prepareStrategy9, schedulePassage9, settleStrategy9, validStrategy9 } from "./strategy-nine.js";
+import { archiveReign, enableReign, prepareReign, settleReign, validReign } from "./reign.js";
+import { adjustedHarvest15, archiveCentury, enableCentury, prepareCenturyYear, settleCentury, validCentury } from "./century.js";
+import { taxSplit10 } from "./reign-economy.js";
+import { dynastyYield } from "./dynasty-economy.js";
 import { directTheaters, validTheaters } from "./theaters.js";
 import { knownOfficer } from "./personnel.js";
 import { recruitRivals } from "./recruitment.js";
@@ -18,6 +27,14 @@ import { incomeFactor, nationalDuty, noteRecruitment, officeSkill, realmPolicy, 
 import { enableGrand, settleGrand, validGrand, validateOpening } from "./grand.js";
 import { enableLandscape, settleLandscape, validLandscape } from "./landscape.js";
 import { edgeWeather, weatherAllows } from "./landscape-terrain.js";
+import { applyRegionalMandates, configureStatecraftOpening, enableStatecraft, prepareAdministration, settleStatecraft, statecraftLedger, validStatecraft } from "./statecraft.js";
+import { settleCrisisOrders } from "./statecraft-personnel.js";
+import { settleFrontCommands } from "./front-command.js";
+import { reconcilePolities } from "./polity-handover.js";
+import { enableSandtable, settleSandtable, validSandtable } from "./sandtable.js";
+import { workforceYield } from "./sandtable-economy.js";
+import { postTransit, settlePosts } from "./sandtable-posts.js";
+import { authorizeWars } from "./sandtable-war.js";
 import { directGrandCampaigns } from "./grand-campaign.js";
 
 export const projects = {
@@ -30,7 +47,7 @@ export const cityReserve = 250;
 export const seasonOrderLimit = 3;
 export const minimumMarch = 200;
 export const delegationPriorityLimit = 5;
-export const turnVersion = 27;
+export const turnVersion = 35;
 const personnelHistoryLimit = 256;
 const archivedQuarters = 12;
 const transferHopLimit = 3;
@@ -72,7 +89,8 @@ export function openingCapital(era, faction) {
 }
 
 export function firstCity(world, state, faction = state.player) {
-  const capital = openingCapital(eraByYear(world, state), faction);
+  const relocated = state.dynasty?.capitals[faction];
+  const capital = state.cities[relocated]?.owner === faction ? relocated : openingCapital(eraByYear(world, state), faction);
   if (state.cities[capital]?.owner === faction) return capital;
   return world.cities.find(({ key }) => state.cities[key].owner === faction)?.key || world.cities[0].key;
 }
@@ -82,11 +100,23 @@ export function cityIncome(city, population) {
   return { treasury: Math.floor((4 + city.commerce * 3) * factor), grain: Math.floor((5 + city.farming * 4) * factor) };
 }
 
+export function cityRevenues(state, key) {
+  const city = state.cities[key];
+  const income = cityIncome(city, state.realm?.cities[key]);
+  const yieldRate = dynastyYield(state, key);
+  const taxRate = dynastyTaxRate(state, key) * levyRate9(state, key);
+  const gross = {
+    treasury: Math.floor((income.treasury * yieldRate.money + yieldRate.extra) * taxRate),
+    grain: Math.floor((income.grain * yieldRate.grain + yieldRate.extra * 2) * workforceYield(state, key) * taxRate),
+  };
+  return taxSplit10(state, key, adjustedHarvest15(state, key, gross));
+}
+
 export function forceTotals(state, faction) {
   const total = { cities: 0, troops: 0, treasury: 0, grain: 0 };
   for (const [key, city] of Object.entries(state.cities)) {
     if (city.owner !== faction) continue;
-    const income = cityIncome(city, state.realm?.cities[key]);
+    const income = cityRevenues(state, key);
     total.cities += 1;
     total.troops += city.troops;
     total.treasury += income.treasury;
@@ -104,8 +134,10 @@ export function gameOutcome(state) {
   const cities = Object.values(state.cities);
   const controlled = cities.filter(({ owner }) => owner === state.player).length;
   if (controlled === 0) return "defeat";
+  if (state.century?.concluded) return "victory";
+  if (state.reign?.stewardship) return state.reign.stewardship.finished === null ? "ongoing" : "victory";
   if (state.scenarioEnding) return "victory";
-  if (controlled === cities.length) return "victory";
+  if (controlled === cities.length && (!state.dynasty || state.dynasty.continuity.unity >= 3)) return "victory";
   return "ongoing";
 }
 
@@ -113,7 +145,12 @@ function requireCampaignOpen(state) {
   requireRule(gameOutcome(state) === "ongoing", "战局已结束。");
 }
 
-export function createGame(world, year, player, { realm = year === 208, war = false, polity = false, grand = false, landscape = false, opening } = {}) {
+export function createGame(world, year, player, { realm = year === 208, war = false, polity = false, grand = false, landscape = false,
+  statecraft = false, sandtable = false, frontline = false, highCommand = false, dynasty = false, strategic = false, reign = false, century = false, opening } = {}) {
+  reign ||= century;
+  strategic ||= reign;
+  dynasty ||= strategic;
+  highCommand ||= dynasty;
   const era = eraByYear(world, year);
   requireRule(era && era.factions.some(({ key }) => key === player), "请选择拥有主城的势力。");
   validateOpening(world, era, player, opening);
@@ -173,9 +210,19 @@ export function createGame(world, year, player, { realm = year === 208, war = fa
   Object.assign(state.stations, opening?.stations);
   const ready = realm ? startRealm(world, state) : state;
   const warfare = war ? beginWar(world, ready) : ready;
-  if (grand || landscape || opening) {
+  if (grand || landscape || statecraft || sandtable || frontline || highCommand || opening) {
     const ready = enableGrand(world, warfare, opening ? { title: opening.title.trim(), ownership } : null);
-    return landscape ? enableLandscape(world, ready, opening) : ready;
+    const terrain = landscape || statecraft || sandtable || frontline || highCommand ? enableLandscape(world, ready, opening) : ready;
+    const governance = statecraft || sandtable || frontline || highCommand ? configureStatecraftOpening(world, enableStatecraft(terrain), opening?.command) : terrain;
+    const sandbox = sandtable || frontline || highCommand ? enableSandtable(governance) : governance;
+    if (!frontline && !highCommand) return sandbox;
+    const campaign = enableFrontline(sandbox);
+    if (!opening) deployOpeningFormations(world, campaign);
+    const command = highCommand ? enableHighCommand(campaign) : campaign;
+    const government = dynasty ? enableDynasty(command) : command;
+    const strategy = strategic ? enableStrategy9(government) : government;
+    const realm = reign ? enableReign(strategy) : strategy;
+    return century ? enableCentury(realm) : realm;
   }
   return polity ? enablePolity(world, warfare) : warfare;
 }
@@ -479,7 +526,8 @@ function friendlyRoutes(world, state, faction, destination, hopLimit = Infinity)
   for (const current of queue) {
     if (distance.get(current) >= hopLimit) continue;
     for (const { key, links } of world.cities) {
-      if (distance.has(key) || !links.includes(current) || !owns(state, key, faction) || !weatherAllows(state, key, current)) continue;
+      if (distance.has(key) || !links.includes(current) || !owns(state, key, faction) || !weatherAllows(state, key, current)
+        || !postTransit(state, faction, key, current)) continue;
       distance.set(key, distance.get(current) + 1);
       queue.push(key);
     }
@@ -529,7 +577,8 @@ export function transferRoutes(world, state, from) {
     if (route.length > 1 && warBlockaded(state, route.at(-1))) continue;
     const city = cities.get(route.at(-1));
     for (const target of city.links) {
-      if (seen.has(target) || !owns(state, target) || !weatherAllows(state, route.at(-1), target)) continue;
+      if (seen.has(target) || !owns(state, target) || !weatherAllows(state, route.at(-1), target)
+        || !postTransit(state, state.player, route.at(-1), target)) continue;
       seen.add(target);
       routes.push([...route, target]);
     }
@@ -545,7 +594,8 @@ export function transferRoutesTo(world, state, to) {
     const route = [key];
     for (let hops = distance.get(key); hops > 0; hops -= 1) {
       const from = route.at(-1);
-      route.push(cities.get(from).links.find((neighbor) => distance.get(neighbor) === hops - 1 && weatherAllows(state, from, neighbor)));
+      route.push(cities.get(from).links.find((neighbor) => distance.get(neighbor) === hops - 1 && weatherAllows(state, from, neighbor)
+        && postTransit(state, state.player, from, neighbor)));
     }
     return route;
   });
@@ -558,6 +608,7 @@ function validateTransferRoute(world, state, faction, order) {
     const origin = world.cities.find(({ key }) => key === from);
     requireRule(origin.links.includes(to), "调兵目标须与出发城相邻。");
     requireRule(weatherAllows(state, from, to), "此段军路受时令影响，请改道调兵。");
+    requireRule(postTransit(state, faction, from, to), "此段军路被据点阻断，请改道调兵。");
     return;
   }
   requireRule(Array.isArray(route) && route.length >= 3 && route.length <= transferHopLimit + 1
@@ -567,6 +618,7 @@ function validateTransferRoute(world, state, faction, order) {
     const city = world.cities.find((entry) => entry.key === key);
     requireRule(city && (index === route.length - 1 || city.links.includes(route[index + 1])), "跨城调兵路线无效。");
     requireRule(!index || weatherAllows(state, route[index - 1], key), "跨城调兵路线受时令影响，请改道。");
+    requireRule(!index || postTransit(state, faction, route[index - 1], key), "跨城调兵路线被据点阻断。");
     requireRule(owns(state, key, faction), cityName(world, key) + "已经易主，跨城调兵路线中断。");
     requireRule(!index || index === route.length - 1 || !warBlockaded(state, key), cityName(world, key) + "被封锁，须为援军改道。");
   }
@@ -591,6 +643,7 @@ export function validateOrder(world, state, faction, order) {
     requireRule(owns(state, order.from, faction), "出征城池已经易主。");
     requireRule(origin.links.includes(order.to) && !owns(state, order.to, faction), "只能攻打相邻的非己方城池。");
     requireRule(weatherAllows(state, order.from, order.to), "时令阻断直达陆路，请安排水运军团或另选道路。");
+    requireRule(postTransit(state, faction, order.from, order.to), "直达军路由敌方据点控制，请派军团夺取或改道。");
     requireRule(isHostile(state, faction, state.cities[order.to].owner), "该势力受停战或同盟保护。");
     const era = eraByYear(world, state);
     requireRule(availableAttackers(era, state, faction, order.from).some(({ key }) => key === order.officer), "请选择驻在出征城的待任武将或守将。");
@@ -627,6 +680,7 @@ export function validateOrder(world, state, faction, order) {
     return;
   }
   if (order.type === "recruit") {
+    requireRule(!dynastyLevyRefused(state, order.city), "地方拒绝征募，请在天下经略中处理州郡交涉。");
     const stock = state.factions[faction];
     requireRule(stock.treasury >= recruitment.treasury && stock.grain >= recruitment.grain, "征兵需要 20 国库和 12 粮。");
     const population = state.realm?.cities[order.city]?.population;
@@ -827,11 +881,11 @@ export function forecastAttack(era, state, order, faction = state.player, condit
   const gear = Math.min(.14, (conditions.equipment ?? 0) * 22 / order.troops);
   const weather = edgeWeather(state, order.from, order.to);
   const travel = conditions.travel === "water" && weather.terrain === "river" ? 1.12 : 1 - Math.min(.15, weather.cost * .035);
-  const offense = Math.round(order.troops * (1 + officerSkill(state, leader, "command") / 120 + gear) * travel);
+  const offense = Math.round(order.troops * (1 + officerSkill(state, leader, "command") / 120 + gear) * travel * (conditions.readiness ?? 1));
   const terrain = state.war && weather.terrain;
   const ground = terrain === "pass" ? 1.12 : terrain === "river" ? 1.08 : 1;
   const defense = conditions.surrender ? Math.max(0, offense - 1)
-    : Math.round(defensiveStrength(era, state.cities[order.to], state, order.to) * ground * (1 - (conditions.breach ?? 0) / 330));
+    : Math.round((defensiveStrength(era, state.cities[order.to], state, order.to) + (conditions.relief ?? 0)) * ground * (1 - (conditions.breach ?? 0) / 330));
   return { offense, defense, grain: expeditionGrain(order.troops), wins: offense > defense };
 }
 
@@ -865,6 +919,7 @@ function resolveAttack(world, era, state, faction, order, army, conditions = {})
     const losses = lossUpTo(counted + guard.troops) - lossUpTo(counted);
     counted += guard.troops;
     guard.troops -= losses;
+    recordFormationLoss(state, guard.officer, losses, "守城战损");
   }
   const battle = {
     from: order.from,
@@ -1116,6 +1171,7 @@ function runCityProgram(era, key, city, stock, { reserve, opponent, state, cap }
   };
   // Opponent quotes have always treated their recruitment reserve as unavailable stock.
   const population = state.realm?.cities[key]?.population;
+  if (city.focus === "recruit" && dynastyLevyRefused(state, key)) return { result: "unrest" };
   if (city.focus === "recruit" && population !== undefined && population < 800 + minimumMarch && !city.occupation) return { result: "population" };
   const resources = { balance: opponent ? spendable : stock, spendable, cap };
   const terms = city.focus === "auto" ? quoteAutomaticDevelopment(era, city, resources, state)
@@ -1145,7 +1201,9 @@ function runCityProgram(era, key, city, stock, { reserve, opponent, state, cap }
 }
 
 function settleCityPrograms(world, era, previous, next, captured, entries, { playerOnly = false, includeProgramActions = false } = {}) {
+  prepareAdministration(world, era, next, entries);
   applyNationalPolicy(world, next);
+  applyRegionalMandates(world, next);
   const programs = [];
   const priority = new Set(next.delegationPriority);
   const ordered = Object.entries(next.cities);
@@ -1177,7 +1235,10 @@ function settleCityPrograms(world, era, previous, next, captured, entries, { pla
     if (city.mode !== "delegated" || !city.governor) continue;
     const opponent = city.owner !== next.player;
     const automatic = city.focus === "auto";
-    const reserve = opponent ? recruitment : next.delegationReserve;
+    const baseline = opponent ? recruitment : next.delegationReserve;
+    const national = next.dynasty?.policies[city.owner];
+    const reserve = national ? { treasury: Math.max(national.moneyFloor, baseline?.treasury ?? 0),
+      grain: Math.max(national.grainFloor, baseline?.grain ?? 0) } : baseline;
     const { governor, action, required, spent = { treasury: 0, grain: 0 }, ...status } =
       runCityProgram(era, key, city, next.factions[city.owner], { reserve, opponent, state: next, cap: caps.get(city.owner) });
     if (city.owner === next.player) {
@@ -1222,34 +1283,50 @@ function settleDomestic(world, era, previous, next, captured, entries, options =
 
 export function forecastFinance(world, state, { includeProgramActions = false } = {}) {
   const era = eraByYear(world, state);
-  const { state: projected, captured } = projectOrders(world, state);
+  const prepared = state.sandtable ? structuredClone(state) : state;
+  const grandOrders = [];
+  settlePosts(world, prepared, grandOrders);
+  const { state: projected, captured } = projectOrders(world, prepared);
   const next = projected === state ? structuredClone(state) : projected;
   const stock = next.factions[next.player];
   const income = forceTotals(state, state.player);
   stock.treasury += income.treasury;
   stock.grain += income.grain;
   const theaters = directTheaters(world, era, next, state.orders.length, (order) => applyOrder(world, era, next, next.player, order), true);
-  const grandOrders = [];
   directGrandCampaigns(world, next, (order) => applyOrder(world, era, next, next.player, order), theaters.logistics, grandOrders);
-  const armyReports = advanceFieldArmies(world, era, state, next, true, theaters.logistics, captured);
+  settleFrontCommands(world, era, next, (order) => applyOrder(world, era, next, next.player, order), theaters.logistics, grandOrders,
+    Math.max(0, theaters.slots - grandOrders.filter(({ type }) => type === "order").length));
+  authorizeWars(world, era, next, (order) => applyOrder(world, era, next, next.player, order), grandOrders,
+    Math.max(0, theaters.slots - grandOrders.filter(({ type }) => type === "order").length));
+  const armyReports = advanceFieldArmies(world, era, state, next, true, theaters.logistics, captured, {},
+    Math.max(0, theaters.slots - grandOrders.filter(({ type }) => type === "order").length));
   for (const entry of armyReports) if (entry.type === "capture") captured.add(entry.city);
   const entries = [...grandOrders, ...armyReports, ...theaters.reports];
   settleWarSeason(world, era, next, entries, theaters, true);
+  settleCommandRecovery(world, next, entries);
   const armyReturns = returnedGrain(armyReports, state.player);
   const orders = spending({ treasury: state.factions[state.player].treasury + income.treasury,
     grain: state.factions[state.player].grain + income.grain + armyReturns }, stock);
   const beforePrograms = funds(stock);
   const { programs, relief } = settleDomestic(world, era, state, next, captured, entries, { playerOnly: true, includeProgramActions });
   const afterDomestic = funds(stock);
+  const statecraft = next.statecraft && statecraftLedger();
+  settleCrisisOrders(world, next, entries, statecraft, relief.treasury);
   const ties = settleAccords(world, era, state, next, entries, {}, true);
   const politics = settlePolity(world, state, next, {}, entries, true);
   const grand = settleGrand(world, state, next, entries, {}, true);
   const landscape = settleLandscape(world, next, {}, entries, true);
+  settleStatecraft(world, next, entries, statecraft, true);
+  const sandtable = settleSandtable(world, state, next, {}, entries, true);
+  const dynasty = settleDynasty(world, state, next, {}, entries, true);
+  const reign = settleReign(world, state, next, {}, entries, true);
+  const century = settleCentury(world, state, next, {}, entries, true);
   const closing = funds(stock);
   return { ...openingLedger(state, income), ...(armyReturns ? { armyReturns } : {}),
     orders, delegation: spending({ treasury: beforePrograms.treasury - relief.treasury, grain: beforePrograms.grain - relief.grain }, afterDomestic),
     ...(ties ? { realm: { ...ties, relief } } : {}), ...(politics ? { politics } : {}), ...(grand ? { grand } : {}),
-    ...(landscape ? { landscape } : {}), closing, programs };
+    ...(landscape ? { landscape } : {}), ...(statecraft ? { statecraft } : {}), ...(sandtable ? { sandtable } : {}), ...(dynasty ? { dynasty } : {}),
+    ...(reign ? { reign } : {}), ...(century ? { century } : {}), closing, programs };
 }
 
 export function forecastDelegationReserve(world, state, reserve) {
@@ -1347,10 +1424,27 @@ export function forecastDelegationZones(world, state, policies) {
   return { groups, closing, spent };
 }
 
-function advanceFieldArmies(world, era, previous, next, playerOnly, logistics, captured) {
+function advanceFieldArmies(world, era, previous, next, playerOnly, logistics, captured, proposals, slots) {
   const existing = new Set(previous.armies?.map(({ officer }) => officer));
-  return settleArmies(world, era, next, existing, (army, order, conditions) => resolveAttack(world, era, next, army.faction, order, army, conditions),
-    { playerOnly, logistics, captured });
+  const entries = [];
+  const strategy = prepareStrategy9(world, next, proposals, entries, { playerOnly });
+  if (strategy) prepareReign(world, next, proposals, entries, strategy.controlled, { playerOnly });
+  const commands = prepareCommand(world, next, entries, logistics, slots, strategy);
+  const controlled = prepareFrontline(world, next, existing, entries, { playerOnly, proposals, logistics, slots, commands, precontrolled: strategy?.controlled,
+    applyOrder: (order) => applyOrder(world, era, next, next.player, order) });
+  schedulePassage9(world, next, strategy, entries);
+  const attack = (army, order, conditions) => {
+    const assistance = defenseUnits(next, order.to);
+    const relief = assistance.reduce((sum, { contribution }) => sum + contribution, 0);
+    const row = formationOf(next, army.officer);
+    const readiness = row ? 1 + row.experience / 500 - row.fatigue / 300 : 1;
+    const entry = resolveAttack(world, era, next, army.faction, order, army, { ...conditions, relief, readiness });
+    recordTownBattle(world, next, order, army, entry, assistance);
+    return entry;
+  };
+  entries.push(...settleArmies(world, era, next, existing, attack, { playerOnly, logistics, captured, controlled, passageWait: strategy?.blocked }));
+  if (!playerOnly) settleReinforcementPromises(world, next, entries);
+  return entries;
 }
 
 function settleWarSeason(world, era, next, entries, theaterWork, forecast) {
@@ -1376,6 +1470,7 @@ export function advanceQuarter(world, state, proposals = {}) {
   const era = eraByYear(world, state);
   const next = structuredClone(state);
   const entries = diplomacyEntries(era, state);
+  prepareCenturyYear(world, next);
   const finance = openingLedger(state, forceTotals(state, state.player));
   const opponents = prepareOpponents(world, era, state, proposals);
   const orders = era.factions.map(({ key }) => ({
@@ -1393,6 +1488,7 @@ export function advanceQuarter(world, state, proposals = {}) {
     }
   }
   const afterIncome = funds(next.factions[next.player]);
+  settlePosts(world, next, entries);
   const receipts = new Map();
   const captured = new Set();
   for (let step = 0; step < orders.length; step += 1) {
@@ -1410,30 +1506,51 @@ export function advanceQuarter(world, state, proposals = {}) {
   }
   const theaterWork = directTheaters(world, era, next, state.orders.length, (order) => applyOrder(world, era, next, next.player, order));
   entries.push(...theaterWork.reports);
+  const firstCampaignEntry = entries.length;
   directGrandCampaigns(world, next, (order) => applyOrder(world, era, next, next.player, order), theaterWork.logistics, entries);
-  const armyReports = advanceFieldArmies(world, era, state, next, false, theaterWork.logistics, captured);
+  settleFrontCommands(world, era, next, (order) => applyOrder(world, era, next, next.player, order), theaterWork.logistics, entries,
+    Math.max(0, theaterWork.slots - entries.slice(firstCampaignEntry).filter(({ type }) => type === "order").length));
+  authorizeWars(world, era, next, (order) => applyOrder(world, era, next, next.player, order), entries,
+    Math.max(0, theaterWork.slots - entries.slice(firstCampaignEntry).filter(({ type }) => type === "order").length),
+    (faction, order) => applyOrder(world, era, next, faction, order));
+  const room = Math.max(0, theaterWork.slots - entries.slice(firstCampaignEntry).filter(({ type }) => type === "order").length);
+  const armyReports = advanceFieldArmies(world, era, state, next, false, theaterWork.logistics, captured, proposals, room);
   entries.push(...armyReports);
   const armyReturns = returnedGrain(armyReports, next.player);
   if (armyReturns) finance.armyReturns = armyReturns;
   settleWarSeason(world, era, next, entries, theaterWork, false);
+  settleCommandRecovery(world, next, entries);
   const afterOrders = funds(next.factions[next.player]);
   const { programs, relief } = settleDomestic(world, era, state, next, captured, entries);
   finishWarRecovery(world, state, next, entries);
   const afterDomestic = funds(next.factions[next.player]);
+  const statecraft = next.statecraft && statecraftLedger();
+  settleCrisisOrders(world, next, entries, statecraft, relief.treasury);
   const ties = settleAccords(world, era, state, next, entries, proposals);
   const politics = settlePolity(world, state, next, proposals, entries);
   const grand = settleGrand(world, state, next, entries, proposals);
   const landscape = settleLandscape(world, next, proposals, entries);
+  settleStatecraft(world, next, entries, statecraft);
+  const sandtable = settleSandtable(world, state, next, proposals, entries);
+  const dynasty = settleDynasty(world, state, next, proposals, entries);
+  const reign = settleReign(world, state, next, proposals, entries);
+  const century = settleCentury(world, state, next, proposals, entries);
+  if (next.statecraft) reconcilePolities(next, next.turn + 1);
+  reconcileFormations(next, []);
+  settleCommand(world, next, entries);
+  settleStrategy9(world, state, next, entries);
   const closing = funds(next.factions[next.player]);
   Object.assign(finance, { orders: spending({ ...afterIncome, grain: afterIncome.grain + armyReturns }, afterOrders),
     delegation: spending({ treasury: afterOrders.treasury - relief.treasury, grain: afterOrders.grain - relief.grain }, afterDomestic),
     ...(ties ? { realm: { ...ties, relief } } : {}), ...(politics ? { politics } : {}), ...(grand ? { grand } : {}),
-    ...(landscape ? { landscape } : {}), closing, programs });
+    ...(landscape ? { landscape } : {}), ...(statecraft ? { statecraft } : {}), ...(sandtable ? { sandtable } : {}), ...(dynasty ? { dynasty } : {}),
+    ...(reign ? { reign } : {}), ...(century ? { century } : {}), closing, programs });
   next.turn += 1;
   next.orders = [];
   const currentEra = next.polity ? eraByYear(world, next) : era;
   clearEndedTreaties(currentEra, next, entries);
   updateCoalition(world, currentEra, next);
+  archiveDynasty(world, state, next);
   next.strategies = {};
   const decisions = opponents.decisions.map(({ goal, ...decision }) => {
     const strategy = assessGoal(next, decision.faction, goal);
@@ -1481,7 +1598,8 @@ export function advanceQuarter(world, state, proposals = {}) {
     const name = factionName(era, state.player);
     entries.unshift({
       type: result, faction: state.player,
-      text: result === "victory" ? name + "统一天下，战局获胜。" : name + "失去所有城池，战局结束。",
+      text: result === "victory" ? name + (next.reign?.stewardship?.finished ? "完成交班与治理恢复，守成篇结卷。" : "统一天下，战局获胜。")
+        : name + "失去所有城池，战局结束。",
     });
   }
   // Stage and terminal notices can be inserted ahead of the orders in the archived report.
@@ -1494,6 +1612,8 @@ export function advanceQuarter(world, state, proposals = {}) {
   settleCampaignTasks(world, next, entries);
   appendWarReports(next, entries.slice(count));
   recordPolity(world, next, entries);
+  archiveReign(world, state, next);
+  archiveCentury(world, next, entries);
   next.history = [...next.history, { turn: next.turn, entries, decisions, finance }].slice(-archivedQuarters);
   if (next.personnelHistory) {
     next.personnelHistory = next.personnelHistory.filter(({ turn }) => turn >= next.turn - archivedQuarters);
@@ -1520,7 +1640,7 @@ function validOrderPersonnel(entry, cities, officers) {
 }
 
 function validDecisionReceipt(state, report, { entryIndex, orderType, faction }) {
-  if (faction === state.player || report.turn < 1 || report.turn > state.turn) return false;
+  if (faction === (report.viewer ?? state.player) || report.turn < 1 || report.turn > state.turn) return false;
   if (orderType === "rest") return entryIndex === null;
   if (!Number.isSafeInteger(entryIndex) || entryIndex < 0) return false;
   const entry = report.entries[entryIndex];
@@ -1605,6 +1725,14 @@ export function decodeSave(world, text) {
   requireRule(validPolity(world, state, era, base), "存档势力演变、州郡或议案资料无效。");
   requireRule(validGrand(world, state, officers), "存档战略调度、联军编组或议约资料无效。");
   requireRule(validLandscape(world, state), "存档时令、物流或多方议约资料无效。");
+  requireRule(validStatecraft(world, state, officers), "存档全国方针、战区或人才资料无效。");
+  requireRule(validSandtable(world, state, officers), "存档沙盘据点、战争或动员记录无效。");
+  requireRule(validFrontline(state, officers), "存档会战、军团履历或联军请求无效。");
+  requireRule(validHighCommand(state, officers), "存档全国军议或战役授权无效。");
+  requireRule(validDynasty(world, state, officers), "存档天下经略、工程或粮运资料无效。");
+  requireRule(validStrategy9(world, state, officers), "存档诸侯争衡、战区或战略调令资料无效。");
+  requireRule(validReign(world, state, officers), "存档王朝兴替、民仓、册任或集团资料无效。");
+  requireRule(validCentury(world, state, officers), "存档山河百年、年度方略或战役纪事无效。");
   requireRule(validCampaignProgress(state, officers), "存档战役或武将资历无效。");
   requireRule(state.nationalPolicy === undefined || validNationalPolicy(state.nationalPolicy), "存档国策无效。");
   const overrides = state.policyOverrides;
@@ -1657,7 +1785,8 @@ export function decodeSave(world, text) {
       && (!index || change.turn >= history[index - 1].turn))), "存档人事履历无效。");
   for (const report of state.history) {
     const historical = state.polity ? new Map(eraByYear(world, state, Math.max(0, report?.turn - 1)).officers.map((person) => [person.key, person])) : officers;
-    requireRule(report && nonnegative(report.turn) && Array.isArray(report.entries)
+    requireRule(report && nonnegative(report.turn) && (report.viewer === undefined || state.sandtable && Object.hasOwn(state.factions, report.viewer))
+      && Array.isArray(report.entries)
       && report.entries.every((entry) => entry && typeof entry.text === "string" && typeof entry.type === "string"
         && (entry.type !== "war" || (warEvents.has(entry.event) && Object.hasOwn(state.factions, entry.faction)
           && Object.hasOwn(state.cities, entry.city) && (entry.officer === undefined || officers.has(entry.officer))))

@@ -157,7 +157,7 @@ export function directGrandCampaigns(world, state, runOrder, logistics, entries)
   for (const plan of state.grand.campaigns) {
     const army = (role) => armyByOfficer(state, plan.wings[role]?.officer);
     if (!active(plan)) {
-      if (plan.status === "paused") {
+        if (plan.status === "paused" && plan.note !== "地图已接管该军团。") {
         for (const role of Object.keys(plan.wings)) {
           const unit = army(role);
           if (!unit || unit.phase === "retreat") continue;

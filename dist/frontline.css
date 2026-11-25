@@ -1,0 +1,209 @@
+#frontline-dialog {
+  width: min(44rem, calc(100dvw - .8rem));
+  background: #27241b;
+  border-color: #a48152;
+  box-shadow: 0 14px 50px #16130999;
+}
+#frontline-dialog .dialog-content { gap: .58rem; padding: .75rem; }
+.frontline-body { display: grid; gap: .49rem; min-width: 0; }
+.frontline-body p, .frontline-feedback { font-size: .82rem; color: #e5d3aa; line-height: 1.32; }
+.frontline-feedback { color: #f4d489; }
+.frontline-feedback:empty { display: none; }
+.frontline-tabs, .frontline-row { display: flex; flex-wrap: wrap; align-items: end; gap: .35rem; min-width: 0; }
+.frontline-tabs button, .frontline-row button { white-space: nowrap; }
+.frontline-tabs button[aria-pressed="true"], .frontline-row button[aria-pressed="true"] {
+  background: #765939;
+  border-color: #dfb984;
+  color: #fff1d1;
+}
+.frontline-row label { display: grid; gap: .12rem; color: #d4bf99; font-size: .75rem; min-width: 0; }
+.frontline-row select { min-width: 0; max-width: 100%; }
+.frontline-row input { width: 5.4rem; }
+.frontline-units { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+#frontline-dialog:is([data-battle-view="plan"], [data-battle-view="replay"]) {
+  width: min(61rem, calc(100dvw - .8rem));
+  color: #f0eade;
+  background: #191d1e;
+  border-color: #77705f;
+  box-shadow: 0 24px 90px #06090cd4;
+}
+#frontline-dialog:is([data-battle-view="plan"], [data-battle-view="replay"])::backdrop { background: #0b1016be; }
+#frontline-dialog:is([data-battle-view="plan"], [data-battle-view="replay"]) .frontline-tabs {
+  padding-bottom: .42rem;
+  border-bottom: 1px solid #4d504b;
+}
+#frontline-dialog:is([data-battle-view="plan"], [data-battle-view="replay"]) :is(button, select, input) {
+  background: #252a29;
+  border-color: #55574e;
+  color: #f1e8d6;
+}
+#frontline-dialog:is([data-battle-view="plan"], [data-battle-view="replay"]) button:hover:not(:disabled) { background: #363b34; }
+#frontline-dialog:is([data-battle-view="plan"], [data-battle-view="replay"]) button[aria-pressed="true"] {
+  background: #444232;
+  border-color: #c5ad78;
+  color: #ffedc5;
+}
+#frontline-dialog [data-pane="plan"] .battlefield-submit { color: #20231f; background: #d5bc89; border-color: #e0ca9d; }
+#frontline-dialog [data-pane="plan"] .battlefield-submit:hover:not(:disabled) { background: #ead0a0; }
+.battlefield-board { position: relative; min-width: 0; border: 1px solid #655c49; background: #171b1b; }
+.battlefield-visual {
+  position: relative;
+  overflow: hidden;
+  height: clamp(9rem, 38dvh, 22rem);
+  background: #303631;
+  isolation: isolate;
+}
+.battlefield-visual .frontline-scene { width: 100%; height: 100%; display: block; object-fit: cover; object-position: 50% 70%; }
+.battlefield-caption, .battlefield-locations {
+  position: absolute;
+  inset-inline: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: .75rem;
+  padding: .6rem .78rem;
+  color: #f7ead2;
+  font-size: .77rem;
+  pointer-events: none;
+  text-shadow: 0 1px 4px #0a1012;
+}
+.battlefield-caption { top: 0; align-items: start; background: linear-gradient(180deg, #10171ba6, transparent); }
+.battlefield-caption > div { display: grid; gap: .11rem; }
+.battlefield-caption strong { font-size: clamp(1.14rem, 2.4vw, 2rem); font-weight: 700; line-height: 1.14; }
+.battlefield-caption span { color: #eddfc1; }
+.battlefield-caption .battlefield-context { align-self: start; padding: .16rem .36rem; border: 1px solid #d5c29d61; }
+.battlefield-locations { bottom: 0; background: linear-gradient(0deg, #0d1418cb, transparent); font-weight: 650; }
+.battlefield-locations span:last-child { text-align: end; }
+.frontline-body .battlefield-intel { color: #d0c7b5; font-size: .76rem; padding: .38rem .6rem 0; }
+.battlefield-roster { display: flex; flex-wrap: wrap; padding: .38rem .6rem .55rem; gap: .32rem; }
+#frontline-dialog .battlefield-marker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: .45rem;
+  min-width: 0;
+  min-height: 2.45rem;
+  padding: .21rem .44rem;
+  text-align: start;
+}
+.battlefield-marker strong { font-size: .83rem; }
+.battlefield-marker span { color: #e5ca98; font-size: .72rem; }
+.battlefield-marker small { grid-column: span 2; color: #d1c8b6; font-size: .7rem; }
+.battlefield-forces { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+.battlefield-force {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: .36rem .62rem;
+  min-width: 0;
+  background: #232827;
+  border: 1px solid #4d5149;
+  border-top: 2px solid var(--side-color);
+  padding: .47rem .6rem .48rem;
+}
+.battlefield-force-name, .battlefield-numbers > div { display: grid; gap: .14rem; }
+.battlefield-force-name strong { font-size: .98rem; color: #f5e9d1; }
+.battlefield-force-name span, .battlefield-numbers span { color: #c8c0ae; font-size: .7rem; }
+.battlefield-numbers { display: flex; gap: .72rem; }
+.battlefield-numbers strong { color: #f4ebda; font-size: .99rem; font-variant-numeric: tabular-nums; }
+.battlefield-strength { grid-column: 1 / -1; height: 3px; background: #101615; }
+.battlefield-strength span { display: block; height: 100%; background: var(--side-color); }
+.battlefield-timeline { gap: .36rem; }
+.battlefield-timeline button[data-battle-step] { flex: 1 1 3rem; }
+.battlefield-result { color: #e3c28a; font-weight: 700; }
+#open-frontline-map {
+  position: absolute;
+  z-index: 7;
+  top: 2.55rem;
+  right: 1.95rem;
+  min-height: 1.85rem;
+  padding: .16rem .44rem;
+  font-size: .76rem;
+  color: #ffefc2;
+  background: #533821;
+  border-color: #c89a5b;
+  box-shadow: 0 1px 4px #2e22226b;
+}
+.army-map-pin.troop-pin {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 37px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: .38rem;
+}
+.army-map-pin.troop-pin[hidden] { display: none; }
+.map-stage .troop-pin canvas {
+  width: 52px;
+  height: 39px;
+  pointer-events: none;
+  position: static;
+  grid-area: 1 / 1;
+  filter: drop-shadow(0 1px 1px #f1deb794);
+}
+.troop-pin:hover, .troop-pin:focus-visible { background: #2a23164f; border-color: #e6c383; }
+.troop-pin[data-cut="true"] { border-bottom-color: #bd6447; }
+.troop-pin canvas + canvas, .troop-pin[data-far="true"] canvas:first-child { display: none; }
+.troop-pin[data-far="true"] canvas + canvas { display: block; }
+@media (max-width: 600px) and (min-height: 430px) {
+  #frontline-dialog button, #frontline-dialog select, #frontline-dialog input { min-height: 2.52rem; }
+  #open-frontline-map { min-height: 2.32rem; top: 2.88rem; }
+  .troop-pin canvas { width: 45px; height: 34px; }
+  .army-map-pin.troop-pin { width: 37px; height: 36px; }
+  .battlefield-visual { height: clamp(8rem, 45vw, 14rem); }
+  .battlefield-caption, .battlefield-locations { padding: .48rem .56rem; }
+  .battlefield-force { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-height: 430px) {
+  #frontline-dialog .dialog-content { gap: .26rem; padding: .43rem; }
+  .frontline-body { gap: .26rem; }
+  .battlefield-visual { height: clamp(3.9rem, 19dvh, 5.9rem); }
+  #frontline-dialog:is([data-battle-view="plan"], [data-battle-view="replay"]) .dialog-content { gap: .2rem; padding: .34rem; }
+  #frontline-dialog:is([data-battle-view="plan"], [data-battle-view="replay"]) .frontline-tabs { padding-bottom: .14rem; }
+  .battlefield-caption, .battlefield-locations { padding: .19rem .34rem; font-size: .62rem; }
+  .battlefield-caption strong { font-size: .86rem; }
+  .battlefield-caption > div { gap: 0; }
+  .battlefield-caption > div span { display: none; }
+  .frontline-body .battlefield-intel {
+    position: absolute; inset-inline-end: .22rem; top: 1.08rem; padding: .1rem .19rem;
+    max-width: calc(100% - .44rem); background: #111a1ce0; font-size: .6rem; color: #f5ecd6;
+  }
+  .battlefield-roster {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: .22rem; padding: .19rem .3rem .22rem;
+  }
+  #frontline-dialog .battlefield-marker { min-height: 1.56rem; padding: .08rem .23rem; }
+  .battlefield-marker strong, .battlefield-marker span, .battlefield-force-name strong, .battlefield-numbers strong { font-size: .72rem; }
+  .battlefield-marker small { display: none; }
+  .battlefield-marker strong { overflow: hidden; text-overflow: ellipsis; }
+  .battlefield-roster:has(> :nth-child(3)) .battlefield-marker { display: block; }
+  .battlefield-roster:has(> :nth-child(3)) .battlefield-marker > span { display: none; }
+  .battlefield-force { padding: .23rem .29rem; gap: .2rem .27rem; }
+  .battlefield-force-name span, .battlefield-numbers span { font-size: .62rem; }
+  .battlefield-numbers { gap: .31rem; }
+  .battlefield-timeline button[data-battle-step] { flex-basis: 2.25rem; }
+  #frontline-dialog[data-battle-view="plan"] .frontline-feedback[data-error="false"] {
+    position: absolute; height: 1px; width: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  #frontline-dialog[data-battle-view="plan"] .frontline-feedback[data-error="true"] { font-size: .69rem; color: #ffd5a1; }
+  .frontline-row, .frontline-tabs { gap: .23rem; }
+  #frontline-dialog button, #frontline-dialog select, #frontline-dialog input { min-height: 1.66rem; padding: .09rem .24rem; font-size: .74rem; }
+  #open-frontline-map { top: 1.86rem; min-height: 1.64rem; font-size: .69rem; }
+}
+@media (max-width: 360px) and (max-height: 430px) {
+  #frontline-dialog .frontline-row label { font-size: .69rem; }
+  .frontline-row input { width: 3rem; }
+  .frontline-row select { max-width: 7rem; }
+  #frontline-dialog[data-battle-view="plan"] .battlefield-visual { height: clamp(3rem, 14dvh, 4.2rem); }
+}
+@media (min-width: 500px) and (max-height: 400px) {
+  .frontline-body[data-pane="plan"] { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); }
+  .frontline-body[data-pane="plan"] > :first-child { grid-column: 1 / -1; }
+  .frontline-body[data-pane="plan"] > .battlefield-board {
+    grid-column: 1;
+    grid-row: 2 / span 4;
+  }
+  .frontline-body[data-pane="plan"] .battlefield-visual { height: clamp(5.5rem, 32dvh, 8.4rem); }
+  .frontline-body[data-pane="plan"] > :nth-child(n+3) { grid-column: 2; }
+  .frontline-body[data-pane="plan"] > .frontline-units { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

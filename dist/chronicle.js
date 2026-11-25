@@ -6,7 +6,7 @@ function reportKinds(entry) {
   if (entry.type === "army" || entry.type === "theater" || entry.orderType === "mobilize") return ["combat"];
   if (entry.type === "recruit-officer") return ["staff"];
   if (entry.type === "capture") return ["combat", "occupation"];
-  if (entry.type === "battle") return ["combat"];
+  if (entry.type === "battle" || entry.type === "frontline" || entry.type === "command") return ["combat"];
   if (entry.type === "recovery") return ["occupation"];
   if (entry.type === "diplomacy") return ["diplomacy"];
   if (entry.type === "grand") return entry.participants ? ["diplomacy"] : ["combat", "domestic"];

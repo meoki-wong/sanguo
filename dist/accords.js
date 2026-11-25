@@ -5,6 +5,7 @@ import { roadPath } from "./roads.js";
 import { warBlockaded, warReport } from "./war-operations.js";
 import { militaryView } from "./war-intel.js";
 import { hasPassage, openRoadEdge } from "./grand-logistics.js";
+import { leagueAccord, marketEmbargo } from "./reign-leagues.js";
 
 export const accordKinds = { trade: "通商", aid: "粮援", joint: "合兵" };
 export const allyDuties = { assault: "合击", diversion: "牵制", relief: "解围策应" };
@@ -43,6 +44,7 @@ function usableForTrade(state, from, to, key) {
 }
 
 export function commercialRoad(world, state, from, to, sites) {
+  if (marketEmbargo(state, from, to)) return null;
   const graph = new Map(world.cities.map((city) => [city.key, city]));
   const markets = activeAccords(state).filter(({ kind }) => kind === "trade");
   const usable = (key) => {
@@ -363,12 +365,28 @@ function originalCore(era, state, faction) {
 }
 
 export function coalitionPartners(world, era, state) {
-  return activeAccords(state, state.player).filter(({ from, to, kind, sites }) => {
+  const partners = activeAccords(state, state.player).filter(({ from, to, kind, sites }) => {
     const ally = from === state.player ? to : from;
     const treaty = treatyWith(state, state.player, ally);
     return kind === "trade" && treaty?.kind === "alliance" && accordCredit(state, state.player, ally) >= 12
       && originalCore(era, state, ally) && commercialRoad(world, state, from, to, sites);
-  }).map(({ from, to }) => from === state.player ? to : from).sort();
+  }).map(({ from, to }) => from === state.player ? to : from);
+  for (const accord of state.dynasty?.treaties ?? []) {
+    const { from, to, status, until, signed, defense, passage, missed, paid, payment } = accord;
+    if (![from, to].includes(state.player) || !defense || !passage || missed || status !== "active" || until <= state.turn
+      || state.turn - signed < 2 || paid < payment * 2) continue;
+    const ally = from === state.player ? to : from;
+    if (live(state, ally) && commercialRoad(world, state, state.player, ally)) partners.push(ally);
+  }
+  for (const group of state.reign?.leagues ?? []) {
+    if (!group.military || !group.passage || group.status !== "active" || state.turn < group.founded + 3) continue;
+    for (const [ally, obligation] of Object.entries(group.members)) {
+      if (ally === state.player || obligation.defaults || !leagueAccord(state, state.player, ally) || !live(state, ally)) continue;
+      if (ally !== group.host && obligation.paid < group.dues * 2) continue;
+      if (commercialRoad(world, state, state.player, ally)) partners.push(ally);
+    }
+  }
+  return [...new Set(partners)].sort();
 }
 
 export function updateCoalition(world, era, state) {
@@ -392,6 +410,7 @@ export function coalitionCriteria(world, era, state) {
     { label: "持续履约季度", value: current?.streak ?? 0, target: 4 },
     { label: "保有本国核心", value: Number(originalCore(era, state, state.player)), target: 1 },
   ];
+  if (state.dynasty) checks.push({ label: "财政与地方连续稳定", value: state.dynasty.continuity.alliance, target: 3 });
   return { title: "诸侯共守", checks, partners, ready: !state.orders.length && checks.every(({ value, target }) => value >= target) };
 }
 

@@ -9,6 +9,7 @@ import {
 import { configureGate, crossings, dispatchRoute, districtStatus, gateOwner, grandPriorities, saveDistrict, saveGrandNational } from "./grand-logistics.js";
 import { openingDifficulties, openingGoals } from "./landscape.js";
 import { travelModes } from "./landscape-terrain.js";
+import { frontMissions } from "./front-command.js";
 
 function options(element, rows, preferred = element.value) {
   element.replaceChildren(...rows.map(([value, title]) => new Option(title, value)));
@@ -422,18 +423,21 @@ export function createOpeningEditor(world, accept) {
   }
 
   function request() {
-    return { ...draft, title: value("title").trim() };
+    const command = draft.command;
+    return { ...draft, title: value("title").trim(), ...(command ? { command: { depot: command.depot, amount: command.amount,
+      truce: command.truce, front: command.target ? { id: 1, mission: command.mission, target: command.target, troops: 1400,
+        grain: 50, floor: 400, auto: true, army: command.army } : null } } : {}) };
   }
 
   function opening() {
-    return createGame(world, setup.era.year, setup.player, { landscape: true, opening: request() });
+    return createGame(world, setup.era.year, setup.player, { century: true, opening: request() });
   }
 
   function refresh() {
     const { era, player } = setup;
     const mode = value("mode");
     const owner = (key) => draft.owners[key] ?? era.ownership[key];
-    for (const key of ["cities", "stocks", "stations", "rules"]) find(key).hidden = key !== mode;
+    for (const key of ["cities", "stocks", "stations", "rules", "command"]) find(key).hidden = key !== mode;
     const factions = era.factions.map(({ key, name }) => [key, name]);
     if (mode === "cities") {
       const city = options(find("city"), names(world.cities));
@@ -457,6 +461,17 @@ export function createOpeningEditor(world, accept) {
       const rival = options(find("rival"), factions.filter(([key]) => key !== player));
       find("credit").value = draft.relations[rival] ?? 0;
     }
+    if (mode === "command") {
+      const command = draft.command ?? {};
+      options(find("mission"), Object.entries(frontMissions), command.mission ?? "siege");
+      const defensive = ["relief", "guard"].includes(value("mission"));
+      options(find("objective"), [["", "按剧本开局"], ...names(world.cities.filter(({ key }) => (owner(key) === player) === defensive))], command.target ?? "");
+      options(find("warehouse"), [["", "无初始粮仓"], ...names(world.cities.filter(({ key }) => owner(key) === player))], command.depot ?? "");
+      options(find("ceasefire"), [["", "遵从剧本"], ...factions.filter(([key]) => key !== player)], command.truce ?? "");
+      find("warehouse-stock").value = command.amount || 40;
+      find("assemble").checked = Boolean(command.army);
+      find("assemble").disabled = defensive;
+    }
     const holdings = world.cities.filter(({ key }) => owner(key) === player).length;
     find("status").textContent = factionName(era, player) + " · " + holdings + " 座开局主城 · 已调整 " + Object.keys(draft.owners).length + " 城。";
     find("status").dataset.error = "false";
@@ -471,6 +486,12 @@ export function createOpeningEditor(world, accept) {
 
   for (const id of ["mode", "city", "faction", "person", "rival"]) find(id).onchange = refresh;
   for (const id of ["difficulty", "goal"]) find(id).onchange = () => { draft[id] = value(id); };
+  for (const id of ["mission", "objective", "warehouse", "warehouse-stock", "ceasefire", "assemble"]) find(id).onchange = () => {
+    draft.command = { mission: value("mission"), target: value("objective"), depot: value("warehouse"),
+      amount: value("warehouse") ? find("warehouse-stock").valueAsNumber : 0, truce: value("ceasefire"),
+      army: find("assemble").checked && !["guard", "relief"].includes(value("mission")) };
+    if (id === "mission") { draft.command.target = ""; refresh(); }
+  };
   find("credit").onchange = () => {
     if (find("credit").checkValidity() && Number.isSafeInteger(find("credit").valueAsNumber)) {
       draft.relations[value("rival")] = find("credit").valueAsNumber;
@@ -479,6 +500,7 @@ export function createOpeningEditor(world, accept) {
   find("library").onchange = () => {
     if (!value("library")) return;
     draft = structuredClone(library[Number(value("library"))].draft);
+    if (draft.command?.front) Object.assign(draft.command, draft.command.front);
     find("title").value = draft.title;
     refresh();
   };

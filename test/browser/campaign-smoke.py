@@ -279,11 +279,13 @@ def check_campaign_details(state, seat, city_rows, command_rows, governance_rows
         priorities.append(2 if "治所" in status else int(exposed))
     assert priorities == sorted(priorities, reverse=True)
     stationed = {person: city for person, city in state["stations"].items() if city in holdings}
+    stationed_armies = {army["officer"]: army["location"] for army in state.get("armies", []) if army["faction"] == player}
     for rows, skill_index in ((command_rows, 0), (governance_rows, 1)):
-        assert sorted(row[0] for row in rows) == sorted(stationed)
+        assert sorted(row[0] for row in rows) == sorted(stationed.keys() | stationed_armies.keys())
         values = []
         for person, name, station, skills in rows:
-            assert name and station == WORLD_CITIES[stationed[person]]["name"]
+            expected = "军团 · " + WORLD_CITIES[stationed_armies[person]]["name"] if person in stationed_armies else WORLD_CITIES[stationed[person]]["name"]
+            assert name and station == expected
             values.append(int(re.findall(r"\d+", skills)[skill_index]))
         assert values == sorted(values, reverse=True)
 
@@ -1012,6 +1014,109 @@ for (const key of ['cao-1','cao-2','cao-roster-3']) state.stations[key]='luoyang
 console.log(JSON.stringify({state,selected:'luoyang'}));
 """
     return json.loads(subprocess.check_output(["node", "--input-type=module", "-e", source], cwd=ROOT, encoding="utf-8"))
+
+
+def statecraft_fixture():
+    source = """
+import fs from 'node:fs';
+import {createGame} from './dist/engine.js';
+import {enrichWorld} from './dist/personnel.js';
+import {prepareConvoy} from './dist/landscape-economy.js';
+const world = enrichWorld(JSON.parse(fs.readFileSync('./dist/assets/world.json')));
+let state = createGame(world, 199, 'cao', {landscape:true});
+state.cities.luoyang.troops=6500;
+state.cities.changan.troops=550;
+state.factions.cao.grain=460;
+state.factions.cao.treasury=300;
+for (const key of ['cao-1','cao-2','cao-roster-3']) state.stations[key]='luoyang';
+state = prepareConvoy(world,state,{from:'xu',to:'luoyang',amount:24,mode:'land',cargo:'grain'});
+console.log(JSON.stringify({state,selected:'luoyang'}));
+"""
+    return json.loads(subprocess.check_output(["node", "--input-type=module", "-e", source], cwd=ROOT, encoding="utf-8"))
+
+
+def play_statecraft(browser, address, viewport):
+    mobile = viewport[0] <= 568
+    seed = statecraft_fixture()
+    page, errors = new_page(browser, address, viewport, seed, mobile=mobile)
+    use = page.tap if mobile else page.click
+
+    def press(name):
+        button = page.locator("#statecraft-dialog").get_by_role("button", name=name, exact=True)
+        (button.tap if mobile else button.click)()
+
+    use("#open-menu")
+    use("#open-statecraft-menu")
+    press("启用 4.0")
+    assert saved(page)["landscape"]["convoys"] == seed["state"]["landscape"]["convoys"]
+    page.select_option('[name="profile"]', "growth")
+    page.select_option('[name="personnel"]', "search")
+    press("颁行国策")
+    assert saved(page)["statecraft"]["policy"]["personnel"] == "search"
+    fit(page, "#statecraft-dialog")
+    use('[data-statecraft-tab="regions"]')
+    page.select_option('#statecraft-body [name="region"]', label="中原与淮北 · 压力 0")
+    page.select_option('#statecraft-body [name="focus"]', "guard")
+    press("保存州郡授权")
+    page.select_option('#statecraft-body [name="response"]', "relief")
+    press("安排处置")
+    assert saved(page)["statecraft"]["responses"]["中原与淮北"] == "relief"
+    fit(page, "#statecraft-dialog")
+    use('[data-statecraft-tab="fronts"]')
+    press("调整战区额度")
+    page.fill('#statecraft-body [name="troops"]', "3200")
+    page.fill('#statecraft-body [name="grain"]', "90")
+    press("地图选目标")
+    assert page.locator("#statecraft-dialog").is_hidden()
+    site = page.locator('[data-city-pin="changan"][data-command-target="true"]')
+    box = site.bounding_box()
+    assert box is not None
+    (page.touchscreen.tap if mobile else page.mouse.click)(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    assert page.locator('#statecraft-body [name="target"]').input_value() == "changan"
+    assert page.locator('#statecraft-body [name="troops"]').input_value() == "3200"
+    press("下达授权")
+    fit(page, "#statecraft-dialog")
+    close(page, "statecraft-dialog")
+
+    first = advance(page, 1)
+    officer = first["statecraft"]["fronts"][0]["officer"]
+    assert officer and first["statecraft"]["fronts"][0]["status"] == "active"
+    assert any(hold["mode"] == "delegated" for hold in first["cities"].values() if hold["owner"] == "cao")
+    assert first["landscape"]["convoys"][0]["status"] == "delivered"
+    assert first["history"][-1]["finance"]["statecraft"]["budget"]["grain"] == 16
+    marker = page.locator('[data-statecraft-front="1"]')
+    (marker.tap if mobile else marker.click)()
+    assert page.locator('[data-statecraft-tab="fronts"]').get_attribute("aria-pressed") == "true"
+    fit(page, "#statecraft-dialog")
+    close(page, "statecraft-dialog")
+    state = first
+    for turn in range(2, 8):
+        state = advance(page, turn)
+        if state["cities"]["changan"]["owner"] == "cao" and state.get("recruitedOfficers"):
+            break
+    assert state["cities"]["changan"]["owner"] == "cao"
+    assert state.get("recruitedOfficers")
+    use("#open-statecraft-map")
+    use('[data-statecraft-tab="talent"]')
+    assert "季末访才已启用" in page.locator("#statecraft-body").inner_text()
+    fit(page, "#statecraft-dialog")
+    press("登庸 · 42 钱")
+    assert saved(page)["statecraft"]["invite"]["officer"]
+    close(page, "statecraft-dialog")
+    state = advance(page, state["turn"] + 1)
+    assert state["statecraft"]["invite"] is None
+    use("#map-weather")
+    use('[data-landscape-tab="replay"]')
+    assert page.locator(".landscape-timeline li").count() > 0
+    close(page, "landscape-dialog")
+    page.reload()
+    page.locator("#open-statecraft-map").wait_for(state="visible")
+    assert saved(page) == state
+    fit(page, ".map-panel")
+    fit(page, "html")
+    assert not errors, errors
+    page.close()
+    print(f"{viewport}: 4.0 升级、国策自动补任、州郡处置、地图定战区、自动攻占和访才、复盘、读档", flush=True)
 
 
 def play_landscape(browser, address, viewport):
@@ -1859,6 +1964,114 @@ def play_model_turn(browser, address, viewport):
         print(f"{viewport}: 模型连接测试、独立拟令、并发共用结果、旧 JSON 和故障回退", flush=True)
 
 
+def play_sandtable(browser, address, viewport):
+    mobile = viewport[0] <= 568
+    page, errors = new_page(browser, address, viewport, mobile=mobile)
+    use = page.tap if mobile else page.click
+
+    def press(name):
+        control = page.locator("#sandtable-dialog").get_by_role("button", name=name, exact=True)
+        (control.tap if mobile else control.click)()
+
+    use("#open-sandtable-map")
+    use('[data-sandtable-tab="industry"]')
+    page.select_option('[name="mobilization"]', "urgent")
+    page.select_option('[name="industry-role"]', "industry")
+    press("颁行动员令")
+    assert saved(page)["sandtable"]["economy"]["cao"]["mode"] == "urgent"
+    fit(page, "#sandtable-dialog")
+    use('[data-sandtable-tab="war"]')
+    page.select_option('[name="war-target"]', "changan:luoyang")
+    press("下达开战令")
+    assert saved(page)["sandtable"]["wars"][0]["goal"] == "corridor"
+    fit(page, "#sandtable-dialog")
+    close(page, "sandtable-dialog")
+    for turn in (1, 2, 3):
+        state = advance(page, turn)
+    assert state["sandtable"]["posts"]["changan:luoyang"]["owner"] == "cao"
+    assert state["cities"]["changan"]["owner"] == "ma"
+    assert state["history"][-1]["finance"]["sandtable"]["budget"]["treasury"] > 0
+    use('[data-map-layer="roads"]')
+    use('[data-post="changan:luoyang"]')
+    assert "函谷关" in page.locator("#sandtable-body").inner_text()
+    press("解除封控")
+    assert saved(page)["sandtable"]["postOrders"][0]["kind"] == "open"
+    close(page, "sandtable-dialog")
+
+    use("#open-sandtable-map")
+    use('[data-sandtable-tab="war"]')
+    page.select_option('[name="peace-kind"]', "passage")
+    page.fill('[name="peace-pay"]', "12")
+    press("遣使议和")
+    assert saved(page)["sandtable"]["wars"][0]["offer"]["kind"] == "passage"
+    close(page, "sandtable-dialog")
+    state = advance(page, 4)
+    assert state["sandtable"]["wars"][0]["status"] == "ended"
+    assert state["history"][-1]["finance"]["sandtable"]["out"]["treasury"] == 12
+    use("#open-sandtable-map")
+    use('[data-sandtable-tab="journal"]')
+    assert page.locator('#sandtable-body [name="history-turn"]').input_value() == "4"
+    fit(page, "#sandtable-dialog")
+    press("地图回看")
+    assert page.locator("#polity-dialog").is_visible()
+    assert page.locator("#polity-quarter").input_value() == "4"
+    close(page, "polity-dialog")
+    page.reload()
+    page.locator("#open-sandtable-map").wait_for(state="visible")
+    assert saved(page) == state
+    fit(page, "html")
+    assert not errors, errors
+    page.close()
+    print(f"{viewport}: 5.0 全国动员、标准开局争夺函谷关、地图解封、议和交割、纪事回看、读档", flush=True)
+
+
+def play_sandtable_branch(browser, address, viewport):
+    script = """
+import fs from 'node:fs';
+import {mobilizeArmy} from './dist/armies.js';
+import {createGame} from './dist/engine.js';
+import {enrichWorld} from './dist/personnel.js';
+const world = enrichWorld(JSON.parse(fs.readFileSync('./dist/assets/world.json')));
+const state = createGame(world,199,'cao',{sandtable:true});
+state.factions.cao.morale=24;
+state.delegationReserve={treasury:0,grain:1200};
+state.cities.luoyang.troops=4800;
+state.stations['cao-1']='luoyang';
+mobilizeArmy(world,state,'cao',{from:'luoyang',to:'changan',officer:'cao-1',troops:1800,stance:'siege'});
+Object.assign(state.armies[0],{opening:true,phase:'hold',prepared:true,grain:0});
+console.log(JSON.stringify({state,selected:'luoyang'}));
+"""
+    seed = json.loads(subprocess.check_output(["node", "--input-type=module", "-e", script], cwd=ROOT, encoding="utf-8"))
+    mobile = viewport[0] <= 568
+    page, errors = new_page(browser, address, viewport, seed, mobile=mobile)
+    use = page.tap if mobile else page.click
+    use("#open-sandtable-map")
+    run = page.locator("#sandtable-dialog").get_by_role("button", name="连续推进四季")
+    (run.tap if mobile else run.click)()
+    state = wait_for_turn(page, 1)
+    assert state["sandtable"]["unrest"]["cao-1"]
+    assert "连续推进已停" in page.get_by_role("status").filter(has_text="连续推进已停").first.inner_text()
+    advance(page, 2)
+    third = advance(page, 3)
+    split = third["cities"]["luoyang"]["owner"]
+    assert split.startswith("spl-")
+    use("#open-sandtable-map")
+    use('[data-sandtable-tab="regime"]')
+    pick = page.locator("#sandtable-dialog").get_by_role("button", name="接手势力")
+    (pick.tap if mobile else pick.click)()
+    assert saved(page)["player"] == split
+    assert saved(page)["history"][0]["viewer"] == "cao"
+    state = advance(page, 4)
+    assert state["player"] == split
+    page.reload()
+    page.locator("#open-sandtable-map").wait_for(state="visible")
+    assert saved(page) == state
+    assert not errors, errors
+    fit(page, "html")
+    page.close()
+    print(f"{viewport}: 5.0 多季推进在军变预警时停下，兵变后接手新势力并继续结算和读档", flush=True)
+
+
 def main():
     browser_path = os.getenv("SAN_CHROMIUM_PATH")
     if not browser_path:
@@ -1867,6 +2080,12 @@ def main():
     with isolated_game() as address, sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=browser_path, headless=True)
         try:
+            for viewport in ((1440, 900), (390, 844), (320, 360), (568, 320)):
+                play_sandtable(browser, address, viewport)
+            for viewport in ((1440, 900), (390, 844)):
+                play_sandtable_branch(browser, address, viewport)
+            for viewport in ((1440, 900), (390, 844), (320, 360), (568, 320)):
+                play_statecraft(browser, address, viewport)
             for viewport in ((1440, 900), (390, 844), (320, 360), (568, 320)):
                 play_landscape(browser, address, viewport)
             for viewport in ((1440, 900), (390, 844)):

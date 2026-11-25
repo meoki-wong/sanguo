@@ -78,6 +78,27 @@ function cleanLosses(state, changing) {
   if (state.campaignEvents?.pending?.officer && changing.has(state.campaignEvents.pending.officer)) state.campaignEvents.pending = null;
 }
 
+export function changeService(world, state, officer, to, turn) {
+  const origin = state.stations[officer.key];
+  if (!origin || !livingSide(state, to) || officer.faction === to) return null;
+  const city = retreatCity(world, state, to, origin);
+  for (const holding of Object.values(state.cities)) {
+    if (holding.governor === officer.key) {
+      holding.governor = null;
+      holding.mode = "direct";
+      holding.delegateBudget = null;
+    }
+    if (holding.commander === officer.key) holding.commander = null;
+  }
+  recordAllegiance(state, officer.key, officer.faction, to, turn);
+  state.stations[officer.key] = city;
+  cleanLosses(state, new Set([officer.key]));
+  for (const plan of state.grand?.campaigns ?? []) {
+    if (Object.values(plan.wings).some((wing) => wing.officer === officer.key) && plan.status !== "complete") plan.status = "paused";
+  }
+  return city;
+}
+
 export function handoverCities(world, era, state, from, to, cities, kind, turn) {
   const changing = new Set();
   const picked = new Set(cities);
@@ -135,7 +156,7 @@ export function handoverCities(world, era, state, from, to, cities, kind, turn) 
   cleanLosses(state, changing);
 }
 
-export function formPolity(world, era, state, faction, region, cities, turn) {
+export function formPolity(world, era, state, faction, region, cities, turn, cause) {
   if (Object.keys(state.factions).length >= maximumPolities) return null;
   const city = cities[0];
   const place = world.cities.find(({ key }) => key === city);
@@ -147,7 +168,7 @@ export function formPolity(world, era, state, faction, region, cities, turn) {
   const source = state.factions[faction];
   const treasury = Math.floor(source.treasury * proportion);
   const grain = Math.floor(source.grain * proportion);
-  state.polity.parties.push({ key, leader, name, city, region, origin: faction, turn, position: place.position });
+  state.polity.parties.push({ key, leader, name, city, region, origin: faction, turn, position: place.position, ...(cause ? { cause } : {}) });
   source.treasury -= treasury;
   source.grain -= grain;
   state.factions[key] = { treasury, grain, morale: 59 };

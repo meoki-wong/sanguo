@@ -1,0 +1,32 @@
+#sandtable-dialog { width: min(36rem, calc(100vw - 1rem)); }
+#sandtable-body, #sandtable-body > section { display: grid; gap: .46rem; }
+#sandtable-body p, #sandtable-error { font-size: .85rem; line-height: 1.4; color: #e4d4ad; }
+#sandtable-error { color: var(--warning); }
+.sandtable-actions { display: flex; flex-wrap: wrap; gap: .32rem; align-items: center; }
+.sandtable-actions button { white-space: nowrap; }
+.sandtable-actions button[aria-pressed="true"] { border-color: #b38f58; background: #483624; color: #ffdfa1; }
+.sandtable-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .35rem; }
+.sandtable-actions label, .sandtable-fields label { display: flex; align-items: center; gap: .25rem; min-width: 0; white-space: nowrap; font-size: .81rem; }
+.sandtable-fields select, .sandtable-fields input:not([type="checkbox"]) { flex: 1; width: 100%; min-width: 0; }
+.sandtable-actions select { max-width: min(14rem, 55vw); }
+.sandtable-actions input[type="checkbox"] { min-height: 0; accent-color: var(--gold); }
+#open-sandtable-map { position: absolute; z-index: 7; top: .36rem; right: 1.95rem; padding: .18rem .42rem; min-height: 1.78rem; font-size: .76rem;
+  color: #fae8b7; background: #362c20; border-color: #967041; box-shadow: 0 1px 4px #2e222244; }
+.sandtable-post { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; min-height: 1.15rem;
+  white-space: nowrap; padding: .1rem .25rem; background: #394940; border: 1px solid #dec18b; color: #fff1d0;
+  font-size: .72rem; box-shadow: 0 1px 2px #20191099; }
+.sandtable-post[data-kind="port"], .sandtable-post[data-kind="ferry"] { background: #325366; }
+.sandtable-post[data-kind="camp"] { background: #574534; }
+.sandtable-post[data-kind="depot"] { background: #69532c; }
+.sandtable-post[data-closed="true"] { background: #743e32; }
+.sandtable-post[data-own="true"] { border-color: #fff2ca; }
+@media (max-width: 600px) and (min-height: 500px) {
+  #sandtable-dialog button, #sandtable-dialog select, #sandtable-dialog input:not([type="checkbox"]) { min-height: 2.45rem; }
+  #open-sandtable-map { min-height: 2.12rem; }
+}
+@media (max-height: 400px) {
+  #sandtable-dialog .dialog-content { padding: .44rem; gap: .33rem; }
+  #sandtable-body, #sandtable-body > section { gap: .29rem; }
+  #sandtable-dialog button, #sandtable-dialog select, #sandtable-dialog input:not([type="checkbox"]) { min-height: 1.7rem; padding: .1rem .24rem; }
+  #open-sandtable-map { top: .2rem; min-height: 1.43rem; font-size: .68rem; }
+}

@@ -4,6 +4,7 @@ import { cityName, eraByYear, gameOutcome, pendingExpedition, postingOf, preview
 import { funds, validResourcePair } from "./finance.js";
 import { isHostile } from "./diplomacy.js";
 import { formerlyServed } from "./polities-data.js";
+import { countLevy } from "./sandtable-economy.js";
 
 export const realmOffices = { civil: "内政", envoy: "外交", marshal: "军务" };
 export const realmBudgetNames = { development: "发展", military: "军备", relief: "救济" };
@@ -45,7 +46,9 @@ export function realmPolicy(state, faction) {
 }
 
 export function realmReserve(state, faction) {
-  return faction === state.player ? state.delegationReserve ?? { treasury: 0, grain: 0 } : { treasury: 20, grain: 12 };
+  const ordinary = faction === state.player ? state.delegationReserve ?? { treasury: 0, grain: 0 } : { treasury: 20, grain: 12 };
+  const policy = state.dynasty?.policies[faction];
+  return policy ? { treasury: Math.max(ordinary.treasury, policy.moneyFloor), grain: Math.max(ordinary.grain, policy.grainFloor) } : ordinary;
 }
 
 export function nationalDuty(state, person) {
@@ -120,6 +123,7 @@ export function incomeFactor(demographics) {
 export function noteRecruitment(state, key, count) {
   const city = state.realm?.cities[key];
   if (!city) return;
+  countLevy(state, key, count);
   city.population = Math.max(800, city.population - count);
   city.welfare = Math.max(10, city.welfare - Math.ceil(count / 220));
 }

@@ -7,6 +7,9 @@ import { warBlockaded } from "./war-operations.js";
 import { bounded, provinceKey } from "./polities-data.js";
 import { weatherAllows } from "./landscape-terrain.js";
 import { conferencePass } from "./landscape-treaty.js";
+import { postOwner, postTransit, strategicPost } from "./sandtable-posts.js";
+import { dynastyPass, dynastyTreaty } from "./dynasty-treaties.js";
+import { leagueMarket } from "./reign-leagues.js";
 
 export const grandPriorities = { growth: "发展", defense: "前线", recovery: "接管" };
 export const crossings = [
@@ -24,20 +27,32 @@ export const crossings = [
 const graph = (world) => new Map(world.cities.map((city) => [city.key, city]));
 
 export function gateOwner(state, gate) {
+  if (state.sandtable && strategicPost(gate.key)) return postOwner(state, strategicPost(gate.key));
   return state.cities[gate.seat]?.owner;
 }
 
 export function hasPassage(state, faction, key) {
   const owner = state.cities[key]?.owner;
   if (owner === faction) return true;
-  return Boolean((conferencePass(state, faction, owner) || state.grand?.passes.some(({ from, to, expires, kind }) => kind === "pass" && expires > state.turn
+  return Boolean((leagueMarket(state, faction, owner) || dynastyPass(state, faction, owner) || conferencePass(state, faction, owner) || state.grand?.passes.some(({ from, to, expires, kind }) => kind === "pass" && expires > state.turn
     && !isHostile(state, faction, owner) && (from === faction && to === owner || from === owner && to === faction))
     ) && !state.cities[key].occupation && !warBlockaded(state, key));
 }
 
 export function crossesGate(state, faction, from, to, finalAssault = false) {
-  if (!state.grand || finalAssault) return true;
   const edge = [from, to].sort().join(":");
+  const first = state.cities[from]?.owner;
+  const second = state.cities[to]?.owner;
+  if (!finalAssault && first !== second && [first, second].includes(faction)) {
+    const rival = first === faction ? second : first;
+    const terms = dynastyTreaty(state, faction, rival);
+    if (terms?.passage && terms.post && terms.post !== edge && !conferencePass(state, faction, rival)
+      && !state.grand?.passes.some(({ from, to, kind, expires }) => kind === "pass" && expires > state.turn
+        && [from, to].includes(faction) && [from, to].includes(rival))) return false;
+  }
+  if (!postTransit(state, faction, from, to, finalAssault)) return false;
+  if (!state.grand || finalAssault) return true;
+  if (state.sandtable?.posts[edge]) return true;
   const gate = crossings.find(({ key }) => key === edge);
   return !gate || gateOwner(state, gate) === faction || state.grand.closed[edge] !== gateOwner(state, gate);
 }
@@ -63,7 +78,8 @@ export function dispatchRoute(world, state, faction, to) {
   const usable = (key) => hasPassage(state, faction, key) && !warBlockaded(state, key)
     && (!state.cities[key].occupation || key === to);
   if (!usable(from) || !usable(to)) return null;
-  return roadPath(graph(world), from, to, usable, 8, (a, b) => openRoadEdge(state, faction, a, b));
+  return roadPath(graph(world), from, to, usable, 8, (a, b) => openRoadEdge(state, faction, a, b)
+    || Boolean(state.sandtable && openRoadEdge(state, faction, a, b, false, "water")));
 }
 
 const validBudgets = ({ treasury, grain }) => bounded(treasury, 0, 300) && bounded(grain, 0, 450);

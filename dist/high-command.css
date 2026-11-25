@@ -1,0 +1,77 @@
+#high-command-dialog {
+  width: min(39rem, calc(100dvw - .8rem));
+  border-color: #b69665;
+  background: #28261e;
+  box-shadow: 0 18px 50px #120e0ac9;
+}
+#high-command-dialog .dialog-content { padding: .85rem; gap: .62rem; }
+.high-command-body { display: grid; gap: .54rem; min-width: 0; }
+.high-command-body p, .high-command-notice { font-size: .86rem; line-height: 1.32; }
+.high-command-notice { color: #f3cb86; }
+.high-command-notice:empty, .high-command-nav:empty { display: none; }
+.high-command-body h3 { margin: 0; font-size: 1.08rem; color: #f2deba; }
+.high-command-nav, .command-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  column-gap: .38rem;
+  row-gap: .38rem;
+  min-width: 0;
+}
+.high-command-nav button[aria-pressed="true"] { background: #63462c; color: #ffebc6; border-color: #ce9e65; }
+.high-command-body button { white-space: nowrap; }
+.command-field {
+  display: grid;
+  gap: .14rem;
+  min-width: 0;
+  white-space: nowrap;
+  font-size: .78rem;
+  color: #e4cd9f;
+}
+.command-field select { width: 100%; min-width: 0; }
+.command-field input:not([type="checkbox"]) { width: 5rem; }
+.command-grid, .command-budgets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.command-budget {
+  display: grid;
+  gap: .16rem;
+  align-self: stretch;
+  min-width: 0;
+  padding: .44rem .5rem;
+  border: 1px solid #6c5b42;
+  background: #342d21;
+  color: #e6d2a7;
+  line-height: 1.2;
+  font-size: .76rem;
+}
+.command-budget strong { color: #ffd992; font-size: .9rem; }
+.command-campaign-row { display: flex; align-items: center; gap: .45rem; font-size: .78rem; color: #d5c8a9; }
+.command-campaign-row button { font-weight: 650; }
+.command-alert, .high-command-body [data-command="urgent"] { color: #ffcd9e; }
+.command-tally { color: #f3ce90; font-variant-numeric: tabular-nums; }
+.command-muted { color: #ccc0a6; }
+.command-toggle { display: flex; align-items: center; gap: .4rem; padding: .18rem .38rem; min-height: 1.9rem; border: 1px solid #6c5b42; }
+.command-toggle input { accent-color: #dcaa65; min-height: 0; }
+.command-map-pin {
+  position: absolute; transform: translate(-50%, -50%); min-height: 1.42rem; padding: .13rem .32rem;
+  pointer-events: auto; white-space: nowrap; font-size: .7rem; color: #fff0c3; background: #564023; border-color: #c59b58;
+}
+.command-map-pin[data-urgent="true"], #open-frontline-map[data-urgent="true"] { color: #ffe1ba; background: #743d2c; border-color: #d68a65; }
+.troop-pin[data-phase="retreat"] { border-bottom-color: #a95138; }
+.troop-pin[data-phase="muster"] { border-bottom-color: #a97941; }
+@media (max-width: 610px) and (min-height: 431px) {
+  #high-command-dialog button, #high-command-dialog select, #high-command-dialog input:not([type="checkbox"]) { min-height: 2.48rem; }
+  .command-map-pin { min-height: 1.8rem; }
+}
+@media (max-height: 430px) {
+  #high-command-dialog .dialog-content { padding: .48rem; gap: .3rem; }
+  .high-command-body { gap: .28rem; }
+  .high-command-body p, .high-command-notice { font-size: .74rem; }
+  .command-row, .high-command-nav { gap: .24rem; }
+  #high-command-dialog button, #high-command-dialog select, #high-command-dialog input:not([type="checkbox"]) {
+    min-height: 1.62rem; padding: .12rem .3rem; font-size: .74rem;
+  }
+  .command-budget { padding: .23rem .3rem; }
+  .command-budget strong { font-size: .78rem; }
+  .command-field { font-size: .71rem; }
+  .command-map-pin { font-size: .65rem; min-height: 1.25rem; }
+}

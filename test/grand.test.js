@@ -6,6 +6,7 @@ import { accordProposal, coalitionCriteria, proposeAccord, quoteAccord, respondA
 import { seasonAdvice } from "../dist/advice.js";
 import { armyByOfficer, marchRoute } from "../dist/armies.js";
 import { incomingTreatyBlock, isHostile, quoteTreaty } from "../dist/diplomacy.js";
+import { treatyOptions, proposeDynastyTreaty } from "../dist/dynasty-treaties.js";
 import { concludeCoalition } from "../dist/endgame.js";
 import {
   advanceQuarter, appoint, availableAttackers, createGame, eraByYear, forecastFinance, forceTotals, gameOutcome,
@@ -23,11 +24,25 @@ import { proposeSettlement, settlementDraft } from "../dist/polity-settlements.j
 import { nationalRoster } from "../dist/roster.js";
 import { createSaveBackup, readGameRecord } from "../dist/saves.js";
 import { militaryView } from "../dist/war-intel.js";
+import { objectives9, publishStrategy9 } from "../dist/strategy-nine.js";
+import { publishReign, reignPolicy } from "../dist/reign.js";
+import { charterLeague10 } from "../dist/reign-leagues.js";
 
 const world = enrichWorld(JSON.parse(readFileSync(new URL("../dist/assets/world.json", import.meta.url))));
 const game = (year = 199, faction = "cao") => createGame(world, year, faction, { grand: true });
 const rest = (state) => Object.fromEntries(Object.keys(state.factions).filter((key) => key !== state.player)
   .map((key) => [key, { source: "model", order: null, accord: null, politics: "", reason: "休整" }]));
+
+function standingStrategy(state, partner) {
+  if (!state.strategy9) return state;
+  const { stability, concord } = objectives9(world, state);
+  const next = publishStrategy9(world, state, {
+    primary: { kind: "stability", key: stability[0].key },
+    secondary: { kind: "concord", key: partner ?? concord[0].key },
+    money: 42, grain: 48, manpower: 800, transport: 3, negotiate: true,
+  });
+  return next.reign ? publishReign(world, next, { ...reignPolicy(next), stateForm: "compact" }, { batch: true }) : next;
+}
 
 function restore(state) {
   const record = { state, selected: "luoyang" };
@@ -234,59 +249,71 @@ for (const [year, faction] of [[190, "cao"], [190, "dong"], [199, "cao"], [199, 
   });
 }
 
-test("standard Cao opening reaches peaceful succession and completed diplomacy in 3.0", () => {
-  let state = createGame(world, 199, "cao", { landscape: true });
-  state = saveSuccession(world, eraByYear(world, state), state, { heir: "cao-0", regent: "cao-1", abdicate: true });
-  for (const to of ["yuan", "ce"]) state = proposePackage(world, state, {
-    from: "cao", to, halt: true, pass: false, city: null, joint: null, grain: 0, treasury: 15,
+for (const [version, rules] of [["5.0", "sandtable"], ["6.0", "frontline"], ["7.0", "highCommand"], ["8.0", "dynasty"], ["9.0", "strategic"], ["10.0", "reign"]]) {
+  test(`standard Cao opening reaches peaceful succession and completed diplomacy in ${version}`, () => {
+    let state = standingStrategy(createGame(world, 199, "cao", { [rules]: true }), "yuan");
+    state = saveSuccession(world, eraByYear(world, state), state, { heir: "cao-0", regent: "cao-1", abdicate: true });
+    for (const to of ["yuan", "ce"]) state = proposePackage(world, state, {
+      from: "cao", to, halt: true, pass: false, city: null, joint: null, grain: 0, treasury: 15,
+    });
+    while (state.turn < 56 && gameOutcome(state) === "ongoing" && !peaceCriteria(world, state).ready) {
+      state = restore(advanceQuarter(world, state));
+    }
+    state = restore(concludePeace(world, state));
+    assert.equal(state.scenarioEnding.kind, "peace");
   });
-  while (state.turn < 56 && gameOutcome(state) === "ongoing" && !peaceCriteria(world, state).ready) {
-    state = restore(advanceQuarter(world, state));
-  }
-  state = restore(concludePeace(world, state));
-  assert.equal(state.scenarioEnding.kind, "peace");
-});
 
-test("standard Liu Bei opening reaches the coalition ending in 3.0", () => {
-  let state = createGame(world, 208, "liu", { landscape: true });
-  const allies = ["wu", "han"];
-  state = queueOrder(world, state, { type: "build", city: "jiangxia", project: "commerce" });
-  while (state.turn < 45 && gameOutcome(state) === "ongoing" && !coalitionCriteria(world, eraByYear(world, state), state).ready) {
-    const era = eraByYear(world, state);
-    if (state.incomingTreaty?.answer === null && !incomingTreatyBlock(state)) state = respondToTreaty(world, state, true);
-    for (const item of state.realm.proposals.filter(({ to, answer }) => to === "liu" && answer === undefined)) {
-      state = respondAccord(state, item.from, item.kind, allies.includes(item.from) || item.kind === "aid");
-    }
-    for (const ally of allies) {
-      const trade = accordProposal(world, state, "liu", ally, "trade");
-      if (quoteAccord(world, era, state, trade).accepted) state = proposeAccord(world, era, state, trade);
-      if (quoteTreaty(world, state, ally, "alliance").accepted) state = sendTreatyOffer(world, state, ally, "alliance");
-    }
-    state = restore(advanceQuarter(world, state));
-  }
-  assert.equal(restore(concludeCoalition(world, state)).scenarioEnding.kind, "coalition");
-});
-
-test("standard Jin opening can unify all 42 cities in 3.0", () => {
-  let state = createGame(world, 265, "jin", { landscape: true });
-  while (gameOutcome(state) === "ongoing" && state.turn < 70) {
-    const era = eraByYear(world, state);
-    for (let i = 0; i < seasonOrderLimit; i += 1) {
-      const planned = previewOrders(world, state);
-      const order = frontierAttackOpportunities(world, state, planned).entries[0]?.order;
-      if (order) { state = queueOrder(world, state, order); continue; }
-      const target = world.cities.find(({ key, links }) => planned.cities[key].owner === "jin" && planned.cities[key].troops < 4500
-        && links.some((link) => planned.cities[link].owner !== "jin"));
-      if (!target) break;
-      if (!availableAttackers(era, planned, "jin", target.key).length && !state.cities[target.key].commander) {
-        const candidate = nationalRoster(world, state, { status: "available", sort: "command", query: "" }).matching[0];
-        if (candidate) state = appoint(world, state, target.key, "commander", candidate.person.key);
+  test(`standard Liu Bei opening reaches the coalition ending in ${version}`, () => {
+    let state = standingStrategy(createGame(world, 208, "liu", { [rules]: true }), "wu");
+    const allies = ["wu", "han"];
+    if (state.reign) state = charterLeague10(world, state, { target: "cao", invited: allies, passage: true, military: true, term: 12, dues: 2 });
+    state = queueOrder(world, state, { type: "build", city: "jiangxia", project: "commerce" });
+    while (state.turn < 45 && gameOutcome(state) === "ongoing" && !coalitionCriteria(world, eraByYear(world, state), state).ready) {
+      const era = eraByYear(world, state);
+      if (state.dynasty && treatyOptions(world, state, "cao").available && state.factions.liu.treasury > 65) {
+        state = proposeDynastyTreaty(world, state, { to: "cao", seasons: 8, payment: 6, passage: false, defense: false, cede: null, post: null });
       }
-      if (planned.factions.jin.treasury < 20 || planned.factions.jin.grain < 12 || planned.realm.cities[target.key].population < 1400) break;
-      state = queueOrder(world, state, { type: "recruit", city: target.key });
+      if (state.dynasty && state.turn >= 6) for (const to of allies) {
+        if (!treatyOptions(world, state, to).available || state.factions.liu.treasury < 70) continue;
+        state = proposeDynastyTreaty(world, state, { to, seasons: 12, payment: 3, passage: true, defense: true, cede: null, post: null });
+      }
+      if (state.incomingTreaty?.answer === null && !incomingTreatyBlock(state)) state = respondToTreaty(world, state, true);
+      for (const item of state.realm.proposals.filter(({ to, answer }) => to === "liu" && answer === undefined)) {
+        state = respondAccord(state, item.from, item.kind, allies.includes(item.from) || item.kind === "aid");
+      }
+      for (const ally of allies) {
+        const trade = accordProposal(world, state, "liu", ally, "trade");
+        if (quoteAccord(world, era, state, trade).accepted) state = proposeAccord(world, era, state, trade);
+        if (quoteTreaty(world, state, ally, "alliance").accepted) state = sendTreatyOffer(world, state, ally, "alliance");
+      }
+      state = restore(advanceQuarter(world, state));
     }
-    state = restore(advanceQuarter(world, state));
-  }
-  assert.equal(forceTotals(state, "jin").cities, 42);
-  assert.equal(gameOutcome(state), "victory");
-});
+    const criteria = coalitionCriteria(world, eraByYear(world, state), state);
+    assert.ok(criteria.ready, JSON.stringify({ criteria, stock: state.factions.liu, outcome: gameOutcome(state) }));
+    assert.equal(restore(concludeCoalition(world, state)).scenarioEnding.kind, "coalition");
+  });
+
+  test(`standard Jin opening can unify all 42 cities in ${version}`, () => {
+    let state = standingStrategy(createGame(world, 265, "jin", { [rules]: true }));
+    while (gameOutcome(state) === "ongoing" && state.turn < 70) {
+      const era = eraByYear(world, state);
+      for (let i = 0; i < seasonOrderLimit; i += 1) {
+        const planned = previewOrders(world, state);
+        const order = frontierAttackOpportunities(world, state, planned).entries[0]?.order;
+        if (order) { state = queueOrder(world, state, order); continue; }
+        const target = world.cities.find(({ key, links }) => planned.cities[key].owner === "jin" && planned.cities[key].troops < 4500
+          && links.some((link) => planned.cities[link].owner !== "jin"));
+        if (!target) break;
+        if (!availableAttackers(era, planned, "jin", target.key).length && !state.cities[target.key].commander) {
+          const candidate = nationalRoster(world, state, { status: "available", sort: "command", query: "" }).matching[0];
+          if (candidate) state = appoint(world, state, target.key, "commander", candidate.person.key);
+        }
+        if (planned.factions.jin.treasury < 20 || planned.factions.jin.grain < 12 || planned.realm.cities[target.key].population < 1400) break;
+        state = queueOrder(world, state, { type: "recruit", city: target.key });
+      }
+      state = restore(advanceQuarter(world, state));
+    }
+    assert.equal(forceTotals(state, "jin").cities, 42);
+    assert.equal(gameOutcome(state), "victory");
+  });
+}

@@ -12,7 +12,14 @@ import { stances } from "./dist/war-operations.js";
 import { politicalChoices, politicalDescription } from "./dist/polity.js";
 import { agendaChoices, agendas } from "./dist/grand.js";
 import { observerReport } from "./dist/landscape.js";
-import { voteOptions } from "./dist/landscape-treaty.js";
+import { congressExitOptions, voteOptions } from "./dist/landscape-treaty.js";
+import { diplomaticManeuvers } from "./dist/sandtable-war.js";
+import { maneuverChoices, reinforcementChoices } from "./dist/frontline.js";
+import { realmAgendaChoices } from "./dist/dynasty.js";
+import { treatyChoices8 } from "./dist/dynasty-treaties.js";
+import { warResponseChoices9 } from "./dist/strategy-nine.js";
+import { reignModelChoices } from "./dist/reign-leagues.js";
+import { centuryModelChoices } from "./dist/century.js";
 
 const priorities = {
   cao: "先攒钱粮，选择能站稳的进攻机会。",
@@ -31,7 +38,7 @@ const priorities = {
   han: "守住荆南，利用沿江通商维持地方自主。",
 };
 
-function makePrompt(world, era, state, faction, plan, accords, political, strategy, ballots) {
+function makePrompt(world, era, state, faction, plan, accords, political, strategy, ballots, exits, maneuvers, battles, movements, realmChoices, settlements, responses, leagues, annual) {
   const known = militaryView(state, faction);
   const stock = state.factions[faction];
   const totals = forceTotals(state, faction);
@@ -83,7 +90,7 @@ function makePrompt(world, era, state, faction, plan, accords, political, strate
       + (record.seen === undefined ? "" : "第" + record.seen + "季");
   }) : [];
   return [
-    { role: "system", content: "你在虚构回合制游戏《经略三国》中独立执政。每个政令候选对应一个目标和本季行动。返回 JSON，choice 为政令候选编号字符串，reason 为 20 字以内的中文理由。可用 accord 选择外交候选、politics 选择州郡或朝局候选、agenda 选择未来四季的方针。votes 可按议约编号返回 yes 或 no。依据本势力钱粮、守备和关系取舍。" },
+    { role: "system", content: "你在虚构回合制游戏《经略三国》中独立执政。每个政令候选对应一个目标和本季行动。返回 JSON，choice 为政令候选编号字符串，reason 为 20 字以内的中文理由。可用 accord 选择外交候选、politics 选择州郡或朝局候选、agenda 选择未来四季的方针。votes 可按议约编号返回 yes 或 no。withdraw 可选择一个退出议盟候选。依据本势力钱粮、守备和关系取舍。" },
     { role: "user", content: [
       name + " · 第 " + (Math.floor(state.turn / 4) + 1) + " 年" + seasons[state.turn % 4] + "季",
       "施政倾向 " + (priorities[faction] ?? "安集新附州郡，稳固地方驻防与钱粮"),
@@ -102,12 +109,26 @@ function makePrompt(world, era, state, faction, plan, accords, political, strate
           + (age === null ? "" : " " + age + " 季前 · " + confidence + "可信 · 驻军 " + troops.join("–"))),
         ...outlook.politics.map(({ host, status, target, delivered, ownContribution }) =>
           factionName(era, host) + "召集的" + target + "议约 " + status + "。交纳军粮 " + delivered + "，我方行动 " + ownContribution + " 季。")] : []),
-      ...ballots.map(({ id, target, host, relation, aid, openMarket, border }) => "议约 " + id + " " + factionName(era, host)
-        + "邀请共取" + target + "，信用 " + relation + "，每季粮援 " + aid + (openMarket ? "，互市" : "") + (border ? "，互开边界" : "")),
+      ...ballots.map(({ id, target, host, relation, aid, openMarket, border, duty }) => "议约 " + id + " " + factionName(era, host)
+        + "邀请共取" + target + "，信用 " + relation + "，每季粮援 " + aid + (openMarket ? "，互市" : "") + (border ? "，互开边界" : "")
+        + (duty ? "，我方职责" + duty : "")),
+      ...exits.map(({ id, target }) => id + " 退出" + cityName(world, target) + "议盟"),
+      ...maneuvers.map(({ id, text }) => "战略候选 " + id + " " + text + "。用 strategic 指定其中一个编号。"),
+      ...battles.map(({ id, request, unit, officer, target, role, until, handover, action }) => "联军请求 " + request + " 候选 " + id + "。"
+        + (action ? { continue: "继续按原承诺履约。", delay: "请求延长两季。", withdraw: "兵粮已触底，撤回本军团。" }[action]
+          : unit ? (era.officers.find(({ key }) => key === officer)?.name ?? officer) + "前往" + cityName(world, target)
+          + (role === "escort" ? "护运" : "主攻") + "，期限第 " + until + " 季，" + (handover === "handover" ? "攻下城池须交给盟友。" : "战后归属由实际占领决定。") : "拒绝请求。")
+        + "在 battle 对象中用请求编号映射该候选。"),
+      ...movements.map(({ id, officer, text }) => "军团候选 " + id + " " + text + "。在 maneuver 对象中为 " + officer + " 选择一个候选。"),
       ...accords.map(({ to, kind, grain, target }, index) => `外交 T${index} 向${factionName(era, to)}提议${accordKinds[kind]}`
         + (target ? cityName(world, target) : grain ? grain + " 粮" : "")),
       ...political.map(({ id, directive }) => "朝局 " + id + " " + politicalDescription(era, directive)),
       ...strategy.map(({ id, kind, rival }) => "方针 " + id + " " + agendas[kind] + (rival ? "，主要对手 " + factionName(era, rival) : "")),
+      ...realmChoices.map(({ id, text }) => "国家经略 " + id + " " + text + "。用 dynastyAgenda 指定一个编号。"),
+      ...settlements.map(({ id, text }) => "和约候选 " + id + " " + text + "。用 settlement 指定一个编号。"),
+      ...responses.map(({ id, text }) => "战区应对 " + id + " " + text + "。用 warResponse9 指定一个编号。"),
+      ...leagues.map(({ id, text }) => "诸侯集团 " + id + " " + text + "。用 reignChoice 指定一个编号。"),
+      ...annual.map(({ id, text }) => "年度国策 " + id + " " + text + "。用 century 指定一个编号，方略持续四季。"),
       ...(past.length ? ["近季政令 " + past.join("、")] : []),
       ...(plan.recovering ? ["当前钱粮吃紧，本季以休养和恢复储备为主。"] : []),
       ...(plan.urgent ? ["前线有城池可能失守，优先稳住守军。"] : []),
@@ -137,8 +158,17 @@ export function createPlanner({
     const political = politicalChoices(world, era, state, faction);
     const strategy = agendaChoices(world, state, faction);
     const ballots = voteOptions(world, state, faction);
+    const exits = congressExitOptions(state, faction);
+    const maneuvers = diplomaticManeuvers(world, state, faction);
+    const battles = reinforcementChoices(world, state, faction);
+    const movements = maneuverChoices(world, state, faction);
+    const realmChoices = realmAgendaChoices(state, faction);
+    const settlements = treatyChoices8(world, state, faction);
+    const responses = warResponseChoices9(world, state, faction);
+    const leagues = reignModelChoices(world, state, faction);
+    const annual = centuryModelChoices(world, state, faction);
     try {
-      const output = await client.decide(makePrompt(world, era, state, faction, plan, accords, political, strategy, ballots), deadline);
+      const output = await client.decide(makePrompt(world, era, state, faction, plan, accords, political, strategy, ballots, exits, maneuvers, battles, movements, realmChoices, settlements, responses, leagues, annual), deadline);
       const selected = plan.choices.find(({ id }) => id === output?.choice);
       if (!selected || typeof output?.reason !== "string" || !output.reason.trim()) {
         return { source: "fallback", reason: "模型政令格式无效" };
@@ -147,11 +177,31 @@ export function createPlanner({
       const politics = political.find(({ id }) => id === output.politics);
       const agenda = strategy.find(({ id }) => id === output.agenda);
       const votes = Object.fromEntries(ballots.flatMap(({ id }) => ["yes", "no"].includes(output.votes?.[id]) ? [[id, output.votes[id]]] : []));
+      const withdraw = exits.find(({ id }) => id === output.withdraw)?.id;
+      const strategic = maneuvers.find(({ id }) => id === output.strategic)?.id;
+      const dynastyAgenda = realmChoices.find(({ id }) => id === output.dynastyAgenda)?.id;
+      const settlement = settlements.find(({ id }) => id === output.settlement)?.id;
+      const response9 = responses.find(({ id }) => id === output.warResponse9)?.id;
+      const reignChoice = leagues.find(({ id }) => id === output.reignChoice)?.id;
+      const century = annual.find(({ id }) => id === output.century)?.id;
+      const battle = Object.fromEntries(battles.filter(({ id, request }) => output.battle?.[request] === id)
+        .map(({ id, request }) => [request, id]));
+      const maneuver = Object.fromEntries(movements.filter(({ id, officer }) => output.maneuver?.[officer] === id)
+        .map(({ id, officer }) => [officer, id]));
       return { source: "model", goal: selected.goal, order: selected.order,
         ...(choice || output.accord === "" ? { accord: choice ?? null } : {}),
         ...(politics || output.politics === "" ? { politics: politics?.id ?? "" } : {}),
         ...(agenda ? { agenda: agenda.id } : {}),
         ...(Object.keys(votes).length ? { votes } : {}),
+        ...(withdraw ? { withdraw } : {}),
+        ...(strategic ? { strategic } : {}),
+        ...(dynastyAgenda ? { dynastyAgenda } : {}),
+        ...(settlement ? { settlement } : {}),
+        ...(response9 ? { warResponse9: response9 } : {}),
+        ...(reignChoice ? { reignChoice } : {}),
+        ...(century ? { century } : {}),
+        ...(Object.keys(battle).length ? { battle } : {}),
+        ...(Object.keys(maneuver).length ? { maneuver } : {}),
         reason: output.reason.replace(/\s+/g, " ").trim().slice(0, 64) };
     } catch (error) {
       let cause = "模型服务暂不可用";

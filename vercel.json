@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "outputDirectory": "dist",
+  "functions": {
+    "api/game.js": {
+      "includeFiles": "dist/assets/world.json",
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    { "source": "/api/ai", "destination": "/api/game?operation=status" },
+    { "source": "/api/ai/:operation(models|settings|test)", "destination": "/api/game?operation=:operation" },
+    { "source": "/api/turn", "destination": "/api/game?operation=turn" }
+  ]
+}

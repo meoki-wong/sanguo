@@ -1,0 +1,37 @@
+#strategy-nine-dialog {
+  width: min(44rem, calc(100dvw - .75rem));
+  border-color: #ae9166;
+  background: #252822;
+  color: #f0e1c8;
+  box-shadow: 0 20px 60px #120e08cf;
+}
+#strategy-nine-dialog .dialog-content { padding: .85rem; gap: .65rem; }
+#strategy-nine-dialog .dialog-heading { justify-content: space-between; }
+#strategy-nine-dialog .dynasty-nav { grid-template-columns: repeat(6, minmax(0,1fr)); }
+#strategy-nine-dialog select { max-width: min(13rem, 50vw); }
+.strategy-nine-banner {
+  min-height: 5.4rem;
+  align-content: end;
+  background: linear-gradient(90deg, #1b201ce8, #21281c82, #1920194d),
+    url("./assets/battlefield-seasons.webp") right 86% / 200% auto;
+}
+.command-map-pin[data-strategy-role="offensive"] { background: #683a2e; border-color: #d7926e; }
+.command-map-pin[data-strategy-role="defense"] { background: #344f4b; border-color: #a1b8a6; }
+.command-map-pin[data-strategy-role="escort"] { background: #544c31; border-color: #c8b37c; }
+.command-map-pin[data-strategy-role="diversion"] { background: #574338; border-color: #b99972; }
+.command-map-pin[data-strategy-impact="cut"] { background: #782e24; border-color: #f2a986; }
+.command-map-pin[data-strategy-impact="gain"] { background: #315b42; border-color: #cad7a4; }
+@media (max-width: 600px) {
+  #strategy-nine-dialog .dynasty-nav { grid-template-columns: repeat(3, minmax(0,1fr)); }
+}
+@media (max-width: 600px) and (min-height: 431px) {
+  #strategy-nine-dialog button, #strategy-nine-dialog select, #strategy-nine-dialog input[type="number"] { min-height: 2.48rem; }
+}
+@media (max-height: 430px) {
+  #strategy-nine-dialog .dialog-content { padding: .46rem; gap: .29rem; }
+  #strategy-nine-dialog button, #strategy-nine-dialog select, #strategy-nine-dialog input[type="number"] {
+    min-height: 1.58rem; padding: .11rem .28rem; font-size: .74rem;
+  }
+  #strategy-nine-dialog .dynasty-field, #strategy-nine-dialog p { font-size: .72rem; line-height: 1.22; }
+  .strategy-nine-banner { min-height: 3rem; }
+}

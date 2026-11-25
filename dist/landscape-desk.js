@@ -1,5 +1,5 @@
 import { cityName, factionName, playableFactions } from "./engine.js";
-import { proposeCongress } from "./landscape-treaty.js";
+import { allianceDuties, answerCongressInvitation, leaveCongress, proposeCongress } from "./landscape-treaty.js";
 import { commodities } from "./landscape-economy.js";
 import { seasonWeather } from "./landscape-terrain.js";
 
@@ -90,6 +90,15 @@ export function createLandscapeDesk(world, { snapshot, commit, locate, original,
           + " / 军事 " + (row.contributions[key] ?? 0) + " 季").join(" · ")),
           el("p", "已付粮援 " + row.delivered + " · " + (row.completed ? "攻取目标" : "尚未攻取")
             + (row.returnTo ? " · 战后交割给" + name(row.returnTo) : "")));
+        if (row.duties) item.append(el("p", row.parties.map((key) => name(key) + " " + allianceDuties[row.duties[key]]).join(" · ")));
+        if (row.withdrawn) item.append(el("p", name(row.withdrawn.faction) + "已退出议盟。"));
+        if (row.status === "voting" && row.host !== state.player && !row.votes[state.player]) {
+          item.append(action("赞成议约", () => commit(answerCongressInvitation(snapshot().state, row.id, "yes"), "已向与会方表决。")),
+            action("拒绝议约", () => commit(answerCongressInvitation(snapshot().state, row.id, "no"), "已向与会方表决。")));
+        }
+        if (row.duties && row.status === "active") item.append(action(row.exitRequested ? "已安排退盟" : "安排退盟", () => {
+          if (!row.exitRequested) commit(leaveCongress(snapshot().state, row.id), "退盟将在本季结算。");
+        }));
       }
       picker.onchange = inspect;
       const tools = el("div");
@@ -119,6 +128,8 @@ export function createLandscapeDesk(world, { snapshot, commit, locate, original,
     const border = field(clauses, "停战通行", "border", el("input"));
     for (const checkbox of [market, border]) { checkbox.type = "checkbox"; checkbox.checked = true; }
     form.append(clauses);
+    const division = state.statecraft ? field(form, "协战分工", "duties", choices([["", "共同出兵"],
+      ["screen", "首方主攻 · 次方屏护"], ["supply", "本方筹粮 · 首方主攻 · 次方屏护"]])) : null;
     const submit = el("button", "提交各方表决");
     submit.className = "primary";
     form.append(submit);
@@ -133,14 +144,16 @@ export function createLandscapeDesk(world, { snapshot, commit, locate, original,
         .map(({ key }) => new Option(town(key), key)));
       if ([...target.options].some(({ value }) => value === goal)) target.value = goal;
       returnTo.replaceChildren(new Option("按战后控制", ""), ...[...new Set(parties)].map((key) => new Option(name(key), key)));
-      submit.disabled = a.value === b.value || !target.value || !market.checked && !border.checked;
+      submit.disabled = a.value === b.value || !target.value || !market.checked && !border.checked || division?.value === "supply" && !Number(aid.value);
     }
-    for (const input of [a, b, market, border]) input.onchange = sync;
+    for (const input of [a, b, market, border, division, aid].filter(Boolean)) input.onchange = sync;
     form.onsubmit = (event) => {
       event.preventDefault();
       try {
+        const duties = division?.value ? { [state.player]: division.value === "supply" ? "supply" : "assault",
+          [a.value]: "assault", [b.value]: "screen" } : undefined;
         const next = proposeCongress(snapshot().state, { guests: [a.value, b.value], target: target.value, aid: +aid.value,
-          duration: +duration.value, market: market.checked, border: border.checked, beneficiary: a.value, returnTo: returnTo.value });
+          duration: +duration.value, market: market.checked, border: border.checked, beneficiary: a.value, returnTo: returnTo.value, duties });
         writing = false;
         commit(next, "已发出多方议盟邀请。");
       } catch (cause) { error.textContent = cause.message; }

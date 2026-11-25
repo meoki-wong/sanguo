@@ -1,5 +1,6 @@
 import { treatyWith } from "./diplomacy.js";
 import { cityName, gameOutcome } from "./engine.js";
+import { formationKinds, formationOf } from "./frontline.js";
 
 const terrain = {
   "chaisang:jiangxia": "river", "chaisang:linxiang": "river", "jiangling:jiangxia": "river",
@@ -27,6 +28,7 @@ function observe(state, key, source, seen) {
     && (source !== "border" || army.target !== key)).map((army) => ({
     officer: army.officer, faction: army.faction, location: key, troops: band(army.troops, precision),
     phase: army.phase, ...(army.engagement ? { target: army.target } : {}),
+    ...(state.frontline ? { kind: formationOf(state, army.officer)?.kind ?? (army.travel === "water" ? "navy" : "infantry") } : {}),
   }));
   return { source, seen, owner: site.owner, troops: band(site.troops, precision),
     defense: source === "scout" ? [site.defense, site.defense] : [Math.max(0, site.defense - 1), Math.min(5, site.defense + 1)],
@@ -40,7 +42,7 @@ export function beginWar(world, state) {
   return next;
 }
 
-function refreshIntelligence(world, state, turn, onlyPlayer = false) {
+export function refreshIntelligence(world, state, turn, onlyPlayer = false) {
   const living = new Set(Object.values(state.cities).map(({ owner }) => owner));
   for (const faction of living) {
     if (onlyPlayer && faction !== state.player) continue;
@@ -92,7 +94,9 @@ function observedArmies(state, faction) {
   const foreign = new Map();
   for (const key of Object.keys(state.war.intel[faction] ?? {})) {
     const record = townIntel(state, faction, key);
-    for (const army of record.spotted) {
+    const prior = state.war.intel[faction][key];
+    const sightings = state.frontline && prior.owner === state.cities[key].owner && state.turn - prior.seen <= 2 ? prior.spotted : record.spotted;
+    for (const army of sightings) {
       if (army.faction === faction || (foreign.get(army.officer)?.seen ?? -1) > record.seen) continue;
       foreign.set(army.officer, { ...army, seen: record.seen });
     }
@@ -101,7 +105,8 @@ function observedArmies(state, faction) {
   for (const army of state.armies ?? []) {
     if (army.faction !== faction && state.cities[army.location]?.owner === faction) {
       foreign.set(army.officer, { officer: army.officer, faction: army.faction, location: army.location,
-        troops: band(army.troops, 500), seen: state.turn, phase: "hold" });
+        troops: band(army.troops, 500), seen: state.turn, phase: "hold",
+        ...(state.frontline ? { kind: formationOf(state, army.officer)?.kind ?? (army.travel === "water" ? "navy" : "infantry") } : {}) });
     }
   }
   return [...own, ...[...foreign.values()].map((army) => ({
@@ -184,8 +189,9 @@ export function validIntelligence(state, officers) {
       && Object.entries(cities).every(([key, row]) => Object.hasOwn(state.cities, key) && row
         && ["border", "ally", "scout"].includes(row.source) && Number.isSafeInteger(row.seen) && row.seen >= since && row.seen <= state.turn
         && Object.hasOwn(state.factions, row.owner) && range(row.troops) && range(row.defense) && row.defense[1] <= 5
-        && Array.isArray(row.spotted) && row.spotted.length <= Object.keys(state.factions).length * 2
+        && Array.isArray(row.spotted) && row.spotted.length <= Object.keys(state.factions).length * (state.grand ? 4 : 2)
         && row.spotted.every((unit) => unit && officers.get(unit.officer)?.faction === unit.faction && unit.location === key
           && range(unit.troops) && ["muster", "march", "hold", "retreat", "secured"].includes(unit.phase)
+          && (unit.kind === undefined || state.frontline && Object.hasOwn(formationKinds, unit.kind))
           && (unit.target === undefined || Object.hasOwn(state.cities, unit.target)))));
 }
