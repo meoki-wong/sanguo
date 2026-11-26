@@ -31,6 +31,17 @@ import { getTechState, researchTech } from "./tech.js";
 import {
   STRATAGEMS, evaluateDemandSurrender, evaluateSpreadRumor, executeDemandSurrender, executeSpreadRumor,
 } from "./stratagems.js";
+import {
+  BUILDING_CATALOG, builtWonderInCity, cityBuildings, citySlotLimit, constructBuilding, constructWonder, wonderForCity,
+} from "./buildings.js";
+import {
+  activeSiegeOn, establishSiegeBlockade, isSupplyCut, liftSiegeBlockade, raidSupplyLine,
+} from "./supply.js";
+import {
+  ESPIONAGE_ACTIONS, cityVisibility, executeEspionageAction, hasInsider, isConfusedByEspionage, isFogOfWarEnabled, maskedTroopRange,
+} from "./espionage.js";
+import { personaForFaction } from "./ai-persona.js";
+import { collectWarRoomItems } from "./war-room.js";
 
 const fmt = new Intl.NumberFormat("zh-CN");
 const signed = (n) => (n > 0 ? "+" : "") + fmt.format(n);
@@ -302,6 +313,15 @@ export function createUxHud(world, api) {
     }
     const sagaBtn = $("open-saga-chronicle");
     if (sagaBtn) sagaBtn.hidden = !state.century;
+    const wrBtn = $("open-war-room");
+    if (wrBtn) {
+      wrBtn.hidden = !state.century;
+      if (state.century) {
+        const era = eraByYear(world, state);
+        const cnt = collectWarRoomItems(world, era, state).length;
+        wrBtn.textContent = cnt > 0 ? `军机处 ${cnt}` : "军机处";
+      }
+    }
     const techBtn = $("open-tech-dialog");
     if (techBtn) {
       techBtn.hidden = !state.century;
@@ -1255,9 +1275,14 @@ export function createUxHud(world, api) {
     if ($("sov-city-region")) {
       $("sov-city-region").textContent = han.active && han.cityKey === key ? `${prov} · ${han.name}驻跸` : prov;
     }
-    if ($("sov-city-owner")) $("sov-city-owner").textContent = factionName(era, holding.owner);
+    if ($("sov-city-owner")) {
+      const ownerName = factionName(era, holding.owner);
+      const persona = !mine && state.century ? personaForFaction(holding.owner) : null;
+      $("sov-city-owner").textContent = persona ? `${ownerName} · ${persona.badge}` : ownerName;
+    }
     if ($("sov-city-name")) $("sov-city-name").textContent = city.name;
 
+    const vis = !mine && isFogOfWarEnabled(state) ? cityVisibility(world, state, key) : "visible";
     const statsBox = $("sov-city-stats");
     if (statsBox) {
       const pop = state.realm?.cities[key];
@@ -1269,12 +1294,19 @@ export function createUxHud(world, api) {
           ["税收", `+${inc.treasury}`],
           ["粮食", `+${inc.grain}`],
         ]
-        : [
-          ["兵力情资", intelSummary(state, state.player, key)],
-          ["城防情资", intelSummary(state, state.player, key, "defense")],
-          ["外交关系", treatyWith(state, state.player, holding.owner) ? treatyTerms[treatyWith(state, state.player, holding.owner).kind].name : "敌对"],
-          ["所属州郡", prov],
-        ];
+        : vis === "fogged"
+          ? [
+            ["烽火迷雾", maskedTroopRange(key, holding.troops)],
+            ["城防情资", "未明（需斥候）"],
+            ["外交关系", treatyWith(state, state.player, holding.owner) ? treatyTerms[treatyWith(state, state.player, holding.owner).kind].name : "敌对"],
+            ["所属州郡", prov],
+          ]
+          : [
+            ["兵力情资", intelSummary(state, state.player, key)],
+            ["城防情资", intelSummary(state, state.player, key, "defense")],
+            ["外交关系", treatyWith(state, state.player, holding.owner) ? treatyTerms[treatyWith(state, state.player, holding.owner).kind].name : "敌对"],
+            ["所属州郡", prov],
+          ];
       statsBox.replaceChildren(...statPairs.map(([label, val]) => {
         const wrap = el("div");
         wrap.append(el("dt", label), el("dd", val));
@@ -1372,6 +1404,11 @@ export function createUxHud(world, api) {
           goBtn.disabled = !plan.affordable;
           goBtn.addEventListener("click", () => {
             const cur = api.snapshot().state;
+            const useManual = Boolean(cur.century && cur.saga?.options?.manualBattle !== false && api.openTacticalBattle);
+            if (useManual) {
+              api.openTacticalBattle(plan, () => renderSovereignCityCard());
+              return;
+            }
             api.commitState(
               () => executeSovereignAttack(world, cur, plan),
               `${lex.attackOrder}：命${plan.officer.name}施「${plan.outcome.tacticName || "正面强攻"}」自${cityName(world, plan.from)}攻打${city.name}。`,
@@ -1384,6 +1421,64 @@ export function createUxHud(world, api) {
         }
 
         if (state.century && gameOutcome(state) === "ongoing") {
+          // v18.0 粮道奇袭、围城断水 & 细作暗战快捷栏
+          const opsBar = el("div", undefined, "sov-stratagem-bar v18-ops-bar");
+          const cutNow = isSupplyCut(state, key);
+          const cutBtn = el("button", cutNow ? "粮道已断" : "断其粮道（35金30粮）", "quiet");
+          cutBtn.type = "button";
+          cutBtn.disabled = cutNow;
+          cutBtn.title = "奇兵夜袭敌城粮道：敌防 -22%、每季溃散，持续 2 季";
+          cutBtn.addEventListener("click", () => {
+            const cur = api.snapshot().state;
+            const res = raidSupplyLine(world, cur, key);
+            if (!res.ok) { api.notify?.(res.reason, true); return; }
+            api.sound?.play("alert");
+            api.commitState(() => res.state, res.summary);
+            renderSovereignCityCard();
+          });
+          opsBar.append(cutBtn);
+
+          const adjFrom = (city.links || []).find((n) => state.cities[n]?.owner === state.player && state.cities[n].troops >= 3500);
+          const siegeNow = activeSiegeOn(state, key);
+          if (adjFrom || siegeNow) {
+            const siegeBtn = el("button", siegeNow ? "解除围城" : "围城断水（40粮）", "quiet");
+            siegeBtn.type = "button";
+            siegeBtn.title = siegeNow ? "撤回围城偏师" : "不硬拼城防，每季削弱敌军与城墙";
+            siegeBtn.addEventListener("click", () => {
+              const cur = api.snapshot().state;
+              if (activeSiegeOn(cur, key)) {
+                api.commitState(() => liftSiegeBlockade(cur, key), `已解除对${city.name}的围城。`);
+              } else {
+                const res = establishSiegeBlockade(world, cur, adjFrom, key);
+                if (!res.ok) { api.notify?.(res.reason, true); return; }
+                api.sound?.play("march");
+                api.commitState(() => res.state, res.summary);
+              }
+              renderSovereignCityCard();
+            });
+            opsBar.append(siegeBtn);
+          }
+
+          for (const act of ESPIONAGE_ACTIONS) {
+            if (act.id === "spread_rumor") continue; // 已有反间流言按钮
+            const done = (act.id === "plant_insider" && hasInsider(state, key))
+              || (act.id === "forge_letter" && isConfusedByEspionage(state, key));
+            const eBtn = el("button", done ? `${act.name}·生效` : `${act.name}（${act.costTreasury}金）`, "quiet");
+            eBtn.type = "button";
+            eBtn.disabled = done;
+            eBtn.title = act.summary;
+            eBtn.addEventListener("click", () => {
+              const cur = api.snapshot().state;
+              const res = executeEspionageAction(world, cur, act.id, key);
+              if (!res.ok) { api.notify?.(res.reason, true); return; }
+              api.sound?.play("event");
+              api.commitState(() => res.state, res.summary);
+              renderSovereignCityCard();
+            });
+            opsBar.append(eBtn);
+          }
+          box.append(opsBar);
+
           const stratBar = el("div", undefined, "sov-stratagem-bar");
           const rumorCheck = evaluateSpreadRumor(world, state, key);
           const rumorActive = (state.saga?.rumors?.[key] ?? 0) > state.turn;
@@ -1463,6 +1558,55 @@ export function createUxHud(world, api) {
       }
 
       const bodyItems = [info, group];
+      // v18.0 一城一貌：城池设施与地域奇观
+      if (state.century && gameOutcome(state) === "ongoing") {
+        const bWrap = el("div", undefined, "v18-city-buildings");
+        const built = cityBuildings(state, key);
+        const limit = citySlotLimit(key);
+        const builtNames = built.map((id) => {
+          const d = BUILDING_CATALOG.find((x) => x.id === id);
+          return d ? `${d.icon}${d.name}` : id;
+        });
+        bWrap.append(el("div", `城池设施（${built.length}/${limit}）：${builtNames.length ? builtNames.join(" · ") : "尚无专项设施"}`, "v18-b-head"));
+        if (built.length < limit) {
+          const chips = el("div", undefined, "v18-b-chips");
+          for (const def of BUILDING_CATALOG) {
+            if (built.includes(def.id)) continue;
+            const cBtn = el("button", `${def.icon}${def.name} ${def.costTreasury}金`, "quiet v18-b-chip");
+            cBtn.type = "button";
+            cBtn.title = `${def.summary}（需金${def.costTreasury}/粮${def.costGrain}）`;
+            cBtn.addEventListener("click", () => {
+              const cur = api.snapshot().state;
+              const res = constructBuilding(world, cur, key, def.id);
+              if (!res.ok) { api.notify?.(res.reason, true); return; }
+              api.sound?.play("order");
+              api.commitState(() => res.state, res.summary);
+              renderSovereignCityCard();
+            });
+            chips.append(cBtn);
+          }
+          bWrap.append(chips);
+        }
+        const wonder = wonderForCity(key);
+        if (wonder) {
+          const already = builtWonderInCity(state, key);
+          const wBtn = el("button", already ? `✦ 奇观已落成：${wonder.name}` : `✦ 兴建奇观「${wonder.name}」（${wonder.costTreasury}金${wonder.costGrain}粮）`, already ? "quiet v18-wonder-btn" : "primary v18-wonder-btn");
+          wBtn.type = "button";
+          wBtn.disabled = Boolean(already);
+          wBtn.title = wonder.summary;
+          wBtn.addEventListener("click", () => {
+            const cur = api.snapshot().state;
+            const res = constructWonder(world, cur, key);
+            if (!res.ok) { api.notify?.(res.reason, true); return; }
+            api.sound?.play("victory");
+            api.commitState(() => res.state, res.summary);
+            renderSovereignCityCard();
+          });
+          bWrap.append(wBtn);
+        }
+        bodyItems.push(bWrap);
+      }
+
       const reinforce = quickReinforcePlan(world, state, planned, key);
       if (reinforce.ok) {
         const rBtn = el("button", `紧急调援：自${cityName(world, reinforce.from)}调 ${fmt.format(reinforce.troops)} 兵来援（耗${reinforce.grain}粮）`, "quiet sov-reinforce-btn");

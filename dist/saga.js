@@ -7,6 +7,11 @@ import { cleanLosses, recordAllegiance, retreatCity } from "./polity-handover.js
 import { livingSide, plain } from "./polities-data.js";
 import { officerMeta } from "./traits.js";
 import { evaluateCoalition, settleSeasonalClimate } from "./coalition.js";
+import { settleSupplyTurn } from "./supply.js";
+import { settleBuildingsTurn } from "./buildings.js";
+import { settleEspionageTurn } from "./espionage.js";
+import { settleLifespanTurn } from "./ai-persona.js";
+import { recordHistorySnapshot } from "./war-room.js";
 import { quarterlyTechPoints, techEconomyModifiers, techStratagemModifiers } from "./tech.js";
 
 export const MAX_CAPTIVES = 6;
@@ -422,6 +427,23 @@ export function settleSagaQuarter(world, era, state) {
     evaluateHistoricalEvent(world, era, state);
     evaluateCoalition(world, era, state);
     settleSeasonalClimate(world, era, state);
+    // v18.0 季度结算：粮道围城、城建产出、细作过期、世代传承与天下大势快照
+    const supRes = settleSupplyTurn(world, state);
+    const bldRes = settleBuildingsTurn(world, supRes.state);
+    const espState = settleEspionageTurn(bldRes.state);
+    const lifeRes = settleLifespanTurn(era, espState);
+    const snapState = recordHistorySnapshot(lifeRes.state);
+    state.cities = snapState.cities;
+    state.factions = snapState.factions;
+    if (snapState.recruitedOfficers) state.recruitedOfficers = snapState.recruitedOfficers;
+    state.saga = snapState.saga;
+    const v18Notes = [...supRes.notes, ...bldRes.notes, ...lifeRes.notes];
+    for (const note of v18Notes.slice(0, 4)) {
+      if (Array.isArray(state.saga?.annals)) {
+        state.saga.annals.push({ turn: state.turn, year: state.year + Math.floor((state.turn - 1) / 4), title: "军略奏报", text: note, kind: "war" });
+        if (state.saga.annals.length > MAX_ANNALS) state.saga.annals = state.saga.annals.slice(-MAX_ANNALS);
+      }
+    }
   }
 }
 

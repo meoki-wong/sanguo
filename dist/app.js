@@ -85,6 +85,14 @@ import { createCustomRulerGame, SANDBOX_HERO_POOL, sandboxHeroSummary } from "./
 import {
   canResearchTech, factionEliteUnit, getTechState, hasTech, researchTech, TECH_BRANCHES, TECH_TREE,
 } from "./tech.js";
+import { executeSovereignAttack } from "./sovereign.js";
+import { activeSiegeOn, isSupplyCut } from "./supply.js";
+import { hasInsider, isFogOfWarEnabled, setFogOfWar } from "./espionage.js";
+import { isLifespanEnabled, performMentorship, setLifespanEnabled } from "./ai-persona.js";
+import {
+  TACTICAL_PHASES, autoResolveTacticalSession, createTacticalSession, currentPhaseOrders, finalizeTacticalModifiers, resolveTacticalPhase,
+} from "./tactical-battle.js";
+import { collectWarRoomItems, decodeShareCode, encodeShareCode, renderTrendChartSvg } from "./war-room.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -3949,6 +3957,193 @@ function openTechDialog() {
   if (!dlg.open) dlg.showModal();
 }
 
+let warRoomTab = "briefing";
+let warRoomMetric = "power";
+
+function renderWarRoomDialog() {
+  const dlg = find("war-room-dialog");
+  if (!dlg || !state?.century) return;
+  const currentEra = era();
+  for (const btn of dlg.querySelectorAll(".wr-tab")) {
+    const active = btn.dataset.wrTab === warRoomTab;
+    btn.setAttribute("aria-selected", String(active));
+  }
+  for (const id of ["briefing", "trends", "mentorship", "rules"]) {
+    const panel = find(`wr-panel-${id}`);
+    if (panel) panel.hidden = warRoomTab !== id;
+  }
+
+  // 1. 要务批阅
+  const briefEl = find("wr-panel-briefing");
+  if (briefEl) {
+    const items = collectWarRoomItems(world, currentEra, state);
+    if (!items.length) {
+      briefEl.replaceChildren(make("div", "当下海内清平，暂无紧急军机要务。", "v18-empty"));
+    } else {
+      briefEl.replaceChildren(...items.map((item) => {
+        const card = make("div", undefined, "wr-item-card");
+        card.dataset.severity = item.severity;
+        const body = make("div", undefined, "wr-item-body");
+        body.append(make("span", item.tag, "memorial-tag"), make("strong", item.title), make("p", item.detail));
+        const btn = make("button", item.actionLabel || "处理", item.severity === "urgent" ? "primary" : "quiet");
+        btn.type = "button";
+        btn.addEventListener("click", () => {
+          dlg.close();
+          if (item.actionType === "open_tech") openTechDialog();
+          else if (item.actionType === "focus_city" && item.cityKey) selectMapCity(item.cityKey, true);
+          else if (item.actionType === "open_buildings") selectMapCity(firstCity(world, state), true);
+        });
+        card.append(body, btn);
+        return card;
+      }));
+    }
+  }
+
+  // 2. 天下大势曲线
+  const chartEl = find("wr-trend-chart");
+  if (chartEl) {
+    for (const mBtn of dlg.querySelectorAll(".wr-metric-btn")) {
+      mBtn.setAttribute("aria-pressed", String(mBtn.dataset.wrMetric === warRoomMetric));
+    }
+    chartEl.innerHTML = renderTrendChartSvg(currentEra, state, warRoomMetric);
+  }
+
+  // 3. 名将拜师授艺
+  const mentorEl = find("wr-panel-mentorship");
+  if (mentorEl) {
+    const myOfficers = [
+      ...currentEra.officers.filter((o) => o.faction === state.player && knownOfficer(state, o)),
+      ...(state.recruitedOfficers || []).filter((o) => o.faction === state.player),
+    ];
+    const form = make("div", undefined, "wr-mentor-form");
+    const mSel = make("select");
+    const aSel = make("select");
+    const sortedByCmd = [...myOfficers].sort((a, b) => (b.command ?? 70) - (a.command ?? 70));
+    for (const o of sortedByCmd) {
+      mSel.append(new Option(`${o.name}（统${o.command ?? 70}/智${o.intel ?? o.governance ?? 70}）`, o.key));
+      aSel.append(new Option(`${o.name}（统${o.command ?? 70}/智${o.intel ?? o.governance ?? 70}）`, o.key));
+    }
+    if (sortedByCmd.length > 1) aSel.selectedIndex = sortedByCmd.length - 1;
+    const l1 = make("label"); l1.append(make("span", "授业名师"), mSel);
+    const l2 = make("label"); l2.append(make("span", "受业后学"), aSel);
+    const go = make("button", "举行拜师授艺（30金）", "primary");
+    go.type = "button";
+    go.disabled = sortedByCmd.length < 2;
+    go.addEventListener("click", () => {
+      const res = performMentorship(currentEra, state, mSel.value, aSel.value);
+      if (!res.ok) { notify(res.reason, true); return; }
+      sound?.play("event");
+      mutate(() => res.state, res.summary);
+      renderWarRoomDialog();
+    });
+    form.append(l1, l2, go);
+    const historyList = state.saga?.lifespan?.mentorships || [];
+    const listWrap = make("div", undefined, "tb-log");
+    if (!historyList.length) {
+      listWrap.textContent = "尚无拜师记录：挑选名师指导后学，可永久提升统率/智谋并赠与军功。";
+    } else {
+      listWrap.replaceChildren(...historyList.map((r) => make("div", `✦ ${r.apprenticeName} 拜 ${r.mentorName} 为师（统+${r.commandBonus} / 智+${r.intelBonus}）`)));
+    }
+    mentorEl.replaceChildren(form, listWrap);
+  }
+
+  // 4. 规则开关
+  const optManual = find("wr-opt-manual-battle");
+  if (optManual) optManual.checked = state.saga?.options?.manualBattle !== false;
+  const optFog = find("wr-opt-fog");
+  if (optFog) optFog.checked = isFogOfWarEnabled(state);
+  const optLife = find("wr-opt-lifespan");
+  if (optLife) optLife.checked = isLifespanEnabled(state);
+}
+
+function openWarRoomDialog(tab = "briefing") {
+  const dlg = find("war-room-dialog");
+  if (!dlg || !state?.century) return;
+  warRoomTab = tab;
+  renderWarRoomDialog();
+  if (!dlg.open) dlg.showModal();
+}
+
+let activeTacticalPlan = null;
+let activeTacticalSession = null;
+let activeTacticalOnDone = null;
+
+function renderTacticalBattleDialog() {
+  const dlg = find("tactical-battle-dialog");
+  if (!dlg || !activeTacticalSession) return;
+  const ses = activeTacticalSession;
+  const phase = TACTICAL_PHASES[ses.phaseIndex] || TACTICAL_PHASES[TACTICAL_PHASES.length - 1];
+  find("tb-phase-tag").textContent = ses.done ? "三阵议定 · 决战令下" : phase.title;
+  find("tb-dialog-title").textContent = `${ses.fromName} ⚔ ${ses.toName} · 临阵军议`;
+  const projOff = Math.round(ses.baseOffense * ses.atkMult);
+  const projDef = Math.round(ses.baseDefense * ses.defMult);
+  find("tb-header-meta").textContent = `我军 ${ses.attackerName}（战力 ${projOff.toLocaleString()} · ×${ses.atkMult.toFixed(2)}） 对 敌军 ${ses.defenderName}（战力 ${projDef.toLocaleString()} · ×${ses.defMult.toFixed(2)}） · 预计战损 ×${ses.lossMult.toFixed(2)}`;
+
+  const grid = find("tb-orders-grid");
+  const commitBtn = find("tb-commit-btn");
+  const autoBtn = find("tb-auto-btn");
+  if (ses.done) {
+    const fin = finalizeTacticalModifiers(ses);
+    grid.replaceChildren(make("div", fin.summary, "v18-empty"));
+    if (commitBtn) commitBtn.hidden = false;
+    if (autoBtn) autoBtn.hidden = true;
+  } else {
+    const options = currentPhaseOrders(ses);
+    grid.replaceChildren(...options.map((ord) => {
+      const btn = make("button", undefined, "tb-order-card");
+      btn.type = "button";
+      const head = make("div", undefined, "tb-order-head");
+      head.append(make("strong", ord.name), make("span", `${ord.tag} · ${ord.rating}`, "memorial-tag"));
+      btn.append(head, make("p", ord.summary), make("div", ord.hint, "tb-order-hint"));
+      btn.addEventListener("click", () => {
+        sound?.play("order");
+        activeTacticalSession = resolveTacticalPhase(activeTacticalSession, ord.id);
+        renderTacticalBattleDialog();
+      });
+      return btn;
+    }));
+    if (commitBtn) commitBtn.hidden = true;
+    if (autoBtn) autoBtn.hidden = false;
+  }
+
+  const logEl = find("tb-log");
+  if (logEl) {
+    logEl.replaceChildren(
+      ...(ses.log.length ? ses.log.map((line) => make("div", line)) : [make("div", "请依天时、地利与敌我虚实，下达第一阵军令。")]),
+    );
+  }
+}
+
+function openTacticalBattleDialog(plan, onCommitted) {
+  const dlg = find("tactical-battle-dialog");
+  if (!dlg || !plan?.ok) return;
+  const currentEra = era();
+  const targetHolding = state.cities[plan.to];
+  const defender = targetHolding?.commander ? currentEra.officers.find((o) => o.key === targetHolding.commander) : null;
+  const siege = activeSiegeOn(state, plan.to);
+  activeTacticalPlan = plan;
+  activeTacticalOnDone = onCommitted || null;
+  activeTacticalSession = createTacticalSession({
+    fromName: cityName(world, plan.from),
+    toName: cityName(world, plan.to),
+    attackerName: plan.officer.name,
+    defenderName: defender?.name || "城防守军",
+    attacker: plan.officer,
+    defender,
+    attackerTroops: plan.troops,
+    defenderTroops: targetHolding?.troops ?? 3000,
+    terrain: plan.outcome?.terrainLabel?.includes("江") ? "river" : "land",
+    season: seasons[(state.turn ?? 0) % 4],
+    targetCut: isSupplyCut(state, plan.to),
+    siegeTurns: siege ? Math.max(1, (state.turn ?? 1) - (siege.sinceTurn ?? 1) + 1) : 0,
+    insiderActive: hasInsider(state, plan.to),
+    baseOffense: plan.outcome?.offense ?? 10000,
+    baseDefense: plan.outcome?.defense ?? 10000,
+  });
+  renderTacticalBattleDialog();
+  if (!dlg.open) dlg.showModal();
+}
+
 function openAchievementsDialog() {
   const dlg = find("achievements-dialog");
   if (!dlg || !state) return;
@@ -5141,6 +5336,82 @@ function wireControls() {
   find("century-pending").addEventListener("click", () => centuryDesk.open("pending"));
   find("open-century-menu").addEventListener("click", () => { find("menu-dialog").close(); centuryDesk.open(); });
   find("open-saga-chronicle")?.addEventListener("click", () => chronicleReplay?.open());
+  find("open-war-room")?.addEventListener("click", () => openWarRoomDialog("briefing"));
+  find("war-room-dialog")?.querySelectorAll(".wr-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      warRoomTab = btn.dataset.wrTab || "briefing";
+      renderWarRoomDialog();
+    });
+  });
+  find("war-room-dialog")?.querySelectorAll(".wr-metric-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      warRoomMetric = btn.dataset.wrMetric || "power";
+      renderWarRoomDialog();
+    });
+  });
+  find("wr-opt-manual-battle")?.addEventListener("change", (e) => {
+    const next = structuredClone(state);
+    if (!next.saga) next.saga = {};
+    if (!next.saga.options) next.saga.options = {};
+    next.saga.options.manualBattle = Boolean(e.target.checked);
+    mutate(() => next, next.saga.options.manualBattle ? "已开启三回合临阵微操指挥。" : "已切换为快速出征模式。");
+  });
+  find("wr-opt-fog")?.addEventListener("change", (e) => {
+    mutate(() => setFogOfWar(state, Boolean(e.target.checked)), e.target.checked ? "已开启烽火迷雾与细作情报战。" : "已关闭烽火迷雾，全图视野透明。");
+  });
+  find("wr-opt-lifespan")?.addEventListener("change", (e) => {
+    mutate(() => setLifespanEnabled(state, Boolean(e.target.checked)), e.target.checked ? "已开启名将世代更替，后起之秀将随年份出山。" : "已关闭世代更替。");
+  });
+  find("wr-export-code")?.addEventListener("click", async () => {
+    try {
+      const json = createSaveBackup({ state, selected });
+      const code = encodeShareCode(json);
+      const area = find("wr-share-code");
+      if (area) area.value = code;
+      try { await navigator.clipboard?.writeText(code); } catch {}
+      notify("已生成战局存档码并尝试复制至剪贴板！");
+    } catch (err) {
+      notify(err.message, true);
+    }
+  });
+  find("wr-import-code")?.addEventListener("click", () => {
+    try {
+      const area = find("wr-share-code");
+      const json = decodeShareCode(area?.value || "");
+      const rec = readGameRecord(world, json);
+      replaceGame(rec.state, rec.selected);
+      find("war-room-dialog")?.close();
+      sound?.play("event");
+      notify("已从存档码成功还原战局！");
+    } catch (err) {
+      notify(err.message, true);
+    }
+  });
+  find("tb-auto-btn")?.addEventListener("click", () => {
+    if (!activeTacticalSession) return;
+    activeTacticalSession = autoResolveTacticalSession(activeTacticalSession);
+    renderTacticalBattleDialog();
+  });
+  find("tb-cancel-btn")?.addEventListener("click", () => {
+    find("tactical-battle-dialog")?.close();
+    activeTacticalPlan = null;
+    activeTacticalSession = null;
+  });
+  find("tb-commit-btn")?.addEventListener("click", () => {
+    if (!activeTacticalPlan || !activeTacticalSession) return;
+    const fin = finalizeTacticalModifiers(activeTacticalSession);
+    const enrichedPlan = { ...activeTacticalPlan, tactical: fin };
+    const dlg = find("tactical-battle-dialog");
+    if (dlg?.open) dlg.close();
+    sound?.play("march");
+    mutate(
+      () => executeSovereignAttack(world, state, enrichedPlan),
+      `临阵定计出征：命${enrichedPlan.officer.name}自${cityName(world, enrichedPlan.from)}攻打${cityName(world, enrichedPlan.to)}（${fin.summary}）`,
+    );
+    activeTacticalOnDone?.();
+    activeTacticalPlan = null;
+    activeTacticalSession = null;
+  });
   find("open-tech-dialog")?.addEventListener("click", () => openTechDialog());
   find("open-achievements-dialog")?.addEventListener("click", () => openAchievementsDialog());
   find("ach-copy-btn")?.addEventListener("click", async () => {
@@ -5185,6 +5456,8 @@ function wireControls() {
           doubleTech: Boolean(find("sb-double-tech")?.checked),
           fierceCoalition: Boolean(find("sb-fierce-coalition")?.checked),
           bonusResources: Boolean(find("sb-bonus-res")?.checked),
+          fogOfWar: Boolean(find("sb-fog-of-war")?.checked),
+          enableLifespan: Boolean(find("sb-lifespan")?.checked),
         },
       });
       replaceGame(opening);
@@ -6320,6 +6593,9 @@ async function start() {
     openHistoricalEvent: () => openHistoricalEvent(),
     openCaptiveDialog: (officerKey) => openCaptiveDialog(officerKey),
     openTechDialog: () => openTechDialog(),
+    openWarRoom: (tab) => openWarRoomDialog(tab),
+    openTacticalBattle: (plan, onDone) => openTacticalBattleDialog(plan, onDone),
+    notify: (msg, isError) => notify(msg, isError),
     openStratagemTab: () => openDiplomacyDialog("stratagem"),
   });
   wireControls();

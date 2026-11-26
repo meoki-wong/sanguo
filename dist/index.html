@@ -47,6 +47,7 @@
       <button type="button" class="quiet" id="open-advice">议事</button>
       <button type="button" class="quiet" id="century-pending" aria-haspopup="dialog" hidden>待决</button>
       <button type="button" class="quiet" id="open-chronicle">奏报</button>
+      <button type="button" class="quiet" id="open-war-room" hidden>军机处</button>
       <button type="button" class="quiet" id="open-tech-dialog" hidden>兵技</button>
       <button type="button" class="quiet" id="open-saga-chronicle" hidden>本纪</button>
       <button type="button" class="quiet" id="open-achievements-dialog" hidden>勋鉴</button>
@@ -2551,12 +2552,76 @@
         <label><input type="checkbox" id="sb-double-tech"> <span>双倍技巧点积累（快速解锁三阶精锐）</span></label>
         <label><input type="checkbox" id="sb-fierce-coalition"> <span>强硬反霸联军（14 城即触发合纵讨伐）</span></label>
         <label><input type="checkbox" id="sb-bonus-res"> <span>充盈开局军资（国库+80 · 储粮+80 · 技巧点+120）</span></label>
+        <label><input type="checkbox" id="sb-fog-of-war"> <span>启用烽火迷雾与细作暗战（远方敌城隐藏虚实）</span></label>
+        <label><input type="checkbox" id="sb-lifespan"> <span>启用史实寿元与名将世代传承（后起之秀出山）</span></label>
       </div>
       <div class="dialog-actions">
         <button type="button" class="quiet" data-close="sandbox-dialog">取消</button>
         <button type="submit" class="primary" id="sb-launch-btn">建号开局</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="war-room-dialog" aria-labelledby="wr-dialog-title">
+    <div class="dialog-content wr-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag">v18.0 军机总枢 · 决胜千里</span>
+          <h2 id="wr-dialog-title">军机处 · 天下大势与要务批阅</h2>
+        </div>
+        <button type="button" class="quiet" data-close="war-room-dialog">返回</button>
+      </div>
+      <div class="wr-tabs" role="tablist">
+        <button type="button" class="quiet wr-tab" data-wr-tab="briefing" aria-selected="true">要务批阅</button>
+        <button type="button" class="quiet wr-tab" data-wr-tab="trends" aria-selected="false">天下大势</button>
+        <button type="button" class="quiet wr-tab" data-wr-tab="mentorship" aria-selected="false">名将授艺</button>
+        <button type="button" class="quiet wr-tab" data-wr-tab="rules" aria-selected="false">规则与存档码</button>
+      </div>
+      <div id="wr-panel-briefing" class="wr-panel"></div>
+      <div id="wr-panel-trends" class="wr-panel" hidden>
+        <div class="wr-metric-bar">
+          <button type="button" class="quiet wr-metric-btn" data-wr-metric="power" aria-pressed="true">综合国力</button>
+          <button type="button" class="quiet wr-metric-btn" data-wr-metric="cities" aria-pressed="false">城池疆域</button>
+          <button type="button" class="quiet wr-metric-btn" data-wr-metric="troops" aria-pressed="false">总兵力</button>
+        </div>
+        <div id="wr-trend-chart"></div>
+      </div>
+      <div id="wr-panel-mentorship" class="wr-panel" hidden></div>
+      <div id="wr-panel-rules" class="wr-panel" hidden>
+        <div class="wr-rule-toggles">
+          <label><input type="checkbox" id="wr-opt-manual-battle"> <span>开启「三回合临阵微操」攻城指挥（关闭则直接速战）</span></label>
+          <label><input type="checkbox" id="wr-opt-fog"> <span>开启「烽火迷雾」战争视野与细作情报战</span></label>
+          <label><input type="checkbox" id="wr-opt-lifespan"> <span>开启「名将世代更替」（历史剧本陆续迎来后起之秀）</span></label>
+        </div>
+        <div class="wr-share-box">
+          <strong>战局存档码（跨设备导入 / 分享）</strong>
+          <textarea id="wr-share-code" rows="3" placeholder="点击「生成存档码」导出当前战局，或粘贴 SG18:... 存档码后点击导入"></textarea>
+          <div class="wr-share-actions">
+            <button type="button" class="quiet" id="wr-export-code">生成并复制存档码</button>
+            <button type="button" class="primary" id="wr-import-code">导入存档码还原战局</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="tactical-battle-dialog" aria-labelledby="tb-dialog-title">
+    <div class="dialog-content tb-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag" id="tb-phase-tag">第一阵 · 接战破阵</span>
+          <h2 id="tb-dialog-title">临阵三回合军议</h2>
+        </div>
+        <button type="button" class="quiet" id="tb-auto-btn">一键委任速战</button>
+      </div>
+      <div id="tb-header-meta" class="tb-header-meta"></div>
+      <div id="tb-orders-grid" class="tb-orders-grid"></div>
+      <div id="tb-log" class="tb-log"></div>
+      <div class="dialog-actions">
+        <button type="button" class="quiet" id="tb-cancel-btn">取消出征</button>
+        <button type="button" class="primary" id="tb-commit-btn" hidden>依此军令下达出征！</button>
+      </div>
+    </div>
   </dialog>
 
   <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">

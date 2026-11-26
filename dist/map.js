@@ -15,6 +15,8 @@ import { dynastyYield } from "./dynasty-economy.js";
 import { strategicFronts9, theaterRoles9 } from "./strategy-nine.js";
 import { marketRow } from "./reign-economy.js";
 import { chokepointBetween, isCoalitionActive } from "./coalition.js";
+import { supplyLinesForMap } from "./supply.js";
+import { cityVisibility, isFogOfWarEnabled } from "./espionage.js";
 
 const colors = {
   cao: "#416a91", wei: "#416a91", yuan: "#8c6a25", zhang: "#a55b42", shu: "#a1503a",
@@ -870,6 +872,64 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
         trace(ring, "#e85442", 3.0, 0.9);
         ctx.restore();
       }
+    }
+
+    // v18.0 沙盘粮道补给线、断粮警报、围城环与烽火迷雾罩
+    if (mapState?.century && layer === "cities") {
+      const supMap = supplyLinesForMap(world, mapState);
+      ctx.save();
+      for (const seg of supMap.lines) {
+        const a = cityPositions.get(seg.from);
+        const b = cityPositions.get(seg.to);
+        if (!a || !b) continue;
+        ctx.setLineDash([5 / z, 4 / z]);
+        ctx.beginPath();
+        ctx.moveTo(a[0], a[1]);
+        ctx.lineTo(b[0], b[1]);
+        ctx.strokeStyle = seg.cut ? "rgba(232, 84, 66, 0.85)" : seg.strained ? "rgba(235, 168, 72, 0.72)" : "rgba(214, 180, 96, 0.56)";
+        ctx.lineWidth = 2.0 / z;
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      for (const s of supMap.sieges) {
+        const p = cityPositions.get(s.target);
+        if (!p) continue;
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], 14.5 / z, 0, Math.PI * 2);
+        ctx.strokeStyle = "#e87a3e";
+        ctx.lineWidth = 2.4 / z;
+        ctx.stroke();
+      }
+      for (const ck of supMap.cutCities) {
+        const p = cityPositions.get(ck);
+        if (!p) continue;
+        ctx.fillStyle = "rgba(180, 42, 34, 0.92)";
+        ctx.beginPath();
+        ctx.arc(p[0] + 9 / z, p[1] - 9 / z, 5.2 / z, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#fff5e6";
+        ctx.font = `700 ${Math.max(6, 7.2 / z)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("断", p[0] + 9 / z, p[1] - 8.6 / z);
+      }
+      if (isFogOfWarEnabled(mapState)) {
+        for (const c of world.cities) {
+          if (cityVisibility(world, mapState, c.key) !== "fogged") continue;
+          const p = cityPositions.get(c.key);
+          if (!p) continue;
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], 13 / z, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(16, 18, 22, 0.52)";
+          ctx.fill();
+          ctx.fillStyle = "rgba(232, 220, 194, 0.85)";
+          ctx.font = `700 ${Math.max(7, 9 / z)}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("?", p[0], p[1] - 11 / z);
+        }
+      }
+      ctx.restore();
     }
 
     if (layer === "cities" && z >= 1.35) {

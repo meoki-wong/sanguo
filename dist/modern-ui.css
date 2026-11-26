@@ -3739,3 +3739,262 @@ body[data-hud-mode="sovereign"] #feedback {
     align-items: flex-start;
   }
 }
+
+/* ==================== v18.0 决胜千里 · 军机处 / 临阵微操 / 城建 / 暗战 ==================== */
+#war-room-dialog,
+#tactical-battle-dialog {
+  width: min(760px, calc(100vw - 1.25rem));
+  max-width: calc(100vw - 1.25rem);
+  padding: 0;
+  box-sizing: border-box;
+}
+.wr-dialog-content,
+.tb-dialog-content {
+  width: 100%;
+  box-sizing: border-box;
+  max-height: min(86vh, 760px);
+  overflow-y: auto;
+}
+.topbar .turn-tools {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.2rem;
+}
+.topbar .turn-tools button {
+  padding-inline: 0.44rem;
+  font-size: 0.76rem;
+}
+.topbar .resources {
+  min-width: 0;
+  overflow: hidden;
+  gap: 0.28rem;
+}
+.topbar .resources > div {
+  padding-inline: 0.36rem;
+}
+.wr-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0.75rem;
+}
+.wr-tab[aria-selected="true"],
+.wr-metric-btn[aria-pressed="true"] {
+  background: rgba(176, 132, 62, 0.28);
+  border-color: var(--gold);
+  color: var(--gold-bright);
+}
+.wr-panel {
+  display: grid;
+  gap: 0.6rem;
+}
+.wr-item-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.62rem 0.78rem;
+  border-radius: var(--radius-md);
+  background: rgba(28, 23, 18, 0.88);
+  border: 1px solid rgba(228, 190, 116, 0.22);
+}
+.wr-item-card[data-severity="urgent"] {
+  border-color: rgba(232, 92, 74, 0.55);
+  background: rgba(58, 22, 18, 0.72);
+}
+.wr-item-card[data-severity="opportunity"] {
+  border-color: rgba(228, 190, 116, 0.48);
+}
+.wr-item-body {
+  display: grid;
+  gap: 0.16rem;
+}
+.wr-item-body strong { font-size: 0.86rem; color: #f6e7c6; }
+.wr-item-body p { margin: 0; font-size: 0.75rem; color: var(--muted); }
+.wr-metric-bar {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.v18-trend-svg {
+  width: 100%;
+  height: auto;
+  background: rgba(18, 15, 12, 0.78);
+  border: 1px solid rgba(228, 190, 116, 0.2);
+  border-radius: var(--radius-md);
+}
+.v18-trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+.v18-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(228, 190, 116, 0.26);
+  background: rgba(26, 22, 17, 0.82);
+  font-size: 0.74rem;
+  color: #efe2c4;
+}
+.v18-legend-chip i {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  display: inline-block;
+}
+.v18-legend-chip small { color: var(--muted); font-size: 0.66rem; }
+.wr-rule-toggles {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-md);
+  background: rgba(26, 22, 17, 0.82);
+  border: 1px solid rgba(228, 190, 116, 0.2);
+}
+.wr-rule-toggles label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: #efe2c4;
+}
+.wr-share-box {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-md);
+  background: rgba(24, 20, 16, 0.82);
+  border: 1px solid rgba(228, 190, 116, 0.2);
+}
+.wr-share-box textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
+  padding: 0.45rem;
+  border-radius: var(--radius-sm);
+  background: rgba(14, 12, 10, 0.9);
+  color: #f4e6c5;
+  border: 1px solid rgba(228, 190, 116, 0.25);
+}
+.wr-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+.wr-mentor-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.5rem;
+  align-items: end;
+}
+.wr-mentor-form label {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  color: #efe2c4;
+}
+.tb-header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.55rem 0.7rem;
+  margin-bottom: 0.6rem;
+  border-radius: var(--radius-md);
+  background: rgba(28, 22, 16, 0.88);
+  border: 1px solid rgba(228, 190, 116, 0.24);
+  font-size: 0.8rem;
+  color: #f4e6c5;
+}
+.tb-orders-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.5rem;
+}
+.tb-order-card {
+  display: grid;
+  gap: 0.24rem;
+  text-align: left;
+  padding: 0.62rem 0.72rem;
+  border-radius: var(--radius-md);
+  background: rgba(34, 28, 21, 0.92);
+  border: 1px solid rgba(228, 190, 116, 0.25);
+  color: #f6e7c6;
+  cursor: pointer;
+}
+.tb-order-card:hover {
+  border-color: var(--gold);
+  background: rgba(68, 52, 30, 0.92);
+}
+.tb-order-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+.tb-order-card p { margin: 0; font-size: 0.74rem; color: var(--muted); }
+.tb-order-hint { font-size: 0.7rem; color: var(--gold-bright); }
+.tb-log {
+  margin-top: 0.65rem;
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  background: rgba(16, 13, 10, 0.85);
+  border: 1px solid rgba(228, 190, 116, 0.16);
+  font-size: 0.76rem;
+  color: #e6d7b8;
+}
+.v18-city-buildings {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.46rem 0.54rem;
+  border-radius: var(--radius-sm);
+  background: rgba(24, 20, 15, 0.78);
+  border: 1px solid rgba(228, 190, 116, 0.2);
+}
+.v18-b-head { font-size: 0.74rem; color: #f1dfba; }
+.v18-b-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.v18-b-chip {
+  font-size: 0.7rem !important;
+  padding: 0.16rem 0.4rem !important;
+  min-height: 1.55rem !important;
+}
+.v18-wonder-btn {
+  width: 100%;
+  font-size: 0.74rem !important;
+  min-height: 1.85rem !important;
+}
+.v18-ops-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.26rem;
+}
+.v18-ops-bar button {
+  font-size: 0.71rem !important;
+  padding: 0.18rem 0.42rem !important;
+  min-height: 1.65rem !important;
+}
+.v18-empty {
+  padding: 0.8rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+@media (max-width: 600px) {
+  .wr-item-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .tb-orders-grid {
+    grid-template-columns: 1fr;
+  }
+}

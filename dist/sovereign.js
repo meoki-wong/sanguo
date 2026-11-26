@@ -626,6 +626,7 @@ export function executeSovereignAttack(world, state, plan) {
     officer: plan.officer.key,
     troops: plan.troops,
     ...(plan.tactic && state.century ? { tactic: plan.tactic } : {}),
+    ...(plan.tactical && state.century ? { tactical: plan.tactical } : {}),
   });
 }
 

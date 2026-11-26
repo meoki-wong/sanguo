@@ -87,6 +87,14 @@ export function createCustomRulerGame(world, {
     state.factions[factionKey].grain += 80;
     saga.tech.points += 120;
   }
+  if (rules.fogOfWar || rules.enableLifespan || rules.manualBattle !== undefined) {
+    saga.options = {
+      ...(saga.options || {}),
+      fogOfWar: Boolean(rules.fogOfWar),
+      enableLifespan: Boolean(rules.enableLifespan),
+      manualBattle: rules.manualBattle !== undefined ? Boolean(rules.manualBattle) : true,
+    };
+  }
 
   recordAnnal(state, "创朝", `${cleanRuler}建号「${cleanState}」起兵于${world.cities.find((c) => c.key === homeCity)?.name ?? homeCity}${selected.length ? `，麾下名将${selected.map((h) => h.name).join("、")}齐聚` : ""}！`);
   previewOrders(world, state);

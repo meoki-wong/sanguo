@@ -44,6 +44,10 @@ import {
 import { chokepointModifiers, isCoalitionMember, leaveCoalition } from "./coalition.js";
 import { resolveBattleDuel } from "./duels.js";
 import { techCombatModifiers, techEconomyModifiers } from "./tech.js";
+import { buildingCombatModifiers, buildingEconomyModifiers } from "./buildings.js";
+import { supplyCombatModifiers } from "./supply.js";
+import { espionageCombatModifiers } from "./espionage.js";
+import { recordHistorySnapshot } from "./war-room.js";
 import {
   BATTLE_TACTICS, DEFAULT_TACTIC, difficultyConfig, estimateCasualties, evaluateTactic, isOpeningPrepTurn,
   moraleModifier, normalizeTactic, tacticCost, validDifficulty, validTactic,
@@ -123,9 +127,10 @@ export function cityRevenues(state, key) {
   const income = cityIncome(city, state.realm?.cities[key]);
   const yieldRate = dynastyYield(state, key);
   const taxRate = dynastyTaxRate(state, key) * levyRate9(state, key);
+  const bEco = buildingEconomyModifiers(state, key);
   const gross = {
-    treasury: Math.floor((income.treasury * yieldRate.money + yieldRate.extra) * taxRate),
-    grain: Math.floor((income.grain * yieldRate.grain + yieldRate.extra * 2) * workforceYield(state, key) * taxRate * techEconomyModifiers(state, city.owner).grainYieldMult),
+    treasury: Math.floor((income.treasury * yieldRate.money + yieldRate.extra) * taxRate * bEco.treasuryMult),
+    grain: Math.floor((income.grain * yieldRate.grain + yieldRate.extra * 2) * workforceYield(state, key) * taxRate * techEconomyModifiers(state, city.owner).grainYieldMult * bEco.grainMult),
   };
   return taxSplit10(state, key, adjustedHarvest15(state, key, gross));
 }
@@ -288,6 +293,8 @@ export function createGame(world, year, player, { realm = year === 208, war = fa
     if (!century) return realm;
     const enabled = enableCentury(realm);
     enabled.saga = createSagaState(world, era, enabled, { historicalEvents });
+    const withSnap = recordHistorySnapshot(enabled);
+    enabled.saga = withSnap.saga;
     return enabled;
   }
   return polity ? enablePolity(world, warfare) : warfare;
@@ -979,22 +986,27 @@ export function forecastAttack(era, state, order, faction = state.player, condit
   const attSaga = sagaCombatModifiers(state, faction, tacticFx.id === "rally" ? order.to : null, tacticFx.id);
   const attTech = techCombatModifiers(state, faction, tacticFx.id, weather.terrain);
   const cpFx = chokepointModifiers(state, order.from, order.to, tacticFx.id, leader);
+  const supFx = supplyCombatModifiers(null, state, { fromKey: order.from, toKey: order.to, attackerFaction: faction, defenderFaction: targetHolding?.owner });
+  const bldFx = buildingCombatModifiers(null, state, { fromKey: order.from, toKey: order.to, attackerFaction: faction, defenderFaction: targetHolding?.owner, terrain: weather.terrain });
+  const espFx = espionageCombatModifiers(state, order.to);
+  const tacFx = order.tactical || conditions.tactical || null;
   const coalitionAtkMult = isCoalitionMember(state, faction) && targetHolding?.owner === state.player ? 1.06 : 1;
   const rawTravel = conditions.travel === "water" && weather.terrain === "river" ? 1.12 : 1 - Math.min(.15, weather.cost * .035);
   const travel = traitFx.ignoreWeather && rawTravel < 1 ? 1 : rawTravel;
   const offenseMorale = state?.century ? moraleModifier(state.factions?.[faction]?.morale ?? 75) : 1;
   const offenseAiMult = state?.century && faction !== state.player ? difficultyConfig(state).aiCombatMult : 1;
   const offense = Math.round(order.troops * (1 + officerSkill(state, leader, "command") / 120 + gear)
-    * travel * (conditions.readiness ?? 1) * traitFx.attackMult * tacticFx.attackMult * offenseMorale * offenseAiMult * coalitionAtkMult * attBond.attackMult * attSaga.attackMult * attTech.attackMult);
+    * travel * (conditions.readiness ?? 1) * traitFx.attackMult * tacticFx.attackMult * offenseMorale * offenseAiMult * coalitionAtkMult * attBond.attackMult * attSaga.attackMult * attTech.attackMult * supFx.attackMult * bldFx.attackMult * (tacFx?.atkMult ?? 1));
   const terrain = state.war && weather.terrain;
   const rawGround = state?.century
     ? (terrain === "pass" ? 1.24 : terrain === "river" ? (hasTrait(leader, "navy") || conditions.travel === "water" ? 1.04 : 1.16) : 1)
     : (terrain === "pass" ? 1.12 : terrain === "river" ? 1.08 : 1);
   const ground = rawGround > 1 ? 1 + (rawGround - 1) * (1 - tacticFx.terrainReduction) : rawGround;
-  const combinedWallFactor = traitFx.wallFactor * tacticFx.wallFactor * attTech.wallFactor;
-  const defense = conditions.surrender ? Math.max(0, offense - 1)
+  const combinedWallFactor = traitFx.wallFactor * tacticFx.wallFactor * attTech.wallFactor * supFx.wallFactor * bldFx.wallFactor * espFx.wallFactor;
+  const forceSurrender = Boolean(conditions.surrender || tacFx?.surrender);
+  const defense = forceSurrender ? Math.max(0, offense - 1)
     : Math.round((defensiveStrength(era, targetHolding, state, order.to, combinedWallFactor) + (conditions.relief ?? 0))
-      * ground * cpFx.defenseMult * (1 - (conditions.breach ?? 0) / 330) * traitFx.defenseMult * tacticFx.defenseMult);
+      * ground * cpFx.defenseMult * (1 - (conditions.breach ?? 0) / 330) * traitFx.defenseMult * tacticFx.defenseMult * supFx.defenseMult * bldFx.defenseMult * espFx.defenseMult * (tacFx?.defMult ?? 1));
   const wins = offense > defense;
   const defenders = (targetHolding?.troops ?? 0) + (targetHolding ? holdingArmies(state, targetHolding.owner, order.to)
     .reduce((total, guard) => total + guard.troops, 0) : 0);
@@ -1005,11 +1017,12 @@ export function forecastAttack(era, state, order, faction = state.player, condit
     defense,
     wins,
     tacticFx,
-    surrender: conditions.surrender,
+    surrender: forceSurrender,
     century: Boolean(state?.century),
   });
-  const marchGrainMult = techEconomyModifiers(state, faction).marchGrainMult;
+  const marchGrainMult = techEconomyModifiers(state, faction).marchGrainMult * supFx.grainMult;
   const baseGrain = Math.max(1, Math.round((expeditionGrain(order.troops) + tacticFx.extraGrain + cpFx.extraGrain) * marchGrainMult));
+  const v18Tags = [supFx.label, espFx.label, ...bldFx.notes].filter(Boolean);
   return {
     offense,
     defense,
@@ -1023,12 +1036,12 @@ export function forecastAttack(era, state, order, faction = state.player, condit
     postCaptureOccupationDelta: tacticFx.postCaptureOccupationDelta,
     estimatedAttackerLoss: est.attackerLoss,
     estimatedDefenderLoss: est.defenderLoss,
-    terrainLabel: cpFx.label || (terrain === "pass" ? "关隘险要" : terrain === "river" ? "大江渡口" : ""),
+    terrainLabel: [cpFx.label || (terrain === "pass" ? "关隘险要" : terrain === "river" ? "大江渡口" : ""), ...v18Tags].filter(Boolean).join(" · "),
     chokepoint: cpFx.post ? cpFx.post.name : "",
     eliteName: attTech.eliteName,
     traitNotes: { attacker: traitFx.attackerTraits, defender: traitFx.defenderTraits },
     bonds: { attacker: attBond.bonds.map((b) => b.name), defender: defBond.bonds.map((b) => b.name) },
-    attBondLossMult: attBond.lossMult * attTech.lossMult,
+    attBondLossMult: attBond.lossMult * attTech.lossMult * (tacFx?.lossMult ?? 1),
     captureBonus: attTech.captureBonus,
     rumorActive: Boolean(state?.century && (state?.saga?.rumors?.[order.to] ?? 0) > state.turn),
     tacticFx,
