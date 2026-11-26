@@ -4112,3 +4112,105 @@ body[data-hud-mode="sovereign"] #feedback {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==================== v20.0 千秋一统 · 顶栏清爽收纳 / 群雄谱 / 战报海报 ==================== */
+.hud-more-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.hud-more-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 60;
+  min-width: 148px;
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.42rem;
+  border-radius: var(--radius-md);
+  background: rgba(20, 17, 13, 0.96);
+  border: 1px solid rgba(228, 190, 116, 0.34);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+}
+.hud-more-menu[hidden] {
+  display: none !important;
+}
+.hud-more-menu button {
+  width: 100%;
+  text-align: left;
+  justify-content: flex-start;
+}
+#codex-dialog {
+  width: min(860px, calc(100vw - 1.25rem));
+  max-width: calc(100vw - 1.25rem);
+  padding: 0;
+  box-sizing: border-box;
+}
+#poster-dialog {
+  width: min(560px, calc(100vw - 1.25rem));
+  max-width: calc(100vw - 1.25rem);
+  padding: 0;
+  box-sizing: border-box;
+}
+.poster-dialog-content {
+  width: 100%;
+  box-sizing: border-box;
+  max-height: min(88vh, 840px);
+  overflow-y: auto;
+}
+.poster-preview-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 0.4rem 0;
+}
+.poster-canvas {
+  width: 100%;
+  max-width: 440px;
+  height: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(228, 190, 116, 0.35);
+}
+.poster-dl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  padding: 0.45rem 0.9rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+}
+.codex-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+.codex-card {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--radius-md);
+  background: rgba(28, 23, 18, 0.9);
+  border: 1px solid rgba(228, 190, 116, 0.22);
+}
+.codex-card strong { font-size: 0.86rem; color: #f6e7c6; }
+.codex-stats {
+  font-size: 0.72rem;
+  color: #e4d3b0;
+  font-variant-numeric: tabular-nums;
+}
+.codex-traits {
+  font-size: 0.7rem;
+  color: var(--gold-bright);
+}
+.advisor-speech {
+  padding: 0.58rem 0.74rem;
+  border-radius: var(--radius-md);
+  background: rgba(48, 36, 20, 0.72);
+  border-left: 3px solid var(--gold);
+  font-size: 0.82rem;
+  color: #f6e7c6;
+}

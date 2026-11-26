@@ -99,6 +99,11 @@ import { enactReform, getReforms, REFORM_SLOTS } from "./reforms.js";
 import { getMarketSnapshot, launchCaravan, raidEnemyTrade, TRADE_ROUTES, tradeMarketGrain } from "./commerce.js";
 import { arrangeMarriage, getRelationships, swearBrotherhood } from "./relationships.js";
 import { CHALLENGE_SCENARIOS, evaluateChallengeProgress, loadChallengeMedals, startChallengeScenario } from "./challenges.js";
+import { appointGrandOffice, CEREMONY_TIERS, getCeremonyState, GRAND_OFFICES, nextAvailableTier, performCoronation } from "./dynasty-ceremony.js";
+import { buildAdvisorPlans, executeAdvisorStrategy } from "./advisor-council.js";
+import { buildNavalFleet, getRiverPorts, launchNavalRaid, NAVAL_SHIP_TYPES, toggleRiverChain } from "./navy.js";
+import { queryHeroCodex } from "./codex.js";
+import { renderPosterCanvas } from "./poster.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -3963,7 +3968,7 @@ function openTechDialog() {
   if (!dlg.open) dlg.showModal();
 }
 
-let warRoomTab = "briefing";
+let warRoomTab = "advisor";
 let warRoomMetric = "power";
 
 function renderWarRoomDialog() {
@@ -3974,9 +3979,38 @@ function renderWarRoomDialog() {
     const active = btn.dataset.wrTab === warRoomTab;
     btn.setAttribute("aria-selected", String(active));
   }
-  for (const id of ["briefing", "trends", "mentorship", "rules"]) {
+  for (const id of ["advisor", "briefing", "trends", "mentorship", "rules"]) {
     const panel = find(`wr-panel-${id}`);
     if (panel) panel.hidden = warRoomTab !== id;
+  }
+
+  // 0. 首席军师三策献言
+  const advEl = find("wr-panel-advisor");
+  if (advEl) {
+    const { advisor, plans } = buildAdvisorPlans(world, currentEra, state);
+    const intro = make("div", `【首席军师 · ${advisor.name}（智${advisor.intel}）】审度天下大势，为主公拟定本季上、中、下三策：`, "advisor-speech");
+    const grid = make("div", undefined, "emp-grid");
+    for (const p of plans) {
+      const card = make("div", undefined, "emp-card");
+      card.append(
+        make("span", p.rank, "memorial-tag"),
+        make("strong", p.title),
+        make("p", p.speech),
+        ...p.steps.map((s) => make("p", `• ${s}`)),
+      );
+      const go = make("button", "依此策一键落实", p.id === "upper_strike" ? "primary" : "quiet");
+      go.type = "button";
+      go.addEventListener("click", () => {
+        const res = executeAdvisorStrategy(world, currentEra, state, p.id);
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play("victory");
+        mutate(() => res.state, res.summary);
+        renderWarRoomDialog();
+      });
+      card.append(go);
+      grid.append(card);
+    }
+    advEl.replaceChildren(intro, grid);
   }
 
   // 1. 要务批阅
@@ -4062,7 +4096,7 @@ function renderWarRoomDialog() {
   if (optLife) optLife.checked = isLifespanEnabled(state);
 }
 
-function openWarRoomDialog(tab = "briefing") {
+function openWarRoomDialog(tab = "advisor") {
   const dlg = find("war-room-dialog");
   if (!dlg || !state?.century) return;
   warRoomTab = tab;
@@ -4070,7 +4104,7 @@ function openWarRoomDialog(tab = "briefing") {
   if (!dlg.open) dlg.showModal();
 }
 
-let empireTab = "corps";
+let empireTab = "ceremony";
 
 function renderEmpireDialog() {
   const dlg = find("empire-dialog");
@@ -4088,6 +4122,132 @@ function renderEmpireDialog() {
     ...(state.recruitedOfficers || []).filter((o) => o.faction === player),
   ].sort((a, b) => (b.command ?? 70) - (a.command ?? 70));
   const myCities = Object.keys(state.cities).filter((k) => state.cities[k].owner === player);
+
+  // 0a. 开国大典与三公封赏
+  if (empireTab === "ceremony") {
+    const cer = getCeremonyState(state);
+    const nextT = nextAvailableTier(state);
+    const topCard = make("div", undefined, "emp-card");
+    const tierTitle = CEREMONY_TIERS.find((t) => t.tier === cer.tier)?.title || "州牧 / 诸侯";
+    topCard.append(
+      make("strong", `当前位阶：${tierTitle}${cer.dynastyName ? ` · 国号「${cer.dynastyName}」` : ""}${cer.eraName ? ` · 年号「${cer.eraName}」` : ""}`),
+      make("p", cer.edict || "广积疆土与海内声望，可依次举行「封王建都 → 加九锡 → 受禅登基」开国大典，亲定国号年号并敕封三公！"),
+    );
+
+    const form = make("div", undefined, "emp-form-row");
+    if (nextT) {
+      const dynIn = make("input"); dynIn.type = "text"; dynIn.maxLength = 8; dynIn.value = cer.dynastyName || (player === "cao" ? "大魏" : player === "wu" ? "大吴" : "季汉");
+      const eraIn = make("input"); eraIn.type = "text"; eraIn.maxLength = 6; eraIn.value = cer.eraName || (nextT.tier === 3 ? "太和" : "建安");
+      const capSel = make("select");
+      for (const ck of myCities) capSel.append(new Option(cityName(world, ck), ck));
+      const l1 = make("label"); l1.append(make("span", "亲定国号"), dynIn);
+      const l2 = make("label"); l2.append(make("span", "亲定年号"), eraIn);
+      const l3 = make("label"); l3.append(make("span", "定鼎都城"), capSel);
+      const btn = make("button", `${nextT.title}（${nextT.costTreasury}金）`, nextT.eligible ? "primary" : "quiet");
+      btn.type = "button";
+      btn.title = nextT.summary;
+      btn.addEventListener("click", () => {
+        const res = performCoronation(world, state, { dynastyName: dynIn.value, eraName: eraIn.value, capitalKey: capSel.value });
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play("victory");
+        mutate(() => res.state, res.summary);
+        renderEmpireDialog();
+      });
+      form.append(l1, l2, l3, btn, make("p", `晋升条件：辖城 ≥ ${nextT.minCities}（当前 ${nextT.ownedCities}）或声望 ≥ ${nextT.minReputation}（当前 ${nextT.rep}）· ${nextT.summary}`));
+    } else {
+      form.append(make("strong", "✦ 已登九五之尊，威加海内！"));
+    }
+
+    const offGrid = make("div", undefined, "emp-grid");
+    for (const off of GRAND_OFFICES) {
+      const card = make("div", undefined, "emp-card");
+      const curHolder = cer.offices?.[off.id];
+      card.append(make("strong", off.title), make("p", curHolder ? `现任：${curHolder.name} · ${off.summary}` : `虚位以待 · ${off.summary}`));
+      const sel = make("select");
+      for (const o of myOfficers) sel.append(new Option(o.name, o.key));
+      const appBtn = make("button", "敕封就任", "quiet");
+      appBtn.type = "button";
+      appBtn.disabled = cer.tier < 1 || !sel.value;
+      appBtn.addEventListener("click", () => {
+        const res = appointGrandOffice(currentEra, state, off.id, sel.value);
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play("event");
+        mutate(() => res.state, res.summary);
+        renderEmpireDialog();
+      });
+      card.append(sel, appBtn);
+      offGrid.append(card);
+    }
+    body.replaceChildren(topCard, form, offGrid);
+    return;
+  }
+
+  // 0b. 长江水师 & 铁索封江
+  if (empireTab === "navy") {
+    const ports = getRiverPorts(world, state);
+    const myPorts = ports.filter((p) => p.owner === player);
+    const enemyPorts = ports.filter((p) => p.owner !== player);
+
+    const raidBar = make("div", undefined, "emp-form-row");
+    const fromSel = make("select");
+    for (const mp of myPorts.filter((p) => p.fleet)) fromSel.append(new Option(`${mp.name}（${mp.fleet.icon}${mp.fleet.name}）`, mp.key));
+    const toSel = make("select");
+    for (const ep of enemyPorts) toSel.append(new Option(`${ep.name}（${factionName(currentEra, ep.owner)}${ep.chained ? "·铁索" : ""}）`, ep.key));
+    const lF = make("label"); lF.append(make("span", "出击水寨"), fromSel);
+    const lT = make("label"); lT.append(make("span", "奇袭敌江城"), toSel);
+    const raidBtn = make("button", "顺江水师奇袭（30粮）", "primary");
+    raidBtn.type = "button";
+    raidBtn.disabled = !fromSel.value || !toSel.value;
+    raidBtn.addEventListener("click", () => {
+      const res = launchNavalRaid(world, state, fromSel.value, toSel.value);
+      if (!res.ok) { notify(res.reason, true); return; }
+      sound?.play("alert");
+      mutate(() => res.state, res.summary);
+      renderEmpireDialog();
+    });
+    raidBar.append(lF, lT, raidBtn);
+
+    const grid = make("div", undefined, "emp-grid");
+    if (!myPorts.length) {
+      grid.append(make("div", "我军尚未占据沿江水寨重镇（如建业、柴桑、江陵、襄阳、寿春、合肥等），夺取后即可兴建长江水师与铁索封江。", "v18-empty"));
+    } else {
+      for (const p of myPorts) {
+        const card = make("div", undefined, "emp-card");
+        card.append(
+          make("strong", `${p.name}水寨${p.chained ? " · ⛓铁索封江" : ""}`),
+          make("p", p.fleet ? `驻泊舰队：${p.fleet.icon}${p.fleet.name}` : "尚无大型水师舰队驻泊"),
+        );
+        const acts = make("div", undefined, "emp-card-actions");
+        for (const s of NAVAL_SHIP_TYPES) {
+          const b = make("button", `${s.icon}${s.name}(${s.costTreasury}金)`, p.fleet?.type === s.id ? "primary" : "quiet");
+          b.type = "button";
+          b.title = s.summary;
+          b.addEventListener("click", () => {
+            const res = buildNavalFleet(world, state, p.key, s.id);
+            if (!res.ok) { notify(res.reason, true); return; }
+            sound?.play("order");
+            mutate(() => res.state, res.summary);
+            renderEmpireDialog();
+          });
+          acts.append(b);
+        }
+        const chBtn = make("button", p.chained ? "解除铁索" : "铁索封江(30金)", "quiet");
+        chBtn.type = "button";
+        chBtn.addEventListener("click", () => {
+          const res = toggleRiverChain(world, state, p.key);
+          if (!res.ok) { notify(res.reason, true); return; }
+          sound?.play("event");
+          mutate(() => res.state, res.summary);
+          renderEmpireDialog();
+        });
+        acts.append(chBtn);
+        card.append(acts);
+        grid.append(card);
+      }
+    }
+    body.replaceChildren(raidBar, grid);
+    return;
+  }
 
   // 1. 大军团合编
   if (empireTab === "corps") {
@@ -4412,11 +4572,74 @@ function renderEmpireDialog() {
   }
 }
 
-function openEmpireDialog(tab = "corps") {
+function openEmpireDialog(tab = "ceremony") {
   const dlg = find("empire-dialog");
   if (!dlg || !state?.century) return;
   empireTab = tab;
   renderEmpireDialog();
+  if (!dlg.open) dlg.showModal();
+}
+
+function renderCodexDialog() {
+  const grid = find("codex-grid");
+  if (!grid || !state) return;
+  const currentEra = era();
+  const search = find("codex-search")?.value || "";
+  const faction = find("codex-faction")?.value || "all";
+  const sortBy = find("codex-sort")?.value || "total";
+  const rows = queryHeroCodex(world, currentEra, state, { faction, search, sortBy });
+  if (!rows.length) {
+    grid.replaceChildren(make("div", "未检索到符合条件的名将。", "v18-empty"));
+    return;
+  }
+  grid.replaceChildren(...rows.slice(0, 80).map((r) => {
+    const card = make("div", undefined, "codex-card");
+    const head = make("div", undefined, "tb-order-head");
+    head.append(make("strong", r.name), make("span", r.factionName, "memorial-tag"));
+    card.append(
+      head,
+      make("div", `统 ${r.command} · 武 ${r.war} · 智 ${r.intel} · 政 ${r.governance}（总 ${r.total}）`, "codex-stats"),
+      make("div", r.traits.length ? `✦ ${r.traits.join(" · ")}` : "常规将才", "codex-traits"),
+      make("div", `驻地：${r.stationName}${r.bestXp ? ` · 名人堂功勋 ${r.bestXp}` : ""}`, "muted"),
+    );
+    if (r.stationKey && state.cities?.[r.stationKey]) {
+      const locBtn = make("button", `定位至${r.stationName}`, "quiet v18-b-chip");
+      locBtn.type = "button";
+      locBtn.addEventListener("click", () => {
+        find("codex-dialog")?.close();
+        selectMapCity(r.stationKey, true);
+      });
+      card.append(locBtn);
+    }
+    return card;
+  }));
+}
+
+function openCodexDialog() {
+  const dlg = find("codex-dialog");
+  if (!dlg || !state) return;
+  const sel = find("codex-faction");
+  if (sel) {
+    const currentEra = era();
+    sel.replaceChildren(
+      new Option("全部阵营", "all"),
+      ...playableFactions(currentEra).map((f) => new Option(f.name, f.key)),
+    );
+  }
+  renderCodexDialog();
+  if (!dlg.open) dlg.showModal();
+}
+
+function openPosterDialog() {
+  const dlg = find("poster-dialog");
+  const canvas = find("poster-canvas");
+  const link = find("poster-download-link");
+  if (!dlg || !canvas || !state) return;
+  const { data, dataUrl } = renderPosterCanvas(canvas, world, era(), state);
+  if (link) {
+    link.href = dataUrl;
+    link.download = `jinglue-sanguo-${data.titleName}-v20.png`;
+  }
   if (!dlg.open) dlg.showModal();
 }
 
@@ -5692,8 +5915,36 @@ function wireControls() {
   find("century-pending").addEventListener("click", () => centuryDesk.open("pending"));
   find("open-century-menu").addEventListener("click", () => { find("menu-dialog").close(); centuryDesk.open(); });
   find("open-saga-chronicle")?.addEventListener("click", () => chronicleReplay?.open());
-  find("open-war-room")?.addEventListener("click", () => openWarRoomDialog("briefing"));
-  find("open-empire-dialog")?.addEventListener("click", () => openEmpireDialog("corps"));
+  find("open-war-room")?.addEventListener("click", () => openWarRoomDialog("advisor"));
+  find("open-empire-dialog")?.addEventListener("click", () => openEmpireDialog("ceremony"));
+  find("open-codex-dialog")?.addEventListener("click", () => openCodexDialog());
+  find("open-poster-dialog")?.addEventListener("click", () => {
+    const m = find("hud-more-menu"); if (m) m.hidden = true;
+    openPosterDialog();
+  });
+  find("codex-open-poster")?.addEventListener("click", () => {
+    find("codex-dialog")?.close();
+    openPosterDialog();
+  });
+  find("codex-search")?.addEventListener("input", renderCodexDialog);
+  find("codex-faction")?.addEventListener("change", renderCodexDialog);
+  find("codex-sort")?.addEventListener("change", renderCodexDialog);
+  const moreBtn = find("toggle-hud-more");
+  const moreMenu = find("hud-more-menu");
+  if (moreBtn && moreMenu) {
+    moreBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const open = moreMenu.hidden;
+      moreMenu.hidden = !open;
+      moreBtn.setAttribute("aria-expanded", String(open));
+    });
+    document.addEventListener("click", (ev) => {
+      if (!moreMenu.hidden && !moreMenu.contains(ev.target) && ev.target !== moreBtn) {
+        moreMenu.hidden = true;
+        moreBtn.setAttribute("aria-expanded", "false");
+      }
+    });
+  }
   find("empire-dialog")?.querySelectorAll(".emp-tab").forEach((btn) => {
     btn.addEventListener("click", () => {
       empireTab = btn.dataset.empTab || "corps";

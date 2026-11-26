@@ -49,12 +49,19 @@
       <button type="button" class="quiet" id="open-chronicle">奏报</button>
       <button type="button" class="quiet" id="open-war-room" hidden>军机处</button>
       <button type="button" class="quiet" id="open-empire-dialog" hidden>朝堂</button>
+      <button type="button" class="quiet" id="open-codex-dialog" hidden>群雄谱</button>
       <button type="button" class="quiet" id="open-tech-dialog" hidden>兵技</button>
-      <button type="button" class="quiet" id="open-saga-chronicle" hidden>本纪</button>
-      <button type="button" class="quiet" id="open-achievements-dialog" hidden>勋鉴</button>
-      <button type="button" class="quiet hud-mode-toggle" id="toggle-hud-mode" aria-pressed="false" title="切换君主大势模式 / 幕府详图微操模式">幕府详图</button>
-      <button type="button" class="quiet" id="toggle-bgm" aria-pressed="false" title="开关古风五声音阶背景雅乐">雅乐</button>
-      <button type="button" class="quiet" id="toggle-sound" aria-label="切换音效" title="切换古风音效">🔊</button>
+      <div class="hud-more-wrap">
+        <button type="button" class="quiet" id="toggle-hud-more" aria-expanded="false" title="展开更多典籍、音律与视图工具">更多 ▾</button>
+        <div class="hud-more-menu" id="hud-more-menu" hidden>
+          <button type="button" class="quiet" id="open-saga-chronicle" hidden>本纪</button>
+          <button type="button" class="quiet" id="open-achievements-dialog" hidden>勋鉴</button>
+          <button type="button" class="quiet hud-mode-toggle" id="toggle-hud-mode" aria-pressed="false" title="切换君主大势模式 / 幕府详图微操模式">幕府详图</button>
+          <button type="button" class="quiet" id="toggle-bgm" aria-pressed="false" title="开关古风五声音阶背景雅乐">雅乐</button>
+          <button type="button" class="quiet" id="toggle-sound" aria-label="切换音效" title="切换古风音效">🔊 音效</button>
+          <button type="button" class="quiet" id="open-poster-dialog" hidden>战报海报</button>
+        </div>
+      </div>
       <button type="button" class="quiet" id="open-menu">菜单</button>
       <button type="button" class="turn-orders" id="turn-orders" aria-haspopup="true">政令 <span id="turn-order-count">0</span></button>
       <button type="button" class="primary" id="advance" disabled title="推进一季 (快捷键 Space)">推进一季</button>
@@ -2573,12 +2580,14 @@
         <button type="button" class="quiet" data-close="war-room-dialog">返回</button>
       </div>
       <div class="wr-tabs" role="tablist">
-        <button type="button" class="quiet wr-tab" data-wr-tab="briefing" aria-selected="true">要务批阅</button>
+        <button type="button" class="quiet wr-tab" data-wr-tab="advisor" aria-selected="true">军师三策</button>
+        <button type="button" class="quiet wr-tab" data-wr-tab="briefing" aria-selected="false">要务批阅</button>
         <button type="button" class="quiet wr-tab" data-wr-tab="trends" aria-selected="false">天下大势</button>
         <button type="button" class="quiet wr-tab" data-wr-tab="mentorship" aria-selected="false">名将授艺</button>
         <button type="button" class="quiet wr-tab" data-wr-tab="rules" aria-selected="false">规则与存档码</button>
       </div>
-      <div id="wr-panel-briefing" class="wr-panel"></div>
+      <div id="wr-panel-advisor" class="wr-panel"></div>
+      <div id="wr-panel-briefing" class="wr-panel" hidden></div>
       <div id="wr-panel-trends" class="wr-panel" hidden>
         <div class="wr-metric-bar">
           <button type="button" class="quiet wr-metric-btn" data-wr-metric="power" aria-pressed="true">综合国力</button>
@@ -2635,7 +2644,9 @@
         <button type="button" class="quiet" data-close="empire-dialog">返回</button>
       </div>
       <div class="wr-tabs" role="tablist">
-        <button type="button" class="quiet emp-tab" data-emp-tab="corps" aria-selected="true">大军团</button>
+        <button type="button" class="quiet emp-tab" data-emp-tab="ceremony" aria-selected="true">开国大典</button>
+        <button type="button" class="quiet emp-tab" data-emp-tab="navy" aria-selected="false">长江水师</button>
+        <button type="button" class="quiet emp-tab" data-emp-tab="corps" aria-selected="false">大军团</button>
         <button type="button" class="quiet emp-tab" data-emp-tab="tribes" aria-selected="false">边疆五族</button>
         <button type="button" class="quiet emp-tab" data-emp-tab="reforms" aria-selected="false">朝堂法度</button>
         <button type="button" class="quiet emp-tab" data-emp-tab="commerce" aria-selected="false">商贸黑市</button>
@@ -2643,6 +2654,53 @@
         <button type="button" class="quiet emp-tab" data-emp-tab="challenges" aria-selected="false">名战残局</button>
       </div>
       <div id="emp-body" class="emp-body"></div>
+    </div>
+  </dialog>
+
+  <dialog id="codex-dialog" aria-labelledby="codex-dialog-title">
+    <div class="dialog-content emp-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag">v20.0 天下群雄谱 · 名人堂</span>
+          <h2 id="codex-dialog-title">群雄图鉴与古风战报海报</h2>
+        </div>
+        <div class="emp-card-actions">
+          <button type="button" class="primary" id="codex-open-poster">生成古风战报海报</button>
+          <button type="button" class="quiet" data-close="codex-dialog">返回</button>
+        </div>
+      </div>
+      <div class="emp-form-row">
+        <label><span>检索名将 / 特技</span><input type="search" id="codex-search" placeholder="输入姓名或特技…"></label>
+        <label><span>阵营筛选</span><select id="codex-faction"></select></label>
+        <label><span>排序维度</span><select id="codex-sort">
+          <option value="total">综合能力</option>
+          <option value="command">统率</option>
+          <option value="war">武勇</option>
+          <option value="intel">智谋</option>
+          <option value="governance">内政</option>
+          <option value="xp">名人堂战功</option>
+        </select></label>
+      </div>
+      <div id="codex-grid" class="codex-grid"></div>
+    </div>
+  </dialog>
+
+  <dialog id="poster-dialog" aria-labelledby="poster-dialog-title">
+    <div class="dialog-content poster-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag">经略三国 · 史官战报卷轴</span>
+          <h2 id="poster-dialog-title">高清古风战报海报</h2>
+        </div>
+        <button type="button" class="quiet" data-close="poster-dialog">返回</button>
+      </div>
+      <div class="poster-preview-wrap">
+        <canvas id="poster-canvas" class="poster-canvas"></canvas>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="quiet" data-close="poster-dialog">关闭</button>
+        <a id="poster-download-link" class="primary poster-dl-btn" download="jinglue-sanguo-poster.png">下载高清 PNG 海报</a>
+      </div>
     </div>
   </dialog>
 

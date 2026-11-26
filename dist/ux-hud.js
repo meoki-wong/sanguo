@@ -43,6 +43,7 @@ import {
 import { personaForFaction } from "./ai-persona.js";
 import { collectWarRoomItems } from "./war-room.js";
 import { evaluateChallengeProgress } from "./challenges.js";
+import { getCeremonyState } from "./dynasty-ceremony.js";
 
 const fmt = new Intl.NumberFormat("zh-CN");
 const signed = (n) => (n > 0 ? "+" : "") + fmt.format(n);
@@ -305,7 +306,10 @@ export function createUxHud(world, api) {
     if (rankBadge) {
       const rep = state.saga?.reputation;
       const custom = state.saga?.custom;
-      const titleText = custom?.stateName ? `${custom.stateName} · ${custom.rulerName}` : profile.badge;
+      const cer = getCeremonyState(state);
+      const titleText = cer.dynastyName
+        ? `${cer.dynastyName}${cer.eraName ? `·${cer.eraName}` : ""}`
+        : custom?.stateName ? `${custom.stateName} · ${custom.rulerName}` : profile.badge;
       rankBadge.textContent = rep !== undefined ? `${titleText} · 望${rep}` : titleText;
       rankBadge.dataset.tier = profile.tier;
       rankBadge.dataset.emperor = String(profile.holdsEmperor);
@@ -331,6 +335,10 @@ export function createUxHud(world, api) {
         empBtn.textContent = ch && ch.status === "active" ? `残局·余${ch.turnsLeft}季` : "朝堂";
       }
     }
+    const codexBtn = $("open-codex-dialog");
+    if (codexBtn) codexBtn.hidden = !state.century;
+    const posterBtn = $("open-poster-dialog");
+    if (posterBtn) posterBtn.hidden = !state.century;
     const techBtn = $("open-tech-dialog");
     if (techBtn) {
       techBtn.hidden = !state.century;
