@@ -5,6 +5,7 @@ import { conferencePass } from "./landscape-treaty.js";
 import { limitedPeace } from "./sandtable-war.js";
 import { dynastyTreaty } from "./dynasty-treaties.js";
 import { leagueAccord, reignGuarantee, reignRecognition } from "./reign-leagues.js";
+import { rivalFriction } from "./stratagems.js";
 
 export const treatyTerms = {
   truce: { name: "停战", seasons: 2, treasury: 12 },
@@ -90,7 +91,7 @@ export function opponentTreaty(world, state) {
     const front = fronts.get(from);
     const treasury = state.factions[from].treasury;
     for (const to of opponents) {
-      if (from === to || treatyWith(state, from, to)) continue;
+      if (from === to || treatyWith(state, from, to) || rivalFriction(state, from, to)) continue;
       const firstGoal = state.strategies[from];
       const secondGoal = state.strategies[to];
       if ((firstGoal?.type === "expand" && state.cities[firstGoal.target].owner === to)
@@ -139,6 +140,7 @@ export function quoteTreaty(world, state, target, kind, availableTreasury = stat
   }
   if (state.treatyOffers?.some((offer) => offer.target === target)) return blocked("本季已向该势力提议。");
   const current = treatyWith(state, player, target);
+  if (rivalFriction(state, player, target)) return blocked("双方正因流言反目，眼下难订新约。");
   const credit = accordCredit(state, player, target);
   const renew = current?.kind === "alliance" && kind === "alliance" && current.expires - state.turn === 1 && credit >= 12;
   if (current && !renew && (current.kind === "alliance" || kind === "truce")) return blocked("现有约定仍有效。");
@@ -193,7 +195,7 @@ export function selectIncomingTreaty(world, state) {
   const fronts = state.turn >= 4 ? diplomaticFronts(world, state) : null;
   const candidates = [];
   for (const from of owners) {
-    if (from === player || recentlyContacted.has(from)) continue;
+    if (from === player || recentlyContacted.has(from) || rivalFriction(state, from, player)) continue;
     const current = treatyWith(state, player, from);
     if (current?.kind === "alliance") continue;
     const goal = state.strategies[from];

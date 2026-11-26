@@ -223,6 +223,7 @@ export function validPolity(world, state, era, base) {
       && world.cities.some((site) => site.key === item.city && site.region === item.region && site.name + "军" === item.name
         && Array.isArray(item.position) && item.position.length === 2 && item.position.every((coordinate, i) => coordinate === site.position[i])))) return false;
   for (const item of data.parties) baseOfficers.set(item.leader, item.key);
+  for (const item of state.saga?.wildRecruits ?? []) baseOfficers.set(item.key, item.faction);
   if (!plain(data.allegiances) || !Object.entries(data.allegiances).every(([key, changes]) =>
     baseOfficers.has(key) && Array.isArray(changes) && changes.length > 0 && changes.length <= state.turn + 1
     && changes.every((item, index) => item && date(item.turn) && item.from === (index ? changes[index - 1].to : baseOfficers.get(key))

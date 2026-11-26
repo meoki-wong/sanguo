@@ -70,6 +70,27 @@ export function createSoundController() {
         // Wooden clapper accent
         tone(audio, { freq: 880, endFreq: 660, type: "triangle", start: 0, duration: 0.07, peak: 0.07 });
         tone(audio, { freq: 988, endFreq: 740, type: "triangle", start: 0.09, duration: 0.09, peak: 0.065 });
+      } else if (name === "fire") {
+        // Crackling high blaze sweep
+        tone(audio, { freq: 320, endFreq: 1180, type: "sawtooth", start: 0, duration: 0.22, peak: 0.07 });
+        tone(audio, { freq: 740, endFreq: 240, type: "triangle", start: 0.08, duration: 0.28, peak: 0.06 });
+      } else if (name === "siege") {
+        // Heavy battering ram thud + wall rumble
+        tone(audio, { freq: 98, endFreq: 42, type: "sine", start: 0, duration: 0.28, peak: 0.16 });
+        tone(audio, { freq: 145, endFreq: 55, type: "triangle", start: 0.14, duration: 0.22, peak: 0.1 });
+      } else if (name === "victory") {
+        // Heroic gong/horn triumph triad
+        tone(audio, { freq: 392.0, type: "triangle", start: 0, duration: 0.28, peak: 0.08 });
+        tone(audio, { freq: 523.25, type: "triangle", start: 0.09, duration: 0.34, peak: 0.08 });
+        tone(audio, { freq: 783.99, type: "sine", start: 0.18, duration: 0.45, peak: 0.09 });
+      } else if (name === "capture") {
+        // Drum + seal chime for capturing a city/officer
+        tone(audio, { freq: 132, endFreq: 58, type: "sine", start: 0, duration: 0.16, peak: 0.14 });
+        tone(audio, { freq: 659.25, type: "sine", start: 0.1, duration: 0.24, peak: 0.07 });
+      } else if (name === "event") {
+        // Imperial edict chime
+        tone(audio, { freq: 587.33, type: "sine", start: 0, duration: 0.26, peak: 0.06 });
+        tone(audio, { freq: 880.0, type: "sine", start: 0.12, duration: 0.36, peak: 0.06 });
       }
     } catch {
       // Never allow audio failure to affect gameplay.

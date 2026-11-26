@@ -1,3 +1,5 @@
+import { knownOfficer } from "./personnel.js";
+
 export const TRAIT_CATALOG = {
   fire: {
     id: "fire",
@@ -165,7 +167,33 @@ export const FAMOUS_OFFICERS = {
   "张鲁": { title: "公祺", might: 54, intellect: 78, traits: ["farming"] },
   "张松": { title: "永年", might: 25, intellect: 86, traits: ["logistics"] },
   "董和": { title: "幼宰", might: 34, intellect: 86, traits: ["farming"] },
+  "庞统": { title: "士元", might: 34, intellect: 97, traits: ["fire", "ambush"] },
+  "徐庶": { title: "元直", might: 64, intellect: 93, traits: ["ambush", "logistics"] },
+  "陆抗": { title: "幼节", might: 72, intellect: 92, traits: ["fortress", "navy"] },
+  "陈宫": { title: "公台", might: 46, intellect: 90, traits: ["fire", "ambush"] },
+  "高顺": { title: "—", might: 88, intellect: 69, traits: ["fortress", "cavalry"] },
+  "沮授": { title: "公与", might: 38, intellect: 92, traits: ["logistics", "fortress"] },
+  "典韦": { title: "—", might: 98, intellect: 38, traits: ["cavalry"] },
+  "司马师": { title: "子元", might: 70, intellect: 90, traits: ["fortress", "logistics"] },
+  "荀谌": { title: "友若", might: 30, intellect: 84, traits: ["logistics"] },
+  "张绣": { title: "—", might: 84, intellect: 68, traits: ["cavalry", "ambush"] },
+  "蔡文姬": { title: "昭姬", might: 18, intellect: 90, traits: ["charisma", "farming"] },
+  "马良": { title: "季常", might: 30, intellect: 88, traits: ["charisma", "logistics"] },
 };
+
+export const OFFICER_BONDS = [
+  { id: "taoyuan", name: "桃园结义", members: ["刘备", "关羽", "张飞"], attackBonus: 0.08, defenseBonus: 0.08, lossReduction: 0.08, desc: "生死相托，攻防皆增 +8%，战损 -8%。" },
+  { id: "wolong", name: "卧龙凤雏", members: ["诸葛亮", "庞统", "徐庶"], attackBonus: 0.09, defenseBonus: 0.06, lossReduction: 0.07, desc: "智谋共振，攻势 +9%，战损 -7%。" },
+  { id: "five_wei", name: "五子良将", members: ["张辽", "乐进", "于禁", "张郃", "徐晃"], attackBonus: 0.08, defenseBonus: 0.07, lossReduction: 0.07, desc: "节度严整，攻 +8%、守 +7%。" },
+  { id: "wei_advisors", name: "曹魏谋主", members: ["荀彧", "荀攸", "郭嘉", "贾诩", "程昱"], attackBonus: 0.07, defenseBonus: 0.07, lossReduction: 0.08, desc: "帷幄运筹，减损 8%、战力 +7%。" },
+  { id: "wu_dudu", name: "东吴四都督", members: ["周瑜", "鲁肃", "吕蒙", "陆逊"], attackBonus: 0.09, defenseBonus: 0.08, lossReduction: 0.08, desc: "儒将统御，水陆攻防倍增。" },
+  { id: "wu_tigers", name: "江东虎臣", members: ["太史慈", "甘宁", "黄盖", "周泰", "程普", "韩当"], attackBonus: 0.08, defenseBonus: 0.06, lossReduction: 0.06, desc: "猛锐冲阵，攻 +8%、守 +6%。" },
+  { id: "five_tigers", name: "五虎上将", members: ["关羽", "张飞", "赵云", "马超", "黄忠"], attackBonus: 0.09, defenseBonus: 0.06, lossReduction: 0.07, desc: "所向披靡，攻势 +9%、战损 -7%。" },
+  { id: "hebei_twins", name: "河北双雄", members: ["颜良", "文丑", "田丰", "沮授"], attackBonus: 0.07, defenseBonus: 0.06, lossReduction: 0.05, desc: "冀州威势，攻 +7%、守 +6%。" },
+  { id: "xiliang", name: "西凉铁骑", members: ["马腾", "韩遂", "马超", "庞德", "阎行"], attackBonus: 0.08, defenseBonus: 0.05, lossReduction: 0.05, desc: "凉州铁骑驰突，攻 +8%。" },
+  { id: "shu_pillars", name: "蜀汉栋梁", members: ["诸葛亮", "姜维", "蒋琬", "费祎"], attackBonus: 0.06, defenseBonus: 0.08, lossReduction: 0.08, desc: "兴复汉室，守备 +8%、减损 8%。" },
+  { id: "jin_conquest", name: "灭吴双璧", members: ["羊祜", "杜预", "王濬"], attackBonus: 0.08, defenseBonus: 0.06, lossReduction: 0.08, desc: "水陆南征，攻 +8%、减损 8%。" },
+];
 
 const metaCache = new Map();
 
@@ -306,4 +334,42 @@ export function governorTraitDiscount(era, city, focus, state) {
   if (focus !== "farming" && focus !== "commerce") return 0;
   const governor = era?.officers?.find(({ key }) => key === city.governor);
   return hasTrait(governor, "farming") ? 3 : 0;
+}
+
+export function activeBondsForOfficer(era, state, faction, officer) {
+  if (!state?.century || !officer || !era?.officers) {
+    return { attackMult: 1, defenseMult: 1, lossMult: 1, bonds: [] };
+  }
+  const executed = new Set(state.saga?.executed ?? []);
+  const captives = new Set((state.saga?.captives ?? []).map((c) => c.officer));
+  const activeFactionNames = new Set(
+    era.officers
+      .filter((p) => (
+        p.key !== officer.key
+        && p.faction === faction
+        && knownOfficer(state, p)
+        && !executed.has(p.key)
+        && !captives.has(p.key)
+      ))
+      .map((p) => p.name),
+  );
+  const bonds = [];
+  let atk = 0;
+  let def = 0;
+  let loss = 0;
+  for (const bond of OFFICER_BONDS) {
+    if (!bond.members.includes(officer.name)) continue;
+    const partners = bond.members.filter((m) => m !== officer.name && activeFactionNames.has(m));
+    if (!partners.length) continue;
+    bonds.push({ id: bond.id, name: bond.name, partners, desc: bond.desc });
+    atk += bond.attackBonus;
+    def += bond.defenseBonus;
+    loss += bond.lossReduction;
+  }
+  return {
+    attackMult: Math.min(1.15, 1 + atk),
+    defenseMult: Math.min(1.12, 1 + def),
+    lossMult: Math.max(0.85, 1 - loss),
+    bonds,
+  };
 }

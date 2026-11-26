@@ -12,7 +12,7 @@ import { warBlockaded } from "./war-operations.js";
 import { latestSeasonSummary } from "./chronicle.js";
 import { openCases15 } from "./century.js";
 import { forceColor } from "./map.js";
-import { officerMeta } from "./traits.js";
+import { activeBondsForOfficer, officerMeta } from "./traits.js";
 import {
   factionCourtProfile, hanEmperorStatus, historicalProvince, proclaimImperialChoice,
 } from "./imperial.js";
@@ -22,8 +22,12 @@ import {
 import {
   PROVINCE_DIRECTIVES, SOVEREIGN_DOCTRINES, appointAllProvinceGovernors, applyCityDirective, applySovereignDoctrine,
   assignProvinceGovernor, autoStaffRealm, bestAttackPlan, buildImperialMemorials, detectSovereignDoctrine,
-  executeSovereignAttack, executeSovereignReinforce, listSovereignProvinces, quickReinforcePlan,
+  executeGrandManeuver, executeSovereignAttack, executeSovereignReinforce, listSovereignProvinces, quickReinforcePlan,
 } from "./sovereign.js";
+import { recruitWildTalent } from "./saga.js";
+import {
+  STRATAGEMS, evaluateDemandSurrender, evaluateSpreadRumor, executeDemandSurrender, executeSpreadRumor,
+} from "./stratagems.js";
 
 const fmt = new Intl.NumberFormat("zh-CN");
 const signed = (n) => (n > 0 ? "+" : "") + fmt.format(n);
@@ -284,12 +288,15 @@ export function createUxHud(world, api) {
     const profile = factionCourtProfile(world, state);
     const rankBadge = $("hud-rank-badge");
     if (rankBadge) {
-      rankBadge.textContent = profile.badge;
+      const rep = state.saga?.reputation;
+      rankBadge.textContent = rep !== undefined ? `${profile.badge} · 望${rep}` : profile.badge;
       rankBadge.dataset.tier = profile.tier;
       rankBadge.dataset.emperor = String(profile.holdsEmperor);
-      rankBadge.title = profile.tooltip;
+      rankBadge.title = rep !== undefined ? `${profile.tooltip} · 海内声望 ${rep}/100` : profile.tooltip;
       rankBadge.hidden = false;
     }
+    const sagaBtn = $("open-saga-chronicle");
+    if (sagaBtn) sagaBtn.hidden = !state.century;
     syncModeToggleLabel();
     const tDelta = $("treasury-delta");
     const gDelta = $("grain-delta");
@@ -547,11 +554,15 @@ export function createUxHud(world, api) {
       return;
     }
     const meta = officerMeta(person);
+    const activeBonds = activeBondsForOfficer(era, state, state.player, person).bonds;
     const info = el("div", undefined, "officer-trait-meta");
     const nameLine = meta.title ? `${person.name}（字${meta.title}）` : person.name;
+    const pillsRow = meta.traits.length ? makeTraitPills(person, 2) : el("div", undefined, "officer-trait-row");
+    for (const bond of activeBonds) pillsRow.append(el("span", bond.name, "bond-badge"));
+    if (!meta.traits.length && !activeBonds.length) pillsRow.append(el("span", "暂无专属特技", "muted"));
     info.append(
       el("div", `${nameLine} · 统${person.command} 武${meta.might} 智${meta.intellect} 政${person.governance}`, "officer-stat-line"),
-      meta.traits.length ? makeTraitPills(person, 2) : el("span", "暂无专属特技", "muted"),
+      pillsRow,
     );
     strip.replaceChildren(makeSeal(person, forceColor(state.player)), info);
     strip.hidden = false;
@@ -919,7 +930,7 @@ export function createUxHud(world, api) {
   function renderSovereignMemorials() {
     if (!memorialsSheet || !isSovereignMode()) return;
     const { state, planned } = api.snapshot();
-    const { advisor, recap, memorials, profile } = buildImperialMemorials(world, state, planned);
+    const { advisor, recap, strategicBrief, memorials, profile } = buildImperialMemorials(world, state, planned);
     const lex = profile.lexicon;
 
     const seal = $("sov-advisor-seal");
@@ -935,7 +946,12 @@ export function createUxHud(world, api) {
       $("sov-advisor-name").textContent = advisor ? `${advisor.officer.name} · ${lex.advisorAction}` : `${lex.org} · ${lex.advisorAction}`;
     }
     if ($("sov-advisor-sub")) {
-      $("sov-advisor-sub").textContent = `第 ${state.year} 年${seasons[state.turn % 4]} · ${profile.badge}（至多 3 件要事）`;
+      $("sov-advisor-sub").textContent = `第 ${state.year} 年${seasons[state.turn % 4]} · ${profile.badge}（至多 4 件要事）`;
+    }
+    const briefEl = $("sov-advisor-brief");
+    if (briefEl) {
+      briefEl.textContent = strategicBrief || "";
+      briefEl.hidden = !strategicBrief;
     }
 
     const deltasBox = $("sov-recap-deltas");
@@ -984,8 +1000,20 @@ export function createUxHud(world, api) {
           for (const act of item.actions || []) {
             const btn = el("button", act.label, act.kind === "primary" ? "primary" : "quiet");
             btn.type = "button";
+            if (act.disabled) btn.disabled = true;
             btn.addEventListener("click", () => {
-              if (act.op === "claim-emperor") {
+              if (act.op === "open-historical-event") {
+                api.openHistoricalEvent?.();
+              } else if (act.op === "open-captive") {
+                api.openCaptiveDialog?.(act.target);
+              } else if (act.op === "recruit-wild") {
+                api.sound?.play("event");
+                api.commitState(() => recruitWildTalent(world, api.snapshot().state, act.target), "礼贤下士，名士已登坛受印入仕！");
+              } else if (act.op === "execute-maneuver") {
+                api.sound?.play("march");
+                const { state: cur } = api.snapshot();
+                api.commitState(() => executeGrandManeuver(world, cur, act.plan), `奇谋既定：${act.plan.title}`);
+              } else if (act.op === "claim-emperor") {
                 api.sound?.play("turn");
                 api.commitState(() => proclaimImperialChoice(world, api.snapshot().state, "emperor"), "受禅登基，建朝称帝！礼制已升为正统朝廷。");
               } else if (act.op === "stay-loyalist") {
@@ -1281,19 +1309,29 @@ export function createUxHud(world, api) {
           offRow.append(makeSeal(plan.officer, forceColor(plan.officer.faction), true));
           const offMeta = el("div", undefined, "officer-trait-meta");
           offMeta.append(el("span", `${plan.officer.name} · 统${plan.officer.command} 武${meta.might} 智${meta.intellect}`, "officer-stat-line"));
-          if (meta.traits.length) offMeta.append(makeTraitPills(plan.officer, 2));
+          const pillWrap = makeTraitPills(plan.officer, 2);
+          for (const bName of plan.outcome.bonds?.attacker ?? []) {
+            pillWrap.append(el("span", bName, "bond-badge"));
+          }
+          if (meta.traits.length || plan.outcome.bonds?.attacker?.length) offMeta.append(pillWrap);
           offRow.append(offMeta);
           box.append(offRow);
 
           const fc = el("p", undefined, "forecast sov-plan-forecast");
           fc.dataset.state = plan.outcome.wins ? "advantage" : "disadvantage";
           const traitNotes = [...(plan.outcome.traitNotes?.attacker || []), ...(plan.outcome.traitNotes?.defender || [])];
-          const tSuffix = traitNotes.length ? ` · ✦ ${traitNotes.join("·")}` : "";
+          const bondNotes = [
+            ...(plan.outcome.bonds?.attacker || []).map((n) => `羁绊:${n}`),
+            ...(plan.outcome.bonds?.defender || []).map((n) => `敌羁绊:${n}`),
+          ];
+          const rumorTag = plan.outcome.rumorActive ? " · 敌城流言动摇" : "";
+          const extraNotes = [...traitNotes, ...bondNotes];
+          const tSuffix = extraNotes.length ? ` · ✦ ${extraNotes.join("·")}` : "";
           const tacticInfo = plan.outcome.tacticTag ? `【${plan.outcome.tacticTag}】${plan.outcome.tacticSummary ? plan.outcome.tacticSummary + " · " : ""}` : "";
           const terrainTag = plan.outcome.terrainLabel ? ` · ${plan.outcome.terrainLabel}` : "";
           const lossEst = `预计战损 我 ${fmt.format(plan.outcome.estimatedAttackerLoss)} / 敌 ${fmt.format(plan.outcome.estimatedDefenderLoss)}`;
           const costLine = `耗粮 ${plan.grain}${plan.treasury ? ` · 耗钱 ${plan.treasury}` : ""}`;
-          fc.textContent = `${tacticInfo}${plan.outcome.wins ? "预计克敌" : "预计失利"} · 战力 ${fmt.format(plan.outcome.offense)} 对 ${fmt.format(plan.outcome.defense)} · ${lossEst} · ${costLine}${plan.affordable ? "" : "（钱粮不足）"}${terrainTag}${tSuffix}`;
+          fc.textContent = `${tacticInfo}${plan.outcome.wins ? "预计克敌" : "预计失利"} · 战力 ${fmt.format(plan.outcome.offense)} 对 ${fmt.format(plan.outcome.defense)} · ${lossEst} · ${costLine}${plan.affordable ? "" : "（钱粮不足）"}${terrainTag}${rumorTag}${tSuffix}`;
           box.append(fc);
 
           const goBtn = el("button", plan.affordable ? `${lex.attackVerb}（${plan.outcome.tacticName || "强攻"}）` : "钱粮不足，暂难发兵", "primary");
@@ -1311,6 +1349,43 @@ export function createUxHud(world, api) {
         } else {
           box.append(el("p", plan.message, "memorial-detail"));
         }
+
+        if (state.century && gameOutcome(state) === "ongoing") {
+          const stratBar = el("div", undefined, "sov-stratagem-bar");
+          const rumorCheck = evaluateSpreadRumor(world, state, key);
+          const rumorActive = (state.saga?.rumors?.[key] ?? 0) > state.turn;
+          const rumorBtn = el("button", rumorActive ? "已陷流言动摇" : `反间流言（${STRATAGEMS.spread_rumor.cost}钱）`, "quiet");
+          rumorBtn.type = "button";
+          rumorBtn.title = rumorCheck.ok ? STRATAGEMS.spread_rumor.desc : rumorCheck.reason;
+          rumorBtn.disabled = !rumorCheck.ok;
+          rumorBtn.addEventListener("click", () => {
+            api.sound?.play("alert");
+            const cur = api.snapshot().state;
+            const res = executeSpreadRumor(world, cur, key);
+            api.commitState(() => res.state, res.message);
+            renderSovereignCityCard();
+          });
+          stratBar.append(rumorBtn);
+
+          const surrCheck = evaluateDemandSurrender(world, state, holding.owner);
+          if (surrCheck.ok || forceTotals(state, holding.owner).cities <= 3) {
+            const surrBtn = el("button", surrCheck.ok ? `传檄劝降（${surrCheck.chance}%）` : "传檄劝降", "quiet");
+            surrBtn.type = "button";
+            surrBtn.title = surrCheck.ok ? STRATAGEMS.demand_surrender.desc : surrCheck.reason;
+            surrBtn.disabled = !surrCheck.ok;
+            surrBtn.addEventListener("click", () => {
+              api.sound?.play("event");
+              const cur = api.snapshot().state;
+              const res = executeDemandSurrender(world, cur, holding.owner);
+              api.commitState(() => res.state, res.message);
+              if (res.succeeded) activeSovCity = null;
+              renderSovereignCityCard();
+            });
+            stratBar.append(surrBtn);
+          }
+          box.append(stratBar);
+        }
+
         body.replaceChildren(box);
       }
 

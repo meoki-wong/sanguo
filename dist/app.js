@@ -63,10 +63,17 @@ import { nationalRoster, nationalVacancies, officerProfile, personnelDestination
 import { describeGoalProgress } from "./strategy.js";
 import { createSaveBackup, readGameRecord, saveFileLimit } from "./saves.js";
 import { createUxHud } from "./ux-hud.js";
-import { officerMeta } from "./traits.js";
+import { activeBondsForOfficer, officerMeta } from "./traits.js";
 import { createSoundController } from "./sound.js";
 import { historicalProvince } from "./imperial.js";
 import { DIFFICULTY_LEVELS, isOpeningPrepTurn, validDifficulty } from "./tactics.js";
+import { createBattleReplayController } from "./battle-replay.js";
+import { createChronicleReplayController } from "./chronicle-replay.js";
+import { getPendingHistoricalEvent, resolveHistoricalEvent } from "./historical-events.js";
+import { captiveRecruitChance, resolveCaptive } from "./saga.js";
+import {
+  executeDemandSurrender, executeSowDiscord, factionPersonality, listStratagemTargets,
+} from "./stratagems.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -74,10 +81,10 @@ const focusLabels = { farming: "屯田", commerce: "商贸", defense: "城防", 
 const zoneLabels = { front: "前线", rear: "后方" };
 const reinforcementBlockers = { queue: "政令队列已满", grain: "储粮不足以调兵", donor: "暂无可调援军", planned: "本案已为该城拟令" };
 const defensePressureLabels = { treaty: "协定保护", interior: "无相邻敌方", unavailable: "邻敌无法出征" };
-const autoSlot = "jinglue-sanguo:auto:v3";
+const autoSlot = "jinglue-sanguo:auto:v4";
 const preCenturySlot = "jinglue-sanguo:before-century";
-const manualSlot = "jinglue-sanguo:manual:v3";
-const manualSlots = [manualSlot, "jinglue-sanguo:manual-2:v3", "jinglue-sanguo:manual-3:v3"];
+const manualSlot = "jinglue-sanguo:manual:v4";
+const manualSlots = [manualSlot, "jinglue-sanguo:manual-2:v4", "jinglue-sanguo:manual-3:v4"];
 const opponentModeSlot = "jinglue-sanguo:opponents:v1";
 const cloudModelSlot = "jinglue-sanguo:cloud-model:v1";
 const sources = { model: "模型", rules: "规则", fallback: "规则接管" };
@@ -117,6 +124,9 @@ let reignDesk;
 let centuryDesk;
 let uxHud;
 let sound;
+let battleReplay;
+let chronicleReplay;
+let activeCaptiveKey = null;
 let lastAutoSave;
 let requestingTurn = false;
 let lastTurnClick = -1000;
@@ -492,10 +502,15 @@ function renderForces() {
     if (decision) row.dataset.aiSource = decision.source;
     if (progress) row.dataset.planStatus = progress;
     const treaty = treatyWith(state, state.player, key);
-    const status = owned ? (treaty && !progress ? treatyTerms[treaty.kind].name : source) + " · " + owned + "城" : "已灭";
+    const pers = !player && state.century ? factionPersonality(key) : null;
+    const status = owned
+      ? (treaty && !progress ? treatyTerms[treaty.kind].name : (pers ? pers.name : source)) + " · " + owned + "城"
+      : "已灭";
     if (treaty) {
       row.dataset.treaty = treaty.kind;
-      row.title = source + " · " + treatyTerms[treaty.kind].name + "余 " + (treaty.expires - state.turn) + " 季";
+      row.title = (pers ? `${pers.name}（${pers.desc}） · ` : "") + source + " · " + treatyTerms[treaty.kind].name + "余 " + (treaty.expires - state.turn) + " 季";
+    } else if (pers) {
+      row.title = `${pers.name} · ${pers.desc}`;
     }
     const title = player ? make("span", name) : make("button", name, "quiet force-brief-button");
     if (!player) {
@@ -651,6 +666,8 @@ function syncStartFields() {
   find("force-select").value = state.player;
   const diffEl = find("difficulty-select");
   if (diffEl) diffEl.value = validDifficulty(state.difficulty) ? state.difficulty : "hard";
+  const heEl = find("historical-events-toggle");
+  if (heEl) heEl.checked = state?.saga ? state.saga.historicalEvents : true;
 }
 
 function renderCampaignPreview() {
@@ -658,8 +675,9 @@ function renderCampaignPreview() {
   const player = find("force-select").value;
   const diffEl = find("difficulty-select");
   const difficulty = diffEl && validDifficulty(diffEl.value) ? diffEl.value : "hard";
+  const historicalEvents = find("historical-events-toggle")?.checked ?? true;
   const scenario = eraByYear(world, year);
-  const opening = createGame(world, year, player, { century: true, difficulty });
+  const opening = createGame(world, year, player, { century: true, difficulty, historicalEvents });
   campaignOpening = opening;
   pages["campaign-cities"] = pages["campaign-roster"] = 0;
   const { cities, troops } = forceTotals(opening, player);
@@ -1383,6 +1401,10 @@ function locateFromDetail(city) {
 }
 
 function openBattleReport(entry, turn, origin = "chronicle", focusOfficer) {
+  if (state.century && battleReplay && entry?.battle && !focusOfficer) {
+    battleReplay.openEntries([{ entry, turn }]);
+    return;
+  }
   openDetail({ type: "battle", entry, turn, pane: focusOfficer ? "personnel" : "overview", focusOfficer }, origin);
 }
 
@@ -3669,15 +3691,172 @@ function renderDiplomacyInbox() {
     : offer.answer ? "已接受，约定即刻生效。" : "已拒绝此提议。";
 }
 
+function renderDiplomacyStratagems() {
+  const discordList = find("stratagem-discord-list");
+  const surrenderList = find("stratagem-surrender-list");
+  const quotaNote = find("stratagem-quota-note");
+  const statusEl = find("stratagem-status");
+  if (!discordList || !surrenderList) return;
+  if (!state?.century) {
+    if (quotaNote) quotaNote.textContent = "需进入经略大势模式方可使用高阶谋略。";
+    discordList.replaceChildren(make("p", "当前模式暂未开放高阶谋略。", "muted"));
+    surrenderList.replaceChildren();
+    return;
+  }
+  const quotaUsed = state.saga?.plotsUsedTurn === state.turn;
+  if (quotaNote) {
+    quotaNote.textContent = quotaUsed
+      ? "本季已行密谋一次，须待次季方可再施（仍可对单座敌城「反间流言」或战后招降）。"
+      : "每季可施高阶密谋一次：离间外藩同盟或传檄劝降微弱诸侯。";
+  }
+  const { discordPairs, surrenderTargets } = listStratagemTargets(world, state);
+  if (!discordPairs.length) {
+    discordList.replaceChildren(make("p", "暂无可离间的两家在世外藩势力。", "muted"));
+  } else {
+    discordList.replaceChildren(...discordPairs.map((pair) => {
+      const row = make("div", undefined, "stratagem-row");
+      const meta = make("div", undefined, "stratagem-meta");
+      const tag = pair.hasTreaty ? " · 现存盟约" : "";
+      meta.append(
+        make("strong", `${pair.a.name} × ${pair.b.name}${tag}`),
+        make("span", pair.ok ? `预期成率 ${pair.chance}%` : pair.reason, "muted"),
+      );
+      const btn = make("button", "驱虎吞狼（24钱）", pair.hasTreaty && pair.ok ? "primary" : "quiet");
+      btn.type = "button";
+      btn.disabled = !pair.ok;
+      btn.addEventListener("click", () => {
+        try {
+          const res = executeSowDiscord(world, state, pair.a.key, pair.b.key);
+          sound?.play(res.succeeded ? "event" : "alert");
+          mutate(() => res.state, res.message);
+          if (statusEl) {
+            statusEl.textContent = res.message;
+            statusEl.hidden = false;
+          }
+          renderDiplomacyStratagems();
+        } catch (error) {
+          if (statusEl) {
+            statusEl.textContent = error.message;
+            statusEl.hidden = false;
+          }
+        }
+      });
+      row.append(meta, btn);
+      return row;
+    }));
+  }
+
+  const orderedSurrender = [...surrenderTargets].sort((x, y) => Number(y.ok) - Number(x.ok) || x.cities - y.cities);
+  if (!orderedSurrender.length) {
+    surrenderList.replaceChildren(make("p", "海内暂无可传檄劝降之外藩。", "muted"));
+  } else {
+    surrenderList.replaceChildren(...orderedSurrender.slice(0, 6).map((item) => {
+      const row = make("div", undefined, "stratagem-row");
+      const meta = make("div", undefined, "stratagem-meta");
+      meta.append(
+        make("strong", `${item.name}（${item.cities}城）`),
+        make("span", item.ok ? `归降成率 ${item.chance}%` : item.reason, "muted"),
+      );
+      const btn = make("button", "传檄劝降（20钱）", item.ok ? "primary" : "quiet");
+      btn.type = "button";
+      btn.disabled = !item.ok;
+      btn.addEventListener("click", () => {
+        try {
+          const res = executeDemandSurrender(world, state, item.key);
+          sound?.play(res.succeeded ? "victory" : "alert");
+          mutate(() => res.state, res.message);
+          if (statusEl) {
+            statusEl.textContent = res.message;
+            statusEl.hidden = false;
+          }
+          renderDiplomacyStratagems();
+        } catch (error) {
+          if (statusEl) {
+            statusEl.textContent = error.message;
+            statusEl.hidden = false;
+          }
+        }
+      });
+      row.append(meta, btn);
+      return row;
+    }));
+  }
+}
+
+function openHistoricalEvent() {
+  const dlg = find("historical-event-dialog");
+  const ev = getPendingHistoricalEvent(world, state);
+  if (!dlg || !ev) return;
+  find("he-tag").textContent = ev.tag || "史实奇局";
+  find("he-title").textContent = ev.title;
+  find("he-body").textContent = ev.body;
+  const box = find("he-choices");
+  box.replaceChildren(...ev.choices.map((choice) => {
+    const btn = make("button", choice.label, choice.tone === "primary" ? "primary he-choice-btn" : "quiet he-choice-btn");
+    btn.type = "button";
+    btn.addEventListener("click", () => {
+      try {
+        const res = resolveHistoricalEvent(world, state, ev.id, choice.id);
+        if (dlg.open) dlg.close();
+        sound?.play("event");
+        mutate(() => res.state, res.message);
+      } catch (error) {
+        notify(error.message, true);
+      }
+    });
+    return btn;
+  }));
+  sound?.play("event");
+  if (!dlg.open) dlg.showModal();
+}
+
+function openCaptiveDialog(officerKey) {
+  const dlg = find("captive-dialog");
+  const captives = state?.saga?.captives ?? [];
+  const cap = captives.find((c) => c.officer === officerKey) || captives[0];
+  if (!dlg || !cap) return;
+  const person = era().officers.find((o) => o.key === cap.officer);
+  if (!person) return;
+  activeCaptiveKey = cap.officer;
+  const meta = officerMeta(person);
+  const sealEl = find("cap-seal");
+  sealEl.textContent = meta.seal || person.name[0];
+  sealEl.style.setProperty("--force", forceColor(cap.from));
+  find("cap-name").textContent = meta.title ? `${person.name}（字${meta.title}）` : person.name;
+  find("cap-stats").textContent = `统${person.command} · 武${meta.might} · 智${meta.intellect} · 政${person.governance}`;
+  const traitsBox = find("cap-traits");
+  traitsBox.replaceChildren(...meta.traits.map((t) => make("span", t.name, "trait-pill")));
+  find("cap-context").textContent = `原属 ${factionName(era(), cap.from)}，于${cityName(world, cap.city)}战败被擒。`;
+  const statusEl = find("cap-status");
+  if (statusEl) {
+    statusEl.textContent = cap.attempted ? `${person.name}此前已坚辞不受，可选赎还、义释或斩首。` : "";
+    statusEl.hidden = !cap.attempted;
+  }
+  const chance = captiveRecruitChance(world, state, cap.officer, cap.from);
+  const recBtn = find("cap-btn-recruit");
+  if (recBtn) {
+    recBtn.textContent = cap.attempted ? "此前已拒降" : `礼贤劝降（成率 ${chance}%）`;
+    recBtn.disabled = Boolean(cap.attempted);
+  }
+  sound?.play("capture");
+  if (!dlg.open) dlg.showModal();
+}
+
 function renderDiplomacy() {
   renderDiplomacyOffer();
   renderDiplomacyInbox();
+  renderDiplomacyStratagems();
   uxHud?.renderDiplomacyCards();
 }
 
 function selectDiplomacyPane(pane) {
   find("diplomacy-form").hidden = pane !== "outgoing";
   find("diplomacy-inbox").hidden = pane !== "incoming";
+  const stratEl = find("diplomacy-stratagem");
+  if (stratEl) stratEl.hidden = pane !== "stratagem";
+  const statusEl = find("stratagem-status");
+  if (statusEl && pane === "stratagem") statusEl.hidden = true;
+  if (pane === "stratagem") renderDiplomacyStratagems();
   for (const button of document.querySelectorAll("[data-diplomacy-tab]")) {
     button.setAttribute("aria-pressed", String(button.dataset.diplomacyTab === pane));
   }
@@ -4490,6 +4669,7 @@ function openCouncil(pane) {
 
 function settleTurn(operation, status) {
   const previousStage = state.stageCompletedAt;
+  const beforeTurn = state.turn;
   if (state.landscape) {
     cityCommand?.close();
     landscapeMap?.close();
@@ -4521,6 +4701,15 @@ function settleTurn(operation, status) {
       || state.incomingTreaty?.answer === null;
     sound?.play(hasUrgent ? "alert" : "turn");
     uxHud?.showSeasonRecap(state);
+    const afterBattles = () => {
+      if (state.saga?.pendingEvent?.turn === state.turn) openHistoricalEvent();
+      else {
+        const cap = state.saga?.captives?.find((c) => c.turn === state.turn);
+        if (cap) openCaptiveDialog(cap.officer);
+      }
+    };
+    if (battleReplay) battleReplay.playTurnBattles(state, beforeTurn, afterBattles);
+    else afterBattles();
   }
 }
 
@@ -4717,6 +4906,51 @@ function wireControls() {
   find("open-reign-menu").addEventListener("click", () => { find("menu-dialog").close(); reignDesk.open(); });
   find("century-pending").addEventListener("click", () => centuryDesk.open("pending"));
   find("open-century-menu").addEventListener("click", () => { find("menu-dialog").close(); centuryDesk.open(); });
+  find("open-saga-chronicle")?.addEventListener("click", () => chronicleReplay?.open());
+  find("menu-open-saga-chronicle")?.addEventListener("click", () => {
+    find("menu-dialog").close();
+    chronicleReplay?.open();
+  });
+  find("outcome-saga-chronicle")?.addEventListener("click", () => {
+    find("outcome-dialog").close();
+    chronicleReplay?.open();
+  });
+  for (const btn of document.querySelectorAll("[data-cap-decision]")) {
+    btn.addEventListener("click", () => {
+      if (!activeCaptiveKey) return;
+      const decision = btn.dataset.capDecision;
+      try {
+        const res = resolveCaptive(world, state, activeCaptiveKey, decision);
+        sound?.play(res.outcome === "recruited" ? "victory" : res.outcome === "executed" ? "alert" : "event");
+        mutate(() => res.state, res.message);
+        if (res.outcome === "refused") {
+          const statusEl = find("cap-status");
+          if (statusEl) {
+            statusEl.textContent = res.message;
+            statusEl.hidden = false;
+          }
+          const recBtn = find("cap-btn-recruit");
+          if (recBtn) {
+            recBtn.textContent = "此前已拒降";
+            recBtn.disabled = true;
+          }
+          return;
+        }
+        const remaining = res.state.saga?.captives?.[0];
+        if (remaining) openCaptiveDialog(remaining.officer);
+        else {
+          activeCaptiveKey = null;
+          find("captive-dialog").close();
+        }
+      } catch (error) {
+        const statusEl = find("cap-status");
+        if (statusEl) {
+          statusEl.textContent = error.message;
+          statusEl.hidden = false;
+        }
+      }
+    });
+  }
   find("download-century-backup").addEventListener("click", () => {
     try {
       const backup = readSave(preCenturySlot);
@@ -4830,6 +5064,7 @@ function wireControls() {
   });
   find("force-select").addEventListener("change", renderCampaignPreview);
   find("difficulty-select")?.addEventListener("change", renderCampaignPreview);
+  find("historical-events-toggle")?.addEventListener("change", renderCampaignPreview);
   for (const button of find("campaign-panes").querySelectorAll("button")) {
     button.addEventListener("click", () => showCampaignPane(button.dataset.campaignPane));
   }
@@ -5751,6 +5986,8 @@ async function start() {
     redraw: renderMap,
   });
   sound = createSoundController();
+  battleReplay = createBattleReplayController({ world, sound, forceColor, getState: () => state });
+  chronicleReplay = createChronicleReplayController({ world, forceColor, getState: () => state });
   uxHud = createUxHud(world, {
     snapshot: () => ({ state, planned, era: era(), selected }),
     getPriorities: () => commandPriorities(),
@@ -5792,6 +6029,8 @@ async function start() {
     openFrontier: () => openFrontier(),
     openCenturyPending: (item) => centuryDesk.open("pending", "century" + item.id),
     openBattleEntry: (entry, turn) => openBattleReport(entry, turn, "chronicle"),
+    openHistoricalEvent: () => openHistoricalEvent(),
+    openCaptiveDialog: (officerKey) => openCaptiveDialog(officerKey),
   });
   wireControls();
   wirePanels();

@@ -3,6 +3,7 @@ import { cityName, eraByYear, factionName, firstCity, gameOutcome } from "./engi
 import { dynastyNotices, dynastyPolicy, dynastyProvinces, orderJurisdiction, saveDynastyPolicy } from "./dynasty.js";
 import { formationOf, validFrontlineBattle } from "./frontline.js";
 import { knownOfficer } from "./personnel.js";
+import { isOfficerUnavailable } from "./saga.js";
 import { courtCandidates, courtFor, saveSuccession } from "./polity-governance.js";
 import { bounded, livingSide, plain, territoryAt } from "./polities-data.js";
 import { assignRealmOffice, officeCandidates } from "./realm.js";
@@ -41,7 +42,7 @@ export function validReignPolicy(value) {
 export function regionCandidates10(world, state, region) {
   const towns = new Set(world.cities.filter((city) => city.region === region && controlling(state, state.player, city.key)).map(({ key }) => key));
   const eligible = eraByYear(world, state).officers.filter((person) => person.faction === state.player && knownOfficer(state, person)
-    && controlling(state, state.player, state.stations[person.key]));
+    && !isOfficerUnavailable(state, person.key) && controlling(state, state.player, state.stations[person.key]));
   const local = eligible.filter((person) => towns.has(state.stations[person.key]));
   const rank = (person) => person.governance + (state.reign?.audits?.[person.key]?.merit ?? 0) / 5;
   if (local.length >= 2) {

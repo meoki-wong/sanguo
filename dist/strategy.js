@@ -11,6 +11,7 @@ import { weatherAllows } from "./landscape-terrain.js";
 import { congressDuty, congressTarget } from "./landscape-treaty.js";
 import { officerMeta } from "./traits.js";
 import { BATTLE_TACTICS, isOpeningPrepTurn } from "./tactics.js";
+import { factionPersonality, rivalFriction } from "./stratagems.js";
 
 function goalDuration(goal) {
   return goal.since < 4 ? 3 : goal.type === "defend" ? 5 : 4;
@@ -79,13 +80,15 @@ function attackFrom(era, state, faction, from, to, { quick = false } = {}) {
 
   let bestOrder = { type: "attack", from, to, troops, officer: topCmd.key };
   let bestRatio = -1;
+  const personality = faction !== state.player ? factionPersonality(faction) : null;
   for (const { tactic, officer } of candidates) {
     const tCost = BATTLE_TACTICS[tactic];
     const cand = tactic === "assault"
       ? { type: "attack", from, to, troops, officer }
       : { type: "attack", from, to, troops, officer, tactic };
     const fc = forecastAttack(era, state, cand, faction);
-    const ratio = fc.offense / Math.max(1, fc.defense) + (fc.wins ? 0.25 : 0) - (tCost.treasury * 0.004);
+    const prefBonus = personality?.preferredTactics?.includes(tactic) ? 0.08 : 0;
+    const ratio = fc.offense / Math.max(1, fc.defense) + (fc.wins ? 0.25 : 0) + prefBonus - (tCost.treasury * 0.004);
     if (ratio > bestRatio) {
       bestRatio = ratio;
       bestOrder = cand;
@@ -218,15 +221,19 @@ function newGoals(world, era, state, faction, owned, allowDeployment) {
     const battle = forecastAttack(era, state, order, faction);
     const enemyCity = state.cities[target];
     const opportunistic = state.century && (enemyCity.occupation > 0 || enemyCity.troops < 900) ? 1.15 : 1;
-    return [{ city, target, ratio: (battle.offense / Math.max(1, battle.defense)) * opportunistic * (preparing ? .88 : 1) }];
+    const personality = state.century ? factionPersonality(faction) : null;
+    const attackWeight = personality ? personality.attackWeight : 1;
+    const grudge = rivalFriction(state, faction, enemyCity.owner) ? 1.28 : 1;
+    return [{ city, target, ratio: (battle.offense / Math.max(1, battle.defense)) * opportunistic * attackWeight * grudge * (preparing ? .88 : 1) }];
   }).sort((a, b) => b.ratio - a.ratio);
   const chance = opportunities[0];
   const defense = vulnerable?.gap > 0
     ? { type: "defend", since, city: vulnerable.city, target: vulnerable.target, threshold: vulnerable.threshold } : null;
   const expansion = chance?.ratio >= .55 ? { type: "expand", since, city: chance.city, target: chance.target, threshold: 1 } : null;
+  const aggression = state.century ? factionPersonality(faction).aggression : 1;
 
   if (defense && vulnerable.gap >= 420) return [defense, economy, expansion].filter(Boolean);
-  if (expansion && since >= 2 && chance.ratio >= .82) return [expansion, economy, defense].filter(Boolean);
+  if (expansion && since >= 2 && chance.ratio * aggression >= .82) return [expansion, economy, defense].filter(Boolean);
   return [economy, defense, expansion].filter(Boolean);
 }
 

@@ -47,6 +47,7 @@
       <button type="button" class="quiet" id="open-advice">议事</button>
       <button type="button" class="quiet" id="century-pending" aria-haspopup="dialog" hidden>待决</button>
       <button type="button" class="quiet" id="open-chronicle">奏报</button>
+      <button type="button" class="quiet" id="open-saga-chronicle" hidden>本纪</button>
       <button type="button" class="quiet hud-mode-toggle" id="toggle-hud-mode" aria-pressed="false" title="切换君主大势模式 / 幕府详图微操模式">幕府详图</button>
       <button type="button" class="quiet" id="toggle-sound" aria-label="切换音效" title="切换古风音效">🔊</button>
       <button type="button" class="quiet" id="open-menu">菜单</button>
@@ -1617,6 +1618,7 @@
       <div class="diplomacy-tabs" role="group" aria-label="外交操作">
         <button type="button" data-diplomacy-tab="outgoing" aria-pressed="true">发起提议</button>
         <button type="button" data-diplomacy-tab="incoming" aria-pressed="false" id="inbox-tab">来使</button>
+        <button type="button" data-diplomacy-tab="stratagem" aria-pressed="false" id="stratagem-tab">谋略奇策</button>
       </div>
       <form class="diplomacy-pane" id="diplomacy-form">
         <div id="diplomacy-cards" class="diplomacy-cards"></div>
@@ -1642,6 +1644,18 @@
           <button type="button" id="decline-treaty">拒绝</button>
           <button type="button" class="primary" id="accept-treaty">接受</button>
         </div>
+      </section>
+      <section class="diplomacy-pane" id="diplomacy-stratagem" aria-label="谋略奇策" hidden>
+        <p class="muted" id="stratagem-quota-note">每季可施高阶密谋一次：离间同盟或传檄劝降。</p>
+        <div class="stratagem-block">
+          <strong>驱虎吞狼（24钱） · 离间邻藩</strong>
+          <div id="stratagem-discord-list" class="stratagem-target-list"></div>
+        </div>
+        <div class="stratagem-block">
+          <strong>传檄劝降（20钱） · 威服孤弱</strong>
+          <div id="stratagem-surrender-list" class="stratagem-target-list"></div>
+        </div>
+        <p id="stratagem-status" role="status" hidden></p>
       </section>
     </div>
   </dialog>
@@ -1678,6 +1692,10 @@
       <div id="era-cards" class="era-cards" aria-label="剧本时间轴"></div>
       <div id="force-cards" class="force-cards" aria-label="可选势力"></div>
       <div id="difficulty-cards" class="difficulty-cards" aria-label="对局难度"></div>
+      <label class="campaign-event-toggle">
+        <input type="checkbox" id="historical-events-toggle" checked>
+        <span>开启「史实演义事件链」（迎奉天子、禅代大议、官渡乌巢、赤壁东风）</span>
+      </label>
       <div class="fields campaign-legacy-selects">
         <label for="era-select">剧本</label><select id="era-select"></select>
         <label for="force-select">势力</label><select id="force-select"></select>
@@ -1753,6 +1771,7 @@
           <button type="button" id="open-century-menu">山河百年</button>
           <button type="button" id="open-frontline-menu">国势与战局</button>
           <button type="button" id="open-recruitment">招揽人才</button>
+          <button type="button" id="menu-open-saga-chronicle">山河本纪</button>
         </div>
       </section>
       <details class="menu-legacy-fold">
@@ -1885,6 +1904,7 @@
         <button type="button" id="outcome-restart" hidden>新开局</button>
         <button type="button" id="outcome-stewardship" hidden>进入守成篇</button>
         <button type="button" id="open-ending-record">战役结局</button>
+        <button type="button" id="outcome-saga-chronicle">山河本纪</button>
         <button type="button" class="quiet" id="outcome-council">战役路线</button>
         <button type="button" class="primary" id="outcome-map">返回地图</button>
       </div>
@@ -2277,6 +2297,7 @@
       </div>
       <button type="button" class="quiet city-nav-btn" id="sov-memorials-close" aria-label="收起呈报">×</button>
     </div>
+    <p id="sov-advisor-brief" class="sov-advisor-brief" hidden></p>
     <div class="recap-deltas" id="sov-recap-deltas" hidden></div>
     <div class="sov-memorial-list" id="sov-memorial-list"></div>
     <div class="sov-sheet-foot">
@@ -2322,6 +2343,130 @@
     <div id="sov-city-body" class="sov-city-body"></div>
     <div class="sov-sheet-foot" id="sov-city-actions"></div>
   </section>
+
+  <dialog id="historical-event-dialog" aria-labelledby="he-title">
+    <div class="dialog-content he-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag" id="he-tag">史实奇局</span>
+          <h2 id="he-title">军国大事</h2>
+        </div>
+        <button type="button" class="quiet" data-close="historical-event-dialog">暂缓</button>
+      </div>
+      <p id="he-body" class="he-body"></p>
+      <div id="he-choices" class="he-choices"></div>
+    </div>
+  </dialog>
+
+  <dialog id="captive-dialog" aria-labelledby="cap-name">
+    <div class="dialog-content cap-dialog-content">
+      <div class="dialog-heading">
+        <h2>升帐审俘</h2>
+        <button type="button" class="quiet" data-close="captive-dialog">稍后发落</button>
+      </div>
+      <div class="cap-hero">
+        <span class="officer-seal" id="cap-seal">将</span>
+        <div class="cap-hero-meta">
+          <strong id="cap-name"></strong>
+          <div id="cap-stats" class="muted"></div>
+          <div id="cap-traits" class="officer-trait-row"></div>
+        </div>
+      </div>
+      <p id="cap-context" class="muted"></p>
+      <p id="cap-status" class="cap-status" role="status" hidden></p>
+      <div class="cap-actions">
+        <button type="button" class="primary" data-cap-decision="recruit" id="cap-btn-recruit">礼贤劝降</button>
+        <button type="button" data-cap-decision="ransom" id="cap-btn-ransom">索赎放还</button>
+        <button type="button" data-cap-decision="release" id="cap-btn-release">义释加望（声望+6）</button>
+        <button type="button" class="quiet danger" data-cap-decision="execute" id="cap-btn-execute">军法斩首（声望-8）</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="battle-replay-dialog" aria-labelledby="br-title">
+    <div class="dialog-content br-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <h2 id="br-title">沙盘战报</h2>
+          <p id="br-subtitle" class="muted"></p>
+        </div>
+        <span class="memorial-tag" id="br-tactic-badge">军策：强攻</span>
+      </div>
+      <div id="br-stage" class="br-stage" data-vfx="none">
+        <div id="br-canvas-slot" class="br-canvas-slot"></div>
+        <div class="br-vfx-overlay" aria-hidden="true"></div>
+      </div>
+      <div class="br-sides">
+        <div class="br-side-card">
+          <div class="br-side-head">
+            <span class="officer-seal sm" id="br-att-seal">攻</span>
+            <div>
+              <strong id="br-att-name"></strong>
+              <div id="br-att-troops" class="muted"></div>
+            </div>
+            <span class="memorial-tag" id="br-att-tag">攻城</span>
+          </div>
+          <div class="br-bar-track"><div class="br-bar-fill" id="br-att-bar"></div></div>
+        </div>
+        <div class="br-side-card">
+          <div class="br-side-head">
+            <span class="officer-seal sm" id="br-def-seal">守</span>
+            <div>
+              <strong id="br-def-name"></strong>
+              <div id="br-def-troops" class="muted"></div>
+            </div>
+            <span class="memorial-tag" id="br-def-tag">守城</span>
+          </div>
+          <div class="br-bar-track"><div class="br-bar-fill" id="br-def-bar"></div></div>
+        </div>
+      </div>
+      <div id="br-effects" class="br-effects"></div>
+      <p id="br-log" class="br-log"></p>
+      <div class="br-foot">
+        <label class="br-auto-pref">
+          <input type="checkbox" id="battle-replay-toggle" checked>
+          <span>季末自动播报战事</span>
+        </label>
+        <div class="br-foot-btns">
+          <button type="button" class="quiet" id="br-skip">跳过</button>
+          <button type="button" class="primary" id="br-next">下一幕 ›</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="saga-chronicle-dialog" aria-labelledby="sc-epitaph-title">
+    <div class="dialog-content sc-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag">山河本纪</span>
+          <h2 id="sc-epitaph-title">天下大势本纪</h2>
+        </div>
+        <button type="button" class="quiet" id="sc-close">合卷</button>
+      </div>
+      <p id="sc-epitaph-body" class="sc-epitaph-body"></p>
+      <div class="sc-map-wrap">
+        <svg id="sc-map-svg" class="sc-map-svg" role="img" aria-label="天下疆域演变图"></svg>
+        <div class="sc-controls">
+          <button type="button" class="primary" id="sc-play">▶ 回放演变</button>
+          <button type="button" class="quiet" id="sc-speed">1× 速</button>
+          <input type="range" id="sc-slider" min="0" max="0" value="0" aria-label="疆域时间轴">
+          <span id="sc-frame-label" class="muted"></span>
+        </div>
+        <div id="sc-power-bar" class="sc-power-bar"></div>
+      </div>
+      <div class="sc-columns">
+        <section class="sc-col">
+          <h3>功臣勋绩榜</h3>
+          <ul id="sc-heroes-list" class="sc-list"></ul>
+        </section>
+        <section class="sc-col">
+          <h3>史官编年大事记</h3>
+          <ul id="sc-annals-list" class="sc-list"></ul>
+        </section>
+      </div>
+    </div>
+  </dialog>
 
   <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
     <div class="dialog-content">

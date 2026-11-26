@@ -4,17 +4,20 @@ import {
   previewMilitaryOrders, previewOrders, queueOrder, seasonOrderLimit, setGovernance,
   setNationalPolicy, transferGrain, transferOfficer, validateOrder,
 } from "./engine.js";
-import { armyByOfficer } from "./armies.js";
+import { armyByOfficer, marchRoute, mobilizationQuote } from "./armies.js";
 import { officerSkill } from "./campaign.js";
 import { annualDraft15, openCases15, provinceAgreement15, publishYear15 } from "./century.js";
 import { latestSeasonSummary } from "./chronicle.js";
 import { isHostile, treatyTerms } from "./diplomacy.js";
 import { dynastyProvinces } from "./dynasty.js";
+import { getPendingHistoricalEvent } from "./historical-events.js";
 import { factionCourtProfile } from "./imperial.js";
 import { knownOfficer } from "./personnel.js";
 import { regionCandidates10 } from "./reign.js";
+import { effectiveWildFee, isOfficerUnavailable } from "./saga.js";
+import { advisorStrategicBrief } from "./stratagems.js";
 import { BATTLE_TACTICS, isOpeningPrepTurn, normalizeTactic } from "./tactics.js";
-import { hasTrait, officerMeta } from "./traits.js";
+import { activeBondsForOfficer, hasTrait, officerMeta } from "./traits.js";
 
 export const SOVEREIGN_DOCTRINES = [
   {
@@ -131,7 +134,7 @@ export function autoStaffRealm(world, state) {
   const frontSet = new Set(front);
 
   const idlePool = () => era.officers.filter((o) => (
-    o.faction === next.player && knownOfficer(next, o) && availableForPosting(next, o.key)
+    o.faction === next.player && knownOfficer(next, o) && !isOfficerUnavailable(next, o.key) && availableForPosting(next, o.key)
   ));
 
   // Phase A: Vacant governors (occupation recovery first, then rear, then front)
@@ -205,7 +208,7 @@ export function listSovereignProvinces(world, state) {
       const activeSeat = seat && seat.end > state.turn ? seat : null;
       const candidates = state.reign
         ? regionCandidates10(world, state, prov.region)
-        : era.officers.filter((o) => o.faction === state.player && knownOfficer(state, o))
+        : era.officers.filter((o) => o.faction === state.player && knownOfficer(state, o) && !isOfficerUnavailable(state, o.key))
           .sort((a, b) => governorScore(state, b) - governorScore(state, a));
       const leadOfficer = activeSeat?.lead ? officerMap.get(activeSeat.lead) ?? null : null;
       const directive = activeSeat?.objective ?? "growth";
@@ -491,6 +494,7 @@ export function bestAttackPlan(world, state, plannedInput, targetCity, { tactic 
     .filter((o) => (
       o.faction === state.player
       && knownOfficer(planned, o)
+      && !isOfficerUnavailable(planned, o.key)
       && availableForPosting(planned, o.key)
       && !committedOfficers.has(o.key)
     ))
@@ -624,7 +628,7 @@ export function executeSovereignAttack(world, state, plan) {
 
 export function chiefAdvisor(era, state) {
   const advisors = era.officers
-    .filter((o) => o.faction === state.player && knownOfficer(state, o))
+    .filter((o) => o.faction === state.player && knownOfficer(state, o) && !isOfficerUnavailable(state, o.key))
     .map((officer) => ({ officer, meta: officerMeta(officer) }))
     .sort((a, b) => b.meta.intellect - a.meta.intellect
       || officerSkill(state, b.officer, "governance") - officerSkill(state, a.officer, "governance"));
@@ -632,7 +636,96 @@ export function chiefAdvisor(era, state) {
 }
 
 /**
- * Generates up to 3 high-priority Sovereign memorials with 1-click resolutions.
+ * Distills deep army logistics / naval crossing mechanics into a 1-click Sovereign maneuver proposal.
+ */
+export function findGrandManeuverPlan(world, state, plannedInput) {
+  if (!state?.century || isOpeningPrepTurn(state) || state.orders.length >= seasonOrderLimit || gameOutcome(state) !== "ongoing") {
+    return null;
+  }
+  const planned = plannedInput || previewOrders(world, state);
+  const era = eraByYear(world, state);
+  const committed = new Set(state.orders.map((o) => o.officer).filter(Boolean));
+
+  // 1. Intercept hostile expedition depot (截粮奇袭)
+  for (const army of planned.armies ?? []) {
+    if (army.faction === state.player || !isHostile(planned, state.player, army.faction)) continue;
+    if (!["march", "muster"].includes(army.phase)) continue;
+    const depot = army.depot || army.route?.[0];
+    const depotCity = planned.cities[depot];
+    if (!depotCity || depotCity.owner === state.player) continue;
+    const depotNode = world.cities.find((c) => c.key === depot);
+    for (const from of depotNode?.links ?? []) {
+      const origin = planned.cities[from];
+      if (!origin || origin.owner !== state.player) continue;
+      const troops = origin.troops - cityReserve;
+      if (troops < 500) continue;
+      const officers = availableAttackers(era, planned, state.player, from).filter((o) => !committed.has(o.key));
+      const officer = officers.sort((a, b) => attackerScore(planned, b, "stratagem") - attackerScore(planned, a, "stratagem"))[0];
+      if (!officer) continue;
+      const order = { type: "attack", from, to: depot, officer: officer.key, troops, tactic: "stratagem" };
+      try {
+        validateOrder(world, state, state.player, order);
+      } catch {
+        continue;
+      }
+      const fc = forecastAttack(era, planned, order, state.player);
+      if (fc.offense >= fc.defense * 0.92) {
+        return {
+          kind: "cut_supply",
+          title: `轻骑断「${factionName(era, army.faction)}」粮道：奇袭${cityName(world, depot)}`,
+          detail: `${factionName(era, army.faction)}远征军团正自${cityName(world, depot)}发兵${cityName(world, army.target)}。由${cityName(world, from)}遣「${officer.name}」直捣后勤据点，可一战断敌补给！`,
+          order,
+        };
+      }
+    }
+  }
+
+  // 2. Waterborne expedition via Yangtze / river routes (水师远征)
+  if (state.landscape && (planned.armies?.filter((a) => a.faction === state.player).length ?? 0) < 2) {
+    const ownedPorts = world.cities.filter(({ key }) => planned.cities[key].owner === state.player && !planned.cities[key].occupation);
+    const hostileCities = world.cities.filter(({ key }) => planned.cities[key].owner !== state.player && isHostile(planned, state.player, planned.cities[key].owner));
+    for (const fromNode of ownedPorts) {
+      const from = fromNode.key;
+      const troops = Math.min(2000, planned.cities[from].troops - 500);
+      if (troops < 900) continue;
+      const officer = availableAttackers(era, planned, state.player, from)
+        .filter((o) => !committed.has(o.key))
+        .sort((a, b) => (b.command + (hasTrait(b, "navy") ? 18 : 0)) - (a.command + (hasTrait(a, "navy") ? 18 : 0)))[0];
+      if (!officer) continue;
+      for (const toNode of hostileCities) {
+        if (fromNode.links.includes(toNode.key)) continue;
+        const route = marchRoute(world, state, state.player, from, toNode.key, "water");
+        if (!route || route.length < 2) continue;
+        const order = { type: "mobilize", from, to: toNode.key, officer: officer.key, troops, stance: "assault", travel: "water" };
+        try {
+          validateOrder(world, state, state.player, order);
+          const quote = mobilizationQuote(world, state, state.player, order);
+          const fc = forecastAttack(era, planned, order, state.player, { travel: "water" });
+          if (fc.wins) {
+            return {
+              kind: "naval_expedition",
+              title: `水陆并进：自${fromNode.name}发水师直取${toNode.name}`,
+              detail: `乘舟师水路顺流奔袭（约 ${quote.quarters} 季抵敌城下，携粮 ${quote.carried} 石），遣「${officer.name}」率 ${troops.toLocaleString("zh-CN")} 兵跨越天堑！`,
+              order,
+            };
+          }
+        } catch {
+          // Skip invalid route or budget
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+export function executeGrandManeuver(world, state, plan) {
+  if (!plan?.order) throw new Error("暂无可执行的高阶奇谋。");
+  return queueOrder(world, state, plan.order);
+}
+
+/**
+ * Generates up to 4 high-priority Sovereign memorials with 1-click resolutions.
  */
 export function buildImperialMemorials(world, state, plannedInput, options = {}) {
   const era = eraByYear(world, state);
@@ -641,14 +734,71 @@ export function buildImperialMemorials(world, state, plannedInput, options = {})
   const lex = profile.lexicon;
   const advisor = chiefAdvisor(era, state);
   const recap = latestSeasonSummary(state);
+  const strategicBrief = state.century ? advisorStrategicBrief(world, era, state) : "";
+  const pendingEvent = state.century ? getPendingHistoricalEvent(world, state) : null;
+  const captives = (state.saga?.captives ?? []).map((c) => {
+    const officer = era.officers.find((o) => o.key === c.officer) || null;
+    return { ...c, officerObj: officer, fromName: factionName(era, c.from), cityName: cityName(world, c.city) };
+  });
+  const wildPending = state.saga?.wildPending ?? [];
   const memorials = [];
 
   if (gameOutcome(state) !== "ongoing") {
-    return { advisor, recap, memorials, profile };
+    return { advisor, recap, strategicBrief, pendingEvent, captives, wildPending, memorials, profile };
+  }
+
+  // 0a. Pending historical event decision
+  if (pendingEvent) {
+    memorials.push({
+      id: `event-${pendingEvent.id}`,
+      kind: "historical-event",
+      tag: pendingEvent.tag || "史实奇局",
+      tone: "good",
+      title: pendingEvent.title,
+      detail: pendingEvent.body,
+      actions: [
+        { label: "御览裁定", kind: "primary", op: "open-historical-event", eventId: pendingEvent.id },
+      ],
+    });
+  }
+
+  // 0b. Captive officers awaiting Sovereign judgement
+  if (captives.length && memorials.length < 4) {
+    const first = captives[0];
+    const oName = first.officerObj?.name || "敌将";
+    memorials.push({
+      id: `captive-${first.officer}`,
+      kind: "captive",
+      tag: captives.length > 1 ? `俘将待决 (${captives.length})` : "生擒敌将",
+      tone: "good",
+      title: `擒获「${oName}」（${first.fromName} · ${first.cityName}之战）`,
+      detail: `可降服招揽为己用、索赎钱粮，亦或义释涨海内声望、斩杀震慑敌胆。`,
+      actions: [
+        { label: "升帐发落", kind: "primary", op: "open-captive", target: first.officer },
+      ],
+    });
+  }
+
+  // 0c. Wild famous talent emergence
+  if (wildPending.length && memorials.length < 4) {
+    const talent = wildPending[0];
+    const fee = effectiveWildFee(state, talent);
+    const affordable = state.factions[state.player].treasury >= fee;
+    memorials.push({
+      id: `wild-${talent.id}`,
+      kind: "wild-talent",
+      tag: "在野大才",
+      tone: affordable ? "good" : "info",
+      title: `贤士「${talent.name}（${talent.title}）」现身民间`,
+      detail: `政务 ${talent.governance} · 统率 ${talent.command}。备礼金 ${fee} 钱即可一键礼聘入幕${state.imperialChoice === "loyalist" ? "（汉室辅臣礼金已减半）" : ""}。`,
+      actions: [
+        { label: affordable ? `礼聘入仕（${fee}钱）` : `国库不足（需${fee}钱）`, kind: "primary", op: "recruit-wild", target: talent.id, disabled: !affordable },
+      ],
+    });
   }
 
   // 0. Historical Emperor proclamation choice when warlord/prince holds >= 18 cities (<= 219 AD)
-  if (profile.canClaimEmperor) {
+  if (profile.canClaimEmperor && memorials.length < 4 && pendingEvent?.id !== "imperial_emperor_petition") {
     memorials.push({
       id: "claim-emperor",
       kind: "claim-emperor",
@@ -664,7 +814,7 @@ export function buildImperialMemorials(world, state, plannedInput, options = {})
   }
 
   // 1. Incoming diplomatic treaty awaiting decision
-  if (state.incomingTreaty?.answer === null && memorials.length < 3) {
+  if (state.incomingTreaty?.answer === null && memorials.length < 4) {
     const offer = state.incomingTreaty;
     const sender = factionName(era, offer.from);
     const kindName = treatyTerms[offer.kind]?.name || "外交议约";
@@ -684,7 +834,7 @@ export function buildImperialMemorials(world, state, plannedInput, options = {})
 
   // 2. Century-mode urgent case
   const urgentCase = state.century && openCases15(state).find((c) => c.turn === state.turn && c.urgent);
-  if (urgentCase && memorials.length < 3) {
+  if (urgentCase && memorials.length < 4) {
     memorials.push({
       id: `century-${urgentCase.id}`,
       kind: "century-urgent",
@@ -697,7 +847,7 @@ export function buildImperialMemorials(world, state, plannedInput, options = {})
   }
 
   // 2.5 Opening preparation turn guidance
-  if (isOpeningPrepTurn(state) && !state.nationalPolicy && memorials.length < 3) {
+  if (isOpeningPrepTurn(state) && !state.nationalPolicy && memorials.length < 4) {
     memorials.push({
       id: "opening-prep",
       kind: "doctrine",
@@ -712,8 +862,25 @@ export function buildImperialMemorials(world, state, plannedInput, options = {})
     });
   }
 
-  // 3. Best front attack opportunity (if NOT prep turn & slots remain)
-  if (!isOpeningPrepTurn(state) && state.orders.length < seasonOrderLimit && memorials.length < 3) {
+  // 3a. High-level Grand Maneuver (cut supply depot or waterborne crossing)
+  const maneuver = memorials.length < 4 ? findGrandManeuverPlan(world, state, planned) : null;
+  if (maneuver && memorials.length < 4) {
+    memorials.push({
+      id: `maneuver-${maneuver.order.from}-${maneuver.order.to}`,
+      kind: "maneuver",
+      tag: "军师奇谋",
+      tone: "good",
+      title: maneuver.title,
+      detail: maneuver.detail,
+      actions: [
+        { label: "钦点施行", kind: "primary", op: "execute-maneuver", plan: maneuver },
+        { label: "指图查看", kind: "quiet", op: "locate", target: maneuver.order.to },
+      ],
+    });
+  }
+
+  // 3b. Best front attack opportunity (if NOT prep turn & slots remain)
+  if (!isOpeningPrepTurn(state) && state.orders.length < seasonOrderLimit && memorials.length < 4) {
     const enemyTargets = world.cities
       .map(({ key }) => key)
       .filter((key) => state.cities[key].owner !== state.player && isHostile(state, state.player, state.cities[key].owner));
@@ -751,11 +918,11 @@ export function buildImperialMemorials(world, state, plannedInput, options = {})
   // 4. Realm doctrine / vacant provincial governors / vacant posts reminder
   const { front, rear } = delegationZones(world, state);
   const vacantGovs = [...front, ...rear].filter((key) => !state.cities[key].governor).length;
-  const hasIdle = era.officers.some((o) => o.faction === state.player && knownOfficer(state, o) && availableForPosting(state, o.key));
+  const hasIdle = era.officers.some((o) => o.faction === state.player && knownOfficer(state, o) && !isOfficerUnavailable(state, o.key) && availableForPosting(state, o.key));
   const provList = state.century ? listSovereignProvinces(world, state) : [];
   const vacantProvs = provList.filter((p) => !p.leadOfficer && p.candidates.length > 0).length;
 
-  if (memorials.length < 3 && (!state.nationalPolicy || vacantProvs > 0 || (vacantGovs >= 2 && hasIdle))) {
+  if (memorials.length < 4 && (!state.nationalPolicy || vacantProvs > 0 || (vacantGovs >= 2 && hasIdle))) {
     if (!state.nationalPolicy) {
       memorials.push({
         id: "doctrine-none",
@@ -796,7 +963,7 @@ export function buildImperialMemorials(world, state, plannedInput, options = {})
   }
 
   // 5. Thinly defended frontline alert
-  if (memorials.length < 3) {
+  if (memorials.length < 4) {
     const weakFront = front
       .filter((key) => state.cities[key].troops < 900 && !(state.cities[key].mode === "delegated" && state.cities[key].focus === "recruit"))
       .sort((a, b) => state.cities[a].troops - state.cities[b].troops)[0];
@@ -816,5 +983,5 @@ export function buildImperialMemorials(world, state, plannedInput, options = {})
     }
   }
 
-  return { advisor, recap, memorials: memorials.slice(0, 3), profile };
+  return { advisor, recap, strategicBrief, pendingEvent, captives, wildPending, memorials: memorials.slice(0, 4), profile };
 }

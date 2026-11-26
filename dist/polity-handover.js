@@ -3,7 +3,7 @@ import { armyCapacity } from "./armies.js";
 import { roadPath } from "./roads.js";
 import { livingSide, maximumPolities } from "./polities-data.js";
 
-function recordAllegiance(state, key, from, to, turn) {
+export function recordAllegiance(state, key, from, to, turn) {
   const changes = state.polity.allegiances[key] ??= [];
   if (changes.at(-1)?.turn === turn) {
     changes.at(-1).to = to;
@@ -42,7 +42,7 @@ function absorbArmy(state, unit) {
   state.stations[unit.officer] = unit.location;
 }
 
-function cleanLosses(state, changing) {
+export function cleanLosses(state, changing) {
   const owned = (key) => state.cities[key]?.owner === state.player;
   for (const key of ["delegationPriority", "policyOverrides"]) {
     if (!state[key]) continue;
