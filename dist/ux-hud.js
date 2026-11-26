@@ -42,6 +42,7 @@ import {
 } from "./espionage.js";
 import { personaForFaction } from "./ai-persona.js";
 import { collectWarRoomItems } from "./war-room.js";
+import { evaluateChallengeProgress } from "./challenges.js";
 
 const fmt = new Intl.NumberFormat("zh-CN");
 const signed = (n) => (n > 0 ? "+" : "") + fmt.format(n);
@@ -320,6 +321,14 @@ export function createUxHud(world, api) {
         const era = eraByYear(world, state);
         const cnt = collectWarRoomItems(world, era, state).length;
         wrBtn.textContent = cnt > 0 ? `军机处 ${cnt}` : "军机处";
+      }
+    }
+    const empBtn = $("open-empire-dialog");
+    if (empBtn) {
+      empBtn.hidden = !state.century;
+      if (state.century) {
+        const ch = evaluateChallengeProgress(state);
+        empBtn.textContent = ch && ch.status === "active" ? `残局·余${ch.turnsLeft}季` : "朝堂";
       }
     }
     const techBtn = $("open-tech-dialog");

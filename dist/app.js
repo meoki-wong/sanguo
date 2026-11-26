@@ -93,6 +93,12 @@ import {
   TACTICAL_PHASES, autoResolveTacticalSession, createTacticalSession, currentPhaseOrders, finalizeTacticalModifiers, resolveTacticalPhase,
 } from "./tactical-battle.js";
 import { collectWarRoomItems, decodeShareCode, encodeShareCode, renderTrendChartSvg } from "./war-room.js";
+import { CORPS_DIRECTIVES, createCorps, disbandCorps, listCorps, updateCorpsDirective } from "./corps.js";
+import { enlistTribeRaid, getTribesStatus, giftTribe, pacifyTribe } from "./tribes.js";
+import { enactReform, getReforms, REFORM_SLOTS } from "./reforms.js";
+import { getMarketSnapshot, launchCaravan, raidEnemyTrade, TRADE_ROUTES, tradeMarketGrain } from "./commerce.js";
+import { arrangeMarriage, getRelationships, swearBrotherhood } from "./relationships.js";
+import { CHALLENGE_SCENARIOS, evaluateChallengeProgress, loadChallengeMedals, startChallengeScenario } from "./challenges.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -4064,6 +4070,356 @@ function openWarRoomDialog(tab = "briefing") {
   if (!dlg.open) dlg.showModal();
 }
 
+let empireTab = "corps";
+
+function renderEmpireDialog() {
+  const dlg = find("empire-dialog");
+  const body = find("emp-body");
+  if (!dlg || !body || !state?.century) return;
+  const currentEra = era();
+  const player = state.player;
+  for (const btn of dlg.querySelectorAll(".emp-tab")) {
+    btn.setAttribute("aria-selected", String(btn.dataset.empTab === empireTab));
+  }
+
+  const enemyFactions = playableFactions(currentEra).filter((f) => f.key !== player && Object.values(state.cities).some((c) => c.owner === f.key));
+  const myOfficers = [
+    ...currentEra.officers.filter((o) => o.faction === player && knownOfficer(state, o)),
+    ...(state.recruitedOfficers || []).filter((o) => o.faction === player),
+  ].sort((a, b) => (b.command ?? 70) - (a.command ?? 70));
+  const myCities = Object.keys(state.cities).filter((k) => state.cities[k].owner === player);
+
+  // 1. 大军团合编
+  if (empireTab === "corps") {
+    const corpsList = listCorps(state);
+    const form = make("div", undefined, "emp-form-row");
+    const nameIn = make("input"); nameIn.type = "text"; nameIn.value = "北伐军团"; nameIn.maxLength = 12;
+    const cmdSel = make("select");
+    for (const o of myOfficers) cmdSel.append(new Option(`${o.name}（统${o.command ?? 70}）`, o.key));
+    const dirSel = make("select");
+    for (const d of CORPS_DIRECTIVES) dirSel.append(new Option(d.name, d.id));
+    const tgtSel = make("select");
+    tgtSel.append(new Option("任意相邻敌势", ""));
+    for (const ef of enemyFactions) tgtSel.append(new Option(ef.name, ef.key));
+
+    const lName = make("label"); lName.append(make("span", "军团番号"), nameIn);
+    const lCmd = make("label"); lCmd.append(make("span", "大都督"), cmdSel);
+    const lDir = make("label"); lDir.append(make("span", "战略军令"), dirSel);
+    const lTgt = make("label"); lTgt.append(make("span", "主攻目标"), tgtSel);
+
+    const cityChecks = make("div", undefined, "emp-city-checks");
+    const selectedKeys = new Set(myCities.slice(0, Math.min(3, myCities.length)));
+    for (const ck of myCities.slice(0, 14)) {
+      const lbl = make("label");
+      const cb = make("input"); cb.type = "checkbox"; cb.checked = selectedKeys.has(ck);
+      cb.addEventListener("change", () => { if (cb.checked) selectedKeys.add(ck); else selectedKeys.delete(ck); });
+      lbl.append(cb, make("span", cityName(world, ck)));
+      cityChecks.append(lbl);
+    }
+    const createBtn = make("button", "合编成立军团", "primary");
+    createBtn.type = "button";
+    createBtn.addEventListener("click", () => {
+      const res = createCorps(world, currentEra, state, {
+        name: nameIn.value,
+        commanderKey: cmdSel.value,
+        cityKeys: [...selectedKeys],
+        directive: dirSel.value,
+        targetFaction: tgtSel.value,
+      });
+      if (!res.ok) { notify(res.reason, true); return; }
+      sound?.play("order");
+      mutate(() => res.state, res.summary);
+      renderEmpireDialog();
+    });
+    form.append(lName, lCmd, lDir, lTgt, createBtn, cityChecks);
+
+    const grid = make("div", undefined, "emp-grid");
+    if (!corpsList.length) {
+      grid.append(make("div", "尚未设立大军团。划拨城池并拜任都督后，每季将自动征募、固防或出兵征伐。", "v18-empty"));
+    } else {
+      for (const c of corpsList) {
+        const card = make("div", undefined, "emp-card");
+        const dirName = CORPS_DIRECTIVES.find((d) => d.id === c.directive)?.name || c.directive;
+        card.append(
+          make("strong", `${c.name} · 都督 ${c.commanderName}`),
+          make("p", `军令：${dirName} · 辖 ${c.cities.length} 城（${c.cities.map((k) => cityName(world, k)).join("、")}）· 战功 ${c.wins ?? 0} 胜`),
+        );
+        const acts = make("div", undefined, "emp-card-actions");
+        for (const d of CORPS_DIRECTIVES) {
+          const b = make("button", d.name, c.directive === d.id ? "primary" : "quiet");
+          b.type = "button";
+          b.addEventListener("click", () => {
+            const res = updateCorpsDirective(state, c.id, { directive: d.id });
+            if (res.ok) { mutate(() => res.state, res.summary); renderEmpireDialog(); }
+          });
+          acts.append(b);
+        }
+        const del = make("button", "撤销建制", "quiet");
+        del.type = "button";
+        del.addEventListener("click", () => {
+          const res = disbandCorps(state, c.id);
+          if (res.ok) { mutate(() => res.state, res.summary); renderEmpireDialog(); }
+        });
+        acts.append(del);
+        card.append(acts);
+        grid.append(card);
+      }
+    }
+    body.replaceChildren(form, grid);
+    return;
+  }
+
+  // 2. 边疆五族
+  if (empireTab === "tribes") {
+    const enemyCities = Object.entries(state.cities).filter(([, c]) => c.owner !== player).map(([k]) => k);
+    const tgtRow = make("div", undefined, "emp-form-row");
+    const tgtSel = make("select");
+    for (const ek of enemyCities.slice(0, 20)) tgtSel.append(new Option(`${cityName(world, ek)}（${factionName(currentEra, state.cities[ek].owner)}）`, ek));
+    const lTgt = make("label"); lTgt.append(make("span", "联胡击敌目标城池"), tgtSel);
+    tgtRow.append(lTgt);
+
+    const grid = make("div", undefined, "emp-grid");
+    for (const t of getTribesStatus(state)) {
+      const card = make("div", undefined, "emp-card");
+      const pacified = t.pacifiedBy === player;
+      card.append(
+        make("strong", `${t.icon} ${t.name}（${t.region}）`),
+        make("p", pacified ? `✓ 已归化我朝 · ${t.pacifyBonus}` : `好感 ${t.relation}/100 · ${t.raidSummary}`),
+      );
+      const acts = make("div", undefined, "emp-card-actions");
+      if (!pacified) {
+        const gBtn = make("button", "遣使通好（35金）", "quiet");
+        gBtn.type = "button";
+        gBtn.addEventListener("click", () => {
+          const res = giftTribe(state, t.id);
+          if (!res.ok) { notify(res.reason, true); return; }
+          sound?.play("event");
+          mutate(() => res.state, res.summary);
+          renderEmpireDialog();
+        });
+        const pBtn = make("button", "抚蛮平越（80金50粮）", "primary");
+        pBtn.type = "button";
+        pBtn.addEventListener("click", () => {
+          const res = pacifyTribe(state, t.id);
+          if (!res.ok) { notify(res.reason, true); return; }
+          sound?.play("victory");
+          mutate(() => res.state, res.summary);
+          renderEmpireDialog();
+        });
+        acts.append(gBtn, pBtn);
+      }
+      const rBtn = make("button", "联胡击敌（55金35粮）", "quiet");
+      rBtn.type = "button";
+      rBtn.disabled = !tgtSel.value;
+      rBtn.addEventListener("click", () => {
+        const res = enlistTribeRaid(world, state, t.id, tgtSel.value);
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play("alert");
+        mutate(() => res.state, res.summary);
+        renderEmpireDialog();
+      });
+      acts.append(rBtn);
+      card.append(acts);
+      grid.append(card);
+    }
+    body.replaceChildren(tgtRow, grid);
+    return;
+  }
+
+  // 3. 朝堂法度
+  if (empireTab === "reforms") {
+    const cur = getReforms(state);
+    const grid = make("div", undefined, "emp-grid");
+    for (const slotDef of REFORM_SLOTS) {
+      const card = make("div", undefined, "emp-card");
+      card.append(make("strong", slotDef.title));
+      const pair = make("div", undefined, "emp-reform-pair");
+      for (const opt of slotDef.options) {
+        const active = cur[slotDef.slot] === opt.id;
+        const btn = make("button", undefined, "emp-reform-btn");
+        btn.type = "button";
+        btn.setAttribute("aria-pressed", String(active));
+        btn.append(make("strong", active ? `✓ ${opt.name}` : `${opt.name}（40金）`), make("small", opt.summary));
+        btn.addEventListener("click", () => {
+          if (active) return;
+          const res = enactReform(state, slotDef.slot, opt.id);
+          if (!res.ok) { notify(res.reason, true); return; }
+          sound?.play("event");
+          mutate(() => res.state, res.summary);
+          renderEmpireDialog();
+        });
+        pair.append(btn);
+      }
+      card.append(pair);
+      grid.append(card);
+    }
+    body.replaceChildren(grid);
+    return;
+  }
+
+  // 4. 商贸黑市
+  if (empireTab === "commerce") {
+    const snap = getMarketSnapshot(state);
+    const marketCard = make("div", undefined, "emp-card");
+    marketCard.append(
+      make("strong", `当前天下米价：${snap.grainPrice} 金/石 · 【${snap.tag}】`),
+      make("p", "粮价随季节丰歉、天时灾异与天下战火每季动态波动，低买高卖可济军粮、筹军饷。"),
+    );
+    const mActs = make("div", undefined, "emp-card-actions");
+    const buy50 = make("button", `籴粮 50（约${Math.round(50 * snap.grainPrice)}金）`, "primary");
+    buy50.type = "button";
+    buy50.addEventListener("click", () => {
+      const res = tradeMarketGrain(state, "buy_grain", 50);
+      if (!res.ok) { notify(res.reason, true); return; }
+      sound?.play("order");
+      mutate(() => res.state, res.summary);
+      renderEmpireDialog();
+    });
+    const sell50 = make("button", `粜粮 50（约得${Math.round(50 * snap.grainPrice)}金）`, "quiet");
+    sell50.type = "button";
+    sell50.addEventListener("click", () => {
+      const res = tradeMarketGrain(state, "sell_grain", 50);
+      if (!res.ok) { notify(res.reason, true); return; }
+      sound?.play("order");
+      mutate(() => res.state, res.summary);
+      renderEmpireDialog();
+    });
+    mActs.append(buy50, sell50);
+    if (enemyFactions.length) {
+      const raidBtn = make("button", `游骑劫掠${enemyFactions[0].name}商队`, "quiet");
+      raidBtn.type = "button";
+      raidBtn.addEventListener("click", () => {
+        const res = raidEnemyTrade(state, enemyFactions[0].key);
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play("alert");
+        mutate(() => res.state, res.summary);
+        renderEmpireDialog();
+      });
+      mActs.append(raidBtn);
+    }
+    marketCard.append(mActs);
+
+    const grid = make("div", undefined, "emp-grid");
+    for (const r of TRADE_ROUTES) {
+      const active = snap.caravans.some((c) => c.routeId === r.id);
+      const card = make("div", undefined, "emp-card");
+      card.append(make("strong", `${r.icon} ${r.name}`), make("p", r.summary));
+      const btn = make("button", active ? "✓ 商队往返通商中" : `组建商队（${r.costTreasury}金）`, active ? "quiet" : "primary");
+      btn.type = "button";
+      btn.disabled = active;
+      btn.addEventListener("click", () => {
+        const res = launchCaravan(state, r.id);
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play("order");
+        mutate(() => res.state, res.summary);
+        renderEmpireDialog();
+      });
+      card.append(btn);
+      grid.append(card);
+    }
+    body.replaceChildren(marketCard, grid);
+    return;
+  }
+
+  // 5. 结义联姻
+  if (empireTab === "relations") {
+    const rel = getRelationships(state);
+    const swearRow = make("div", undefined, "emp-form-row");
+    const sA = make("select");
+    const sB = make("select");
+    for (const o of myOfficers) {
+      sA.append(new Option(o.name, o.key));
+      sB.append(new Option(o.name, o.key));
+    }
+    if (myOfficers.length > 1) sB.selectedIndex = 1;
+    const lA = make("label"); lA.append(make("span", "义兄"), sA);
+    const lB = make("label"); lB.append(make("span", "义弟"), sB);
+    const sBtn = make("button", "设坛桃园结义（35金）", "primary");
+    sBtn.type = "button";
+    sBtn.disabled = myOfficers.length < 2;
+    sBtn.addEventListener("click", () => {
+      const res = swearBrotherhood(currentEra, state, sA.value, sB.value);
+      if (!res.ok) { notify(res.reason, true); return; }
+      sound?.play("victory");
+      mutate(() => res.state, res.summary);
+      renderEmpireDialog();
+    });
+    swearRow.append(lA, lB, sBtn);
+
+    const marryRow = make("div", undefined, "emp-form-row");
+    const mSel = make("select");
+    for (const ef of enemyFactions) mSel.append(new Option(ef.name, ef.key));
+    const lM = make("label"); lM.append(make("span", "联姻诸侯（缔结4季同盟）"), mSel);
+    const mBtn = make("button", "政治联姻（55金）", "quiet");
+    mBtn.type = "button";
+    mBtn.disabled = !mSel.value;
+    mBtn.addEventListener("click", () => {
+      const res = arrangeMarriage(currentEra, state, mSel.value);
+      if (!res.ok) { notify(res.reason, true); return; }
+      sound?.play("event");
+      mutate(() => res.state, res.summary);
+      renderEmpireDialog();
+    });
+    marryRow.append(lM, mBtn);
+
+    const logBox = make("div", undefined, "tb-log");
+    const lines = [
+      ...rel.sworn.map((s) => `🤝 义兄弟：${s.names.join(" & ")}（出战攻+10% · 损-12%）`),
+      ...rel.marriages.map((m) => `💍 秦晋之好：已与 ${m.factionName} 缔结政治联姻`),
+      ...rel.nemeses.map((n) => `⚔️ 宿敌：${n.officerName} 誓向 ${n.enemyFaction} 复仇（${n.reason}）`),
+    ];
+    logBox.replaceChildren(...(lines.length ? lines.map((t) => make("div", t)) : [make("div", "尚无结义、联姻或宿敌记录。")]));
+    body.replaceChildren(swearRow, marryRow, logBox);
+    return;
+  }
+
+  // 6. 名战残局
+  if (empireTab === "challenges") {
+    const medals = loadChallengeMedals();
+    const curProg = evaluateChallengeProgress(state);
+    const items = [];
+    if (curProg) {
+      const curCard = make("div", undefined, "emp-card");
+      curCard.append(make("strong", `当前挑战：${curProg.title}`), make("p", curProg.headline));
+      items.push(curCard);
+    }
+    const grid = make("div", undefined, "emp-grid");
+    for (const ch of CHALLENGE_SCENARIOS) {
+      const card = make("div", undefined, "emp-card");
+      const med = medals[ch.id];
+      const titleRow = make("div", undefined, "tb-order-head");
+      titleRow.append(make("strong", ch.title));
+      if (med) titleRow.append(make("span", med === "gold" ? "🥇 金牌" : med === "silver" ? "🥈 银牌" : "🥉 铜牌", "emp-medal"));
+      card.append(titleRow, make("p", ch.brief));
+      const go = make("button", `开启残局（限 ${ch.turnLimit} 季）`, "primary");
+      go.type = "button";
+      go.addEventListener("click", () => {
+        try {
+          const chState = startChallengeScenario(world, ch.id);
+          replaceGame(chState);
+          dlg.close();
+          sound?.play("victory");
+          notify(`已开启名战残局「${ch.title}」：${ch.brief}`);
+        } catch (err) {
+          notify(err.message, true);
+        }
+      });
+      card.append(go);
+      grid.append(card);
+    }
+    items.push(grid);
+    body.replaceChildren(...items);
+  }
+}
+
+function openEmpireDialog(tab = "corps") {
+  const dlg = find("empire-dialog");
+  if (!dlg || !state?.century) return;
+  empireTab = tab;
+  renderEmpireDialog();
+  if (!dlg.open) dlg.showModal();
+}
+
 let activeTacticalPlan = null;
 let activeTacticalSession = null;
 let activeTacticalOnDone = null;
@@ -5337,6 +5693,13 @@ function wireControls() {
   find("open-century-menu").addEventListener("click", () => { find("menu-dialog").close(); centuryDesk.open(); });
   find("open-saga-chronicle")?.addEventListener("click", () => chronicleReplay?.open());
   find("open-war-room")?.addEventListener("click", () => openWarRoomDialog("briefing"));
+  find("open-empire-dialog")?.addEventListener("click", () => openEmpireDialog("corps"));
+  find("empire-dialog")?.querySelectorAll(".emp-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      empireTab = btn.dataset.empTab || "corps";
+      renderEmpireDialog();
+    });
+  });
   find("war-room-dialog")?.querySelectorAll(".wr-tab").forEach((btn) => {
     btn.addEventListener("click", () => {
       warRoomTab = btn.dataset.wrTab || "briefing";

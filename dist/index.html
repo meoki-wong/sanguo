@@ -48,6 +48,7 @@
       <button type="button" class="quiet" id="century-pending" aria-haspopup="dialog" hidden>待决</button>
       <button type="button" class="quiet" id="open-chronicle">奏报</button>
       <button type="button" class="quiet" id="open-war-room" hidden>军机处</button>
+      <button type="button" class="quiet" id="open-empire-dialog" hidden>朝堂</button>
       <button type="button" class="quiet" id="open-tech-dialog" hidden>兵技</button>
       <button type="button" class="quiet" id="open-saga-chronicle" hidden>本纪</button>
       <button type="button" class="quiet" id="open-achievements-dialog" hidden>勋鉴</button>
@@ -2621,6 +2622,27 @@
         <button type="button" class="quiet" id="tb-cancel-btn">取消出征</button>
         <button type="button" class="primary" id="tb-commit-btn" hidden>依此军令下达出征！</button>
       </div>
+    </div>
+  </dialog>
+
+  <dialog id="empire-dialog" aria-labelledby="emp-dialog-title">
+    <div class="dialog-content emp-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag">v19.0 盛世经略 · 天下归宗</span>
+          <h2 id="emp-dialog-title">盛世朝堂 · 军团、边疆、变法与名战</h2>
+        </div>
+        <button type="button" class="quiet" data-close="empire-dialog">返回</button>
+      </div>
+      <div class="wr-tabs" role="tablist">
+        <button type="button" class="quiet emp-tab" data-emp-tab="corps" aria-selected="true">大军团</button>
+        <button type="button" class="quiet emp-tab" data-emp-tab="tribes" aria-selected="false">边疆五族</button>
+        <button type="button" class="quiet emp-tab" data-emp-tab="reforms" aria-selected="false">朝堂法度</button>
+        <button type="button" class="quiet emp-tab" data-emp-tab="commerce" aria-selected="false">商贸黑市</button>
+        <button type="button" class="quiet emp-tab" data-emp-tab="relations" aria-selected="false">结义联姻</button>
+        <button type="button" class="quiet emp-tab" data-emp-tab="challenges" aria-selected="false">名战残局</button>
+      </div>
+      <div id="emp-body" class="emp-body"></div>
     </div>
   </dialog>
 

@@ -3998,3 +3998,117 @@ body[data-hud-mode="sovereign"] #feedback {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==================== v19.0 盛世朝堂 · 军团 / 边疆 / 变法 / 商贸 / 关系 / 残局 ==================== */
+#empire-dialog {
+  width: min(820px, calc(100vw - 1.25rem));
+  max-width: calc(100vw - 1.25rem);
+  padding: 0;
+  box-sizing: border-box;
+}
+.emp-dialog-content {
+  width: 100%;
+  box-sizing: border-box;
+  max-height: min(86vh, 780px);
+  overflow-y: auto;
+}
+.emp-tab[aria-selected="true"] {
+  background: rgba(176, 132, 62, 0.28);
+  border-color: var(--gold);
+  color: var(--gold-bright);
+}
+.emp-body {
+  display: grid;
+  gap: 0.65rem;
+}
+.emp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.55rem;
+}
+.emp-card {
+  display: grid;
+  gap: 0.35rem;
+  align-content: start;
+  padding: 0.68rem 0.78rem;
+  border-radius: var(--radius-md);
+  background: rgba(28, 23, 18, 0.9);
+  border: 1px solid rgba(228, 190, 116, 0.22);
+}
+.emp-card strong { font-size: 0.88rem; color: #f6e7c6; }
+.emp-card p { margin: 0; font-size: 0.75rem; color: var(--muted); }
+.emp-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+  margin-top: 0.2rem;
+}
+.emp-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: end;
+  padding: 0.62rem 0.72rem;
+  border-radius: var(--radius-md);
+  background: rgba(24, 20, 15, 0.85);
+  border: 1px solid rgba(228, 190, 116, 0.2);
+}
+.emp-form-row label {
+  display: grid;
+  gap: 0.18rem;
+  font-size: 0.76rem;
+  color: #efe2c4;
+}
+.emp-city-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  width: 100%;
+}
+.emp-city-checks label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  padding: 0.16rem 0.42rem;
+  border-radius: 999px;
+  border: 1px solid rgba(228, 190, 116, 0.22);
+  background: rgba(34, 28, 21, 0.85);
+  font-size: 0.72rem;
+}
+.emp-reform-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+.emp-reform-btn {
+  display: grid;
+  gap: 0.16rem;
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius-sm);
+  background: rgba(32, 26, 20, 0.9);
+  border: 1px solid rgba(228, 190, 116, 0.22);
+  color: #efe2c4;
+  cursor: pointer;
+}
+.emp-reform-btn[aria-pressed="true"] {
+  background: rgba(94, 68, 32, 0.9);
+  border-color: var(--gold);
+}
+.emp-reform-btn small { font-size: 0.7rem; color: var(--muted); }
+.emp-medal {
+  display: inline-block;
+  padding: 0.12rem 0.42rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: rgba(214, 168, 72, 0.24);
+  color: var(--gold-bright);
+  border: 1px solid rgba(214, 168, 72, 0.5);
+}
+@media (max-width: 600px) {
+  .emp-grid,
+  .emp-reform-pair {
+    grid-template-columns: 1fr;
+  }
+}
