@@ -44,6 +44,7 @@ import { personaForFaction } from "./ai-persona.js";
 import { collectWarRoomItems } from "./war-room.js";
 import { evaluateChallengeProgress } from "./challenges.js";
 import { getCeremonyState } from "./dynasty-ceremony.js";
+import { executeCoordinatedAttack, findCoordinatedAttackPlan } from "./multi-siege.js";
 
 const fmt = new Intl.NumberFormat("zh-CN");
 const signed = (n) => (n > 0 ? "+" : "") + fmt.format(n);
@@ -339,6 +340,8 @@ export function createUxHud(world, api) {
     if (codexBtn) codexBtn.hidden = !state.century;
     const posterBtn = $("open-poster-dialog");
     if (posterBtn) posterBtn.hidden = !state.century;
+    const autoSimBtn = $("toggle-auto-sim");
+    if (autoSimBtn) autoSimBtn.hidden = !state.century;
     const techBtn = $("open-tech-dialog");
     if (techBtn) {
       techBtn.hidden = !state.century;
@@ -1433,6 +1436,23 @@ export function createUxHud(world, api) {
             renderSovereignCityCard();
           });
           box.append(goBtn);
+          // v21.0 多城合围总攻按钮
+          const coordPlan = findCoordinatedAttackPlan(world, era, state, key);
+          if (coordPlan.ok) {
+            const coordBtn = el("button", `⚔️ ${coordPlan.label}（${coordPlan.totalTroops.toLocaleString()}兵 · ${coordPlan.totalGrain}粮）`, "primary");
+            coordBtn.type = "button";
+            coordBtn.disabled = !coordPlan.affordable;
+            coordBtn.title = `${coordPlan.bonusSummary}：${coordPlan.legs.map((l) => l.fromName).join(" + ")}同步合击`;
+            coordBtn.addEventListener("click", () => {
+              const cur = api.snapshot().state;
+              const res = executeCoordinatedAttack(world, era, cur, coordPlan);
+              if (!res.ok) { api.notify?.(res.reason, true); return; }
+              api.sound?.play("march");
+              api.commitState(() => res.state, res.summary);
+              renderSovereignCityCard();
+            });
+            box.append(coordBtn);
+          }
         } else {
           box.append(el("p", plan.message, "memorial-detail"));
         }

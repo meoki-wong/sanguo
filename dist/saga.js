@@ -17,6 +17,8 @@ import { settleTribesTurn } from "./tribes.js";
 import { settleReformsTurn } from "./reforms.js";
 import { settleCommerceTurn } from "./commerce.js";
 import { evaluateChallengeProgress } from "./challenges.js";
+import { clearCoordinatedTargets } from "./multi-siege.js";
+import { spawnAdventures } from "./adventures.js";
 import { quarterlyTechPoints, techEconomyModifiers, techStratagemModifiers } from "./tech.js";
 
 export const MAX_CAPTIVES = 6;
@@ -442,7 +444,9 @@ export function settleSagaQuarter(world, era, state) {
     const tribeRes = settleTribesTurn(world, corpsRes.state);
     const reformRes = settleReformsTurn(tribeRes.state);
     const commRes = settleCommerceTurn(reformRes.state);
-    const snapState = recordHistorySnapshot(commRes.state);
+    const advState = spawnAdventures(world, commRes.state);
+    clearCoordinatedTargets(advState);
+    const snapState = recordHistorySnapshot(advState);
     state.cities = snapState.cities;
     state.factions = snapState.factions;
     if (snapState.recruitedOfficers) state.recruitedOfficers = snapState.recruitedOfficers;

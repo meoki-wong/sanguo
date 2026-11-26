@@ -104,6 +104,10 @@ import { buildAdvisorPlans, executeAdvisorStrategy } from "./advisor-council.js"
 import { buildNavalFleet, getRiverPorts, launchNavalRaid, NAVAL_SHIP_TYPES, toggleRiverChain } from "./navy.js";
 import { queryHeroCodex } from "./codex.js";
 import { renderPosterCanvas } from "./poster.js";
+import { FORMATION_CATALOG, getActiveFormation, getOfficerSpecialties, GRADE_LABELS, setActiveFormation, SPECIALTY_BRANCHES, trainOfficerSpecialty } from "./formations.js";
+import { COURT_FACTIONS, currentCourtDebate, getCourtFactionsState, resolveCourtDebate } from "./court-factions.js";
+import { listActiveAdventures, spawnAdventures, visitAdventure } from "./adventures.js";
+import { AUTO_SIM_PRESETS, shouldPauseAutoSim } from "./auto-sim.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -4011,6 +4015,19 @@ function renderWarRoomDialog() {
       grid.append(card);
     }
     advEl.replaceChildren(intro, grid);
+    // v21.0 智能多季推演控制条（遇急自停）
+    const simRow = make("div", undefined, "emp-form-row");
+    simRow.append(make("strong", "⏩ 智能多季推演（遇失城/告急/晋爵/奇局自动暂停）："));
+    for (const preset of AUTO_SIM_PRESETS) {
+      const sBtn = make("button", preset.label, "quiet");
+      sBtn.type = "button";
+      sBtn.addEventListener("click", () => {
+        dlg.close();
+        runSmartAutoSim(preset.seasons);
+      });
+      simRow.append(sBtn);
+    }
+    advEl.append(simRow);
   }
 
   // 1. 要务批阅
@@ -4179,6 +4196,123 @@ function renderEmpireDialog() {
       offGrid.append(card);
     }
     body.replaceChildren(topCard, form, offGrid);
+    return;
+  }
+
+  // 0b-1. 古战五大阵法与演武场名将特训
+  if (empireTab === "formations") {
+    const activeId = getActiveFormation(state, player);
+    const fGrid = make("div", undefined, "emp-grid");
+    for (const f of FORMATION_CATALOG) {
+      const card = make("div", undefined, "emp-card");
+      const active = activeId === f.id;
+      const counterName = FORMATION_CATALOG.find((x) => x.id === f.counters)?.name || "";
+      card.append(
+        make("strong", `${f.icon} ${f.name}${active ? "（当前阵法）" : ""}`),
+        make("p", `${f.summary}（克制：${counterName}）`),
+      );
+      const btn = make("button", active ? "✓ 已列此阵" : "变阵演练", active ? "primary" : "quiet");
+      btn.type = "button";
+      btn.disabled = active;
+      btn.addEventListener("click", () => {
+        const res = setActiveFormation(state, f.id);
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play("order");
+        mutate(() => res.state, res.summary);
+        renderEmpireDialog();
+      });
+      card.append(btn);
+      fGrid.append(card);
+    }
+
+    const trainRow = make("div", undefined, "emp-form-row");
+    const oSel = make("select");
+    for (const o of myOfficers) {
+      const sp = getOfficerSpecialties(state, o.key);
+      oSel.append(new Option(`${o.name}（步${GRADE_LABELS[sp.infantry]}·骑${GRADE_LABELS[sp.cavalry]}·弓${GRADE_LABELS[sp.archer]}·水${GRADE_LABELS[sp.navy]}）`, o.key));
+    }
+    const bSel = make("select");
+    for (const b of SPECIALTY_BRANCHES) bSel.append(new Option(`${b.icon} ${b.name}`, b.id));
+    const l1 = make("label"); l1.append(make("span", "演武场特训将领"), oSel);
+    const l2 = make("label"); l2.append(make("span", "特训兵种"), bSel);
+    const tBtn = make("button", "演武特训（30~60金/20粮）", "primary");
+    tBtn.type = "button";
+    tBtn.disabled = !oSel.value;
+    tBtn.addEventListener("click", () => {
+      const res = trainOfficerSpecialty(currentEra, state, oSel.value, bSel.value);
+      if (!res.ok) { notify(res.reason, true); return; }
+      sound?.play("victory");
+      mutate(() => res.state, res.summary);
+      renderEmpireDialog();
+    });
+    trainRow.append(l1, l2, tBtn);
+    body.replaceChildren(fGrid, trainRow);
+    return;
+  }
+
+  // 0b-2. 朝野三大派系 & 群臣廷议
+  if (empireTab === "court") {
+    const cf = getCourtFactionsState(state);
+    const statusBanner = make("div", `【朝堂态势】${cf.statusLabel}`, "advisor-speech");
+    const grid = make("div", undefined, "emp-grid");
+    for (const f of COURT_FACTIONS) {
+      const card = make("div", undefined, "emp-card");
+      card.append(make("strong", `${f.icon} ${f.name} · 满意度 ${cf.scores[f.id]}/100`), make("p", f.summary));
+      grid.append(card);
+    }
+    const debate = currentCourtDebate(state);
+    const dCard = make("div", undefined, "emp-card");
+    dCard.append(make("strong", debate.title), make("p", debate.body));
+    const acts = make("div", undefined, "emp-card-actions");
+    for (const ch of debate.choices) {
+      const btn = make("button", ch.label, "quiet");
+      btn.type = "button";
+      btn.addEventListener("click", () => {
+        const res = resolveCourtDebate(state, debate.id, ch.id);
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play("event");
+        mutate(() => res.state, res.summary);
+        renderEmpireDialog();
+      });
+      acts.append(btn);
+    }
+    dCard.append(acts);
+    body.replaceChildren(statusBanner, grid, dCard);
+    return;
+  }
+
+  // 0b-3. 九州奇闻 & 隐士寻访
+  if (empireTab === "adventures") {
+    let advs = listActiveAdventures(state);
+    if (!advs.length) {
+      const seeded = spawnAdventures(world, state);
+      advs = listActiveAdventures(seeded);
+      if (advs.length) state.saga.adventures = advs;
+    }
+    const grid = make("div", undefined, "emp-grid");
+    if (!advs.length) {
+      grid.append(make("div", "本季九州暂无新奇闻，推进一季后将自动刷新。", "v18-empty"));
+    } else {
+      for (const a of advs) {
+        const card = make("div", undefined, "emp-card");
+        card.append(
+          make("strong", `${a.icon} ${a.name}（${a.cityName}）`),
+          make("p", a.summary),
+        );
+        const btn = make("button", `遣使寻访（${a.costTreasury}金）`, "primary");
+        btn.type = "button";
+        btn.addEventListener("click", () => {
+          const res = visitAdventure(world, state, a.id);
+          if (!res.ok) { notify(res.reason, true); return; }
+          sound?.play("victory");
+          mutate(() => res.state, res.summary);
+          renderEmpireDialog();
+        });
+        card.append(btn);
+        grid.append(card);
+      }
+    }
+    body.replaceChildren(grid);
     return;
   }
 
@@ -5921,6 +6055,59 @@ function wireControls() {
   find("open-poster-dialog")?.addEventListener("click", () => {
     const m = find("hud-more-menu"); if (m) m.hidden = true;
     openPosterDialog();
+  });
+  let autoSimRunning = false;
+  async function runSmartAutoSim(seasonsCount = 4) {
+    if (autoSimRunning) {
+      autoSimRunning = false;
+      notify("已暂停智能推演。");
+      return;
+    }
+    if (!state?.century) return;
+    autoSimRunning = true;
+    const btn = find("toggle-auto-sim");
+    if (btn) btn.textContent = "⏹ 停止推演 (G)";
+    notify(`开始智能推演（最多 ${seasonsCount} 季，遇急自动暂停）…`);
+    let ran = 0;
+    try {
+      while (autoSimRunning && ran < seasonsCount) {
+        const before = structuredClone(state);
+        const advBtn = find("advance");
+        if (!advBtn || advBtn.disabled) break;
+        advBtn.click();
+        // 等待本季推进完成
+        await new Promise((r) => setTimeout(r, 420));
+        ran += 1;
+        const chk = shouldPauseAutoSim(world, state, before);
+        if (chk.pause) {
+          notify(`智能推演已暂停（共推 ${ran} 季）：${chk.reason}`);
+          break;
+        }
+      }
+      if (autoSimRunning && ran >= seasonsCount) {
+        notify(`智能推演完成：已平稳推进 ${ran} 季！`);
+      }
+    } finally {
+      autoSimRunning = false;
+      if (btn) btn.textContent = "⏩ 智能推演 (G)";
+    }
+  }
+  find("toggle-auto-sim")?.addEventListener("click", () => {
+    const m = find("hud-more-menu"); if (m) m.hidden = true;
+    runSmartAutoSim(4);
+  });
+  // v21.0 端游级全快捷键（W 军机处 / E 朝堂 / C 群雄谱 / T 兵技 / G 智能推演）
+  document.addEventListener("keydown", (ev) => {
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    const tag = (ev.target?.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select" || ev.target?.isContentEditable) return;
+    if (!state?.century) return;
+    const k = ev.key.toLowerCase();
+    if (k === "w") { ev.preventDefault(); openWarRoomDialog("advisor"); }
+    else if (k === "e") { ev.preventDefault(); openEmpireDialog("ceremony"); }
+    else if (k === "c") { ev.preventDefault(); openCodexDialog(); }
+    else if (k === "t") { ev.preventDefault(); openTechDialog(); }
+    else if (k === "g") { ev.preventDefault(); runSmartAutoSim(4); }
   });
   find("codex-open-poster")?.addEventListener("click", () => {
     find("codex-dialog")?.close();

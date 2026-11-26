@@ -17,6 +17,7 @@ import { marketRow } from "./reign-economy.js";
 import { chokepointBetween, isCoalitionActive } from "./coalition.js";
 import { supplyLinesForMap } from "./supply.js";
 import { cityVisibility, isFogOfWarEnabled } from "./espionage.js";
+import { listActiveAdventures } from "./adventures.js";
 
 const colors = {
   cao: "#416a91", wei: "#416a91", yuan: "#8c6a25", zhang: "#a55b42", shu: "#a1503a",
@@ -928,6 +929,44 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
           ctx.textBaseline = "middle";
           ctx.fillText("?", p[0], p[1] - 11 / z);
         }
+      }
+      // v21.0 沙盘动态行军弧线箭矢（进攻红金 / 调兵青绿）与九州奇闻金色「奇」徽标
+      for (const ord of mapState.orders || []) {
+        if ((ord.type !== "attack" && ord.type !== "transfer") || !ord.from || !ord.to) continue;
+        const a = cityPositions.get(ord.from);
+        const b = cityPositions.get(ord.to);
+        if (!a || !b) continue;
+        const mx = (a[0] + b[0]) * 0.5;
+        const my = (a[1] + b[1]) * 0.5 - 14 / z;
+        ctx.beginPath();
+        ctx.moveTo(a[0], a[1]);
+        ctx.quadraticCurveTo(mx, my, b[0], b[1]);
+        ctx.strokeStyle = ord.type === "attack" ? "rgba(240, 102, 68, 0.92)" : "rgba(92, 206, 174, 0.88)";
+        ctx.lineWidth = 2.6 / z;
+        ctx.stroke();
+        // 箭头
+        const ang = Math.atan2(b[1] - my, b[0] - mx);
+        const head = 6.5 / z;
+        ctx.beginPath();
+        ctx.moveTo(b[0], b[1]);
+        ctx.lineTo(b[0] - head * Math.cos(ang - 0.45), b[1] - head * Math.sin(ang - 0.45));
+        ctx.lineTo(b[0] - head * Math.cos(ang + 0.45), b[1] - head * Math.sin(ang + 0.45));
+        ctx.closePath();
+        ctx.fillStyle = ord.type === "attack" ? "#f4b958" : "#6ee2c0";
+        ctx.fill();
+      }
+      for (const adv of listActiveAdventures(mapState)) {
+        const p = cityPositions.get(adv.cityKey);
+        if (!p) continue;
+        ctx.fillStyle = "rgba(218, 162, 52, 0.95)";
+        ctx.beginPath();
+        ctx.arc(p[0] - 9 / z, p[1] - 9 / z, 5.4 / z, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#18120a";
+        ctx.font = `700 ${Math.max(6, 7.2 / z)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("奇", p[0] - 9 / z, p[1] - 8.6 / z);
       }
       ctx.restore();
     }
