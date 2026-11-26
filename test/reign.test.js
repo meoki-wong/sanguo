@@ -203,11 +203,11 @@ test("an actual peaceful ending can continue across a ruler's handover and finis
 for (const year of [184, 190, 199, 208, 219, 234, 262, 265]) {
   const factions = playableFactions(eraByYear(world, year));
   for (const candidate of [factions[0], factions.at(-1)]) for (const stateForm of ["central", "compact"]) {
-    test(year + " " + candidate.key + " " + stateForm + " keeps 42 cities through 120 quarters or a natural ending", (t) => {
+    test(year + " " + candidate.key + " " + stateForm + " keeps 44 cities through 120 quarters or a natural ending", (t) => {
       let state = charter(game(year, candidate.key), { stateForm, objective: stateForm === "central" ? "growth" : "concord" });
       for (let i = 0; i < 120 && gameOutcome(state) === "ongoing"; i++) {
         state = advanceQuarter(world, state);
-        assert.equal(Object.keys(state.cities).length, 42);
+        assert.equal(Object.keys(state.cities).length, 44);
         if (i % 4 === 0) decodeSave(world, JSON.stringify(state));
         if (i % 20 === 0) verify(state);
       }

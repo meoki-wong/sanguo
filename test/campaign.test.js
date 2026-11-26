@@ -40,7 +40,7 @@ for (const [year, player] of [[199, "cao"], [199, "lu"], [262, "wei"], [262, "sh
       if (order) state = queueOrder(world, state, order);
       const next = advanceQuarter(world, state);
       assert.equal(next.turn, turn);
-      assert.equal(Object.keys(next.cities).length, 42);
+      assert.equal(Object.keys(next.cities).length, 44);
       assert.equal(gameOutcome(next), "ongoing");
       assert.deepEqual(decodeSave(world, JSON.stringify(next)), next);
       const report = next.history.at(-1);

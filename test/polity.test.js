@@ -63,7 +63,7 @@ test("1.2 saves opt in while retaining live military, diplomacy and queued order
   const { polity, ...preserved } = next;
   assert.deepEqual(preserved, old);
   assert.equal(polity.atlas[0].turn, old.turn);
-  assert.equal(Object.keys(territoryAt(world, next, old.turn)).length, 42);
+  assert.equal(Object.keys(territoryAt(world, next, old.turn)).length, 44);
   assert.equal(quiet(next).turn, old.turn + 1);
 });
 
@@ -249,7 +249,7 @@ for (const [year, faction] of [[199, "cao"], [199, "lu"], [208, "cao"], [208, "l
       if (advice) state = queueOrder(world, state, advice.order);
       state = restore(advanceQuarter(world, state));
       assert.equal(state.turn, turn + 1);
-      assert.equal(Object.keys(state.cities).length, 42);
+      assert.equal(Object.keys(state.cities).length, 44);
       assert.equal(gameOutcome(state), "ongoing", year + " " + faction + " · " + state.turn);
     }
     t.diagnostic(`${initial} → ${forceTotals(state, faction).cities} cities, ${state.polity.atlas.length} map frames`);
@@ -279,7 +279,7 @@ test("the peace ending is reachable from a normal opening through diplomacy, suc
   state = restore(concludePeace(world, state));
   assert.equal(gameOutcome(state), "victory");
   assert.equal(state.scenarioEnding.kind, "peace");
-  assert.ok(forceTotals(state, "cao").cities < 42);
+  assert.ok(forceTotals(state, "cao").cities < 44);
 });
 
 test("the 1.3 rules preserve Liu Bei's viable coalition route", () => {
@@ -304,7 +304,7 @@ test("the 1.3 rules preserve Liu Bei's viable coalition route", () => {
   assert.equal(result.scenarioEnding.kind, "coalition");
 });
 
-test("the 1.3 rules preserve the 42-city victory from the regular Jin opening", () => {
+test("the 1.3 rules preserve the 44-city victory from the regular Jin opening", () => {
   let state = game(265, "jin");
   while (gameOutcome(state) === "ongoing" && state.turn < 70) {
     const era = eraByYear(world, state);
@@ -324,6 +324,6 @@ test("the 1.3 rules preserve the 42-city victory from the regular Jin opening", 
     }
     state = restore(advanceQuarter(world, state));
   }
-  assert.equal(forceTotals(state, "jin").cities, 42);
+  assert.equal(forceTotals(state, "jin").cities, 44);
   assert.equal(gameOutcome(state), "victory");
 });

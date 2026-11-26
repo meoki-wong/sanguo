@@ -9,6 +9,7 @@ const openings = {
       jian: ["孙坚", "整备江东", "moling", 105, 110, 72, "chaisang lujiang moling wu shanyin", ["孙坚", "程普", "黄盖", "韩当", "祖茂"]],
       yan: ["益州诸郡", "保境护蜀", "chengdu", 120, 130, 65, "chengdu zitong jiangzhou yufu jianning yunnan nanzheng", ["郤俭", "刘焉", "张鲁", "张任"]],
       ma: ["西凉诸部", "守住陇右", "tianshui", 93, 102, 64, "tianshui guzang anding", ["北宫伯玉", "李文侯", "韩遂", "马腾"]],
+      shi: ["士燮", "保境交州", "jiaozhi", 96, 108, 72, "panyu jiaozhi", ["士燮", "士壹", "士武", "士䵋"]],
     },
   },
   190: {
@@ -23,6 +24,7 @@ const openings = {
       jian: ["孙坚", "北上勤王", "linxiang", 128, 137, 74, "linxiang guiyang linyuan quanling chaisang lujiang moling wu shanyin", ["孙坚", "黄盖", "程普", "韩当", "祖茂", "孙策"]],
       yan: ["刘焉", "自守蜀道", "chengdu", 132, 146, 70, "chengdu zitong jiangzhou yufu jianning yunnan nanzheng", ["刘焉", "刘璋", "张鲁", "赵韪", "张任", "庞羲"]],
       ma: ["马腾与韩遂", "联保西凉", "tianshui", 95, 104, 67, "tianshui guzang anding", ["马腾", "韩遂", "庞德", "成公英", "梁兴", "马超"]],
+      shi: ["士燮", "雄长交州", "jiaozhi", 98, 110, 74, "panyu jiaozhi", ["士燮", "士壹", "士武", "士䵋"]],
     },
   },
   219: {
@@ -32,7 +34,7 @@ const openings = {
         ["曹操", "曹仁", "徐晃", "满宠", "庞德", "于禁", "张辽", "司马懿", "陈群", "贾诩", "曹休", "乐进"]],
       liu: ["刘备", "守汉中与荆州", "chengdu", 175, 172, 74, "shangyong jiangling linxiang guiyang quanling linyuan nanzheng zitong chengdu jiangzhou yufu jianning yunnan",
         ["刘备", "诸葛亮", "关羽", "关平", "张飞", "赵云", "黄忠", "魏延", "马超", "法正", "廖化", "关兴"]],
-      wu: ["孙权", "经营长江", "moling", 154, 161, 73, "jiangxia moling wu shanyin lujiang chaisang",
+      wu: ["孙权", "经营长江", "moling", 154, 161, 73, "jiangxia moling wu shanyin lujiang chaisang panyu jiaozhi",
         ["孙权", "吕蒙", "陆逊", "甘宁", "周泰", "朱然", "蒋钦", "潘璋", "顾雍", "张昭"]],
     },
   },
@@ -43,7 +45,7 @@ const openings = {
         ["曹叡", "司马懿", "郭淮", "费曜", "陈群", "满宠", "杜袭", "夏侯霸", "辛毗", "秦朗"]],
       shu: ["蜀", "北伐陇右", "chengdu", 160, 155, 71, "nanzheng zitong chengdu jiangzhou yufu jianning yunnan",
         ["刘禅", "诸葛亮", "魏延", "杨仪", "姜维", "王平", "蒋琬", "费祎", "邓芝", "马岱"]],
-      wu: ["吴", "水陆牵制", "moling", 171, 168, 73, "jiangxia jiangling linxiang guiyang quanling linyuan moling wu shanyin lujiang chaisang",
+      wu: ["吴", "水陆牵制", "moling", 171, 168, 73, "jiangxia jiangling linxiang guiyang quanling linyuan moling wu shanyin lujiang chaisang panyu jiaozhi",
         ["孙权", "陆逊", "诸葛瑾", "朱然", "步骘", "潘璋", "顾雍", "全琮", "陆凯", "孙韶"]],
     },
   },

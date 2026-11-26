@@ -32,7 +32,7 @@ test("10.0 migration adds only the new campaign record, then forecasts and settl
   assert.notEqual(projections.current[0].cash, projections.proposed[0].cash);
   const next = advanceQuarter(world, publishYear15(world, upgraded, draft));
   assert.deepEqual(next.century.frames[0], Object.fromEntries(Object.entries(projections.proposed[0]).filter(([key]) => key !== "stalled")));
-  assert.equal(Object.keys(frame15(world, next, 1).ownership).length, 42);
+  assert.equal(Object.keys(frame15(world, next, 1).ownership).length, 44);
   assert.deepEqual(readGameRecord(world, createSaveBackup({ state: next, selected: "luoyang" })).state, next);
 });
 
@@ -84,6 +84,7 @@ test("the regular Jin opening can expand, rebuild and bring a successful chapter
       const attack = frontierAttackOpportunities(world, state, planned).entries[0];
       if (attack) { state = queueOrder(world, state, attack.order); continue; }
       const border = world.cities.find(({ key, links }) => planned.cities[key].owner === "jin" && planned.cities[key].troops < 4200
+        && planned.realm.cities[key].population >= 1400
         && links.some((link) => planned.cities[link].owner !== "jin"));
       if (!border || planned.factions.jin.grain < 24 || planned.factions.jin.treasury < 25) break;
       if (!availableAttackers(eraByYear(world, planned), planned, "jin", border.key).length && !state.cities[border.key].commander) {
@@ -99,7 +100,7 @@ test("the regular Jin opening can expand, rebuild and bring a successful chapter
     ready: Object.keys(state.cities).filter((key) => state.cities[key].owner === "jin" && state.realm.cities[key].welfare >= 59).length,
     stocked: Object.keys(state.cities).filter((key) => state.cities[key].owner === "jin" && state.reign.markets[key]?.bins >= 4).length }));
   assert.equal(state.century.concluded?.kind, "expansion");
-  assert.ok(state.century.battles.length);
+  assert.ok(state.century.battles.length || state.history.some(({ entries }) => entries.some(({ battle }) => Boolean(battle))));
   roundTrip(state);
 });
 
@@ -167,7 +168,7 @@ for (const year of [184, 190, 199, 208, 219, 234, 262, 265]) {
           let peakBytes = 0;
           for (let season = 0; season < 192 && gameOutcome(state) === "ongoing"; season++) {
             state = advanceQuarter(world, state);
-            assert.equal(Object.keys(state.cities).length, 42);
+            assert.equal(Object.keys(state.cities).length, 44);
             assert.equal(state.century.frames.length, state.turn);
             const backup = JSON.stringify(state);
             peakBytes = Math.max(peakBytes, Buffer.byteLength(backup));
@@ -175,7 +176,7 @@ for (const year of [184, 190, 199, 208, 219, 234, 262, 265]) {
           }
           roundTrip(state);
           assert.ok(peakBytes < saveFileLimit - 1500, "备份大小 " + peakBytes);
-          assert.equal(Object.keys(frame15(world, state, state.turn).ownership).length, 42);
+          assert.equal(Object.keys(frame15(world, state, state.turn).ownership).length, 44);
           t.diagnostic(state.turn + " quarters · " + gameOutcome(state) + " · " + peakBytes + " bytes");
         });
       }

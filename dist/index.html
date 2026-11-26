@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#1c1b17">
-  <meta name="description" content="在四十二座城池之间经营、任命和出征的三国回合制游戏">
+  <meta name="description" content="在四十四座城池之间经营、任命和出征的三国回合制游戏">
   <title>经略三国</title>
   <link rel="stylesheet" href="./game.css">
   <link rel="stylesheet" href="./command-desk.css">
@@ -19,65 +19,97 @@
   <link rel="stylesheet" href="./strategy-nine.css">
   <link rel="stylesheet" href="./reign.css">
   <link rel="stylesheet" href="./century.css">
+  <link rel="stylesheet" href="./modern-ui.css">
   <script type="module" src="./app.js"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="identity">
-      <span class="seal" aria-hidden="true">略</span>
-      <div><h1>经略三国</h1><span id="active-era"></span></div>
+      <button type="button" class="seal" id="seal-campaign" title="切换剧本或新开局" aria-label="切换剧本或新开局">略</button>
+      <div class="identity-meta">
+        <div class="identity-title-row">
+          <h1>经略三国</h1>
+          <span id="hud-rank-badge" class="hud-rank-badge" hidden></span>
+          <button type="button" id="map-weather" class="hud-weather-pill" aria-haspopup="dialog" hidden></button>
+        </div>
+        <span id="active-era"></span>
+      </div>
     </div>
     <dl class="resources" aria-label="全国资源">
-      <div><dt>国库</dt><dd id="treasury">–</dd></div>
-      <div><dt>储粮</dt><dd id="grain">–</dd></div>
-      <div><dt>民心</dt><dd id="morale">–</dd></div>
+      <div data-hud-jump="finance" title="查看财政账目"><dt>国库</dt><dd><span id="treasury">–</span> <span id="treasury-delta" class="res-delta"></span></dd></div>
+      <div data-hud-jump="finance" title="查看财政与储粮"><dt>储粮</dt><dd><span id="grain">–</span> <span id="grain-delta" class="res-delta"></span></dd></div>
+      <div data-hud-jump="holdings" title="查看国政与民心"><dt>民心</dt><dd id="morale">–</dd></div>
+      <div data-hud-jump="holdings" title="查看辖城总览"><dt>辖城</dt><dd id="hud-cities">–</dd></div>
+      <div data-hud-jump="frontier" title="查看前线兵力"><dt>兵力</dt><dd id="hud-troops">–</dd></div>
     </dl>
     <div class="turn-tools">
       <div class="turn-date" id="turn-date" aria-live="polite">第 1 年 · 春季</div>
       <button type="button" class="quiet" id="open-advice">议事</button>
       <button type="button" class="quiet" id="century-pending" aria-haspopup="dialog" hidden>待决</button>
       <button type="button" class="quiet" id="open-chronicle">奏报</button>
+      <button type="button" class="quiet hud-mode-toggle" id="toggle-hud-mode" aria-pressed="false" title="切换君主大势模式 / 幕府详图微操模式">幕府详图</button>
+      <button type="button" class="quiet" id="toggle-sound" aria-label="切换音效" title="切换古风音效">🔊</button>
       <button type="button" class="quiet" id="open-menu">菜单</button>
-      <button type="button" class="turn-orders" id="turn-orders" aria-haspopup="dialog">政令 <span id="turn-order-count">0</span></button>
-      <button type="button" class="primary" id="advance" disabled>推进一季</button>
+      <button type="button" class="turn-orders" id="turn-orders" aria-haspopup="true">政令 <span id="turn-order-count">0</span></button>
+      <button type="button" class="primary" id="advance" disabled title="推进一季 (快捷键 Space)">推进一季</button>
+      <button type="button" id="advance-year" title="连续推进最多四季（遇急报自动暂停）" hidden>四季</button>
     </div>
   </header>
 
   <p id="feedback" class="feedback" role="status" hidden></p>
-  <p id="boot" role="status">正在载入地图</p>
+  <p id="boot" role="status">正在载入山河舆图…</p>
 
-  <main class="workspace" id="workspace" hidden>
+  <main class="workspace" id="workspace" data-left-rail="open" data-city-drawer="open" hidden>
+    <button type="button" class="left-rail-toggle" id="toggle-left-rail" aria-label="展开势力与要务栏">☰ 势力态势</button>
+
     <aside class="left-column" aria-label="剧本与势力">
-      <section class="panel season-card" aria-labelledby="season-card-heading">
-        <div class="section-heading"><h2 id="season-card-heading">本季要务</h2></div>
-        <button type="button" id="season-card-action" data-command-action="advice" aria-haspopup="dialog"></button>
-      </section>
-      <section class="panel force-panel">
-        <div class="section-heading">
-          <h2 id="force-heading">势力</h2>
-          <div class="force-actions">
-            <button type="button" class="quiet" id="open-roster">人才</button>
-            <button type="button" class="quiet" id="open-diplomacy">外交</button>
-            <button type="button" class="quiet" id="open-campaign">新开局</button>
+      <div class="panel left-rail-shell">
+        <div class="rail-header">
+          <div class="rail-tabs" role="tablist" aria-label="态势切换">
+            <button type="button" role="tab" data-rail-tab="forces" aria-selected="true">天下势力</button>
+            <button type="button" role="tab" data-rail-tab="tasks" aria-selected="false">本季要务 <span id="rail-task-badge"></span></button>
           </div>
+          <button type="button" class="quiet rail-collapse-btn" id="collapse-left-rail" title="收起侧栏以全屏看图" aria-label="收起左侧栏">⟨</button>
         </div>
-        <div class="opponent-mode">
-          <label for="opponent-mode">对手执政</label>
-          <select id="opponent-mode">
-            <option value="rules">本地规则</option>
-            <option value="model" disabled>模型执政</option>
-          </select>
-          <span id="opponent-model" class="muted" hidden></span>
+
+        <div class="rail-pane" id="rail-pane-forces">
+          <section class="panel force-panel">
+            <div class="section-heading">
+              <h2 id="force-heading">诸侯割据</h2>
+              <div class="force-actions">
+                <button type="button" class="quiet" id="open-roster">人才</button>
+                <button type="button" class="quiet" id="open-diplomacy">外交</button>
+                <button type="button" class="quiet" id="open-campaign">新开局</button>
+              </div>
+            </div>
+            <div class="opponent-mode">
+              <label for="opponent-mode">对手AI</label>
+              <select id="opponent-mode">
+                <option value="rules">本地规则</option>
+                <option value="model" disabled>模型执政</option>
+              </select>
+              <span id="opponent-model" class="muted" hidden></span>
+            </div>
+            <ul class="force-list" id="forces"></ul>
+            <div class="pager" id="forces-pages"></div>
+          </section>
         </div>
-        <ul class="force-list" id="forces"></ul>
-        <div class="pager" id="forces-pages"></div>
-      </section>
+
+        <div class="rail-pane" id="rail-pane-tasks" hidden>
+          <section class="panel season-card" aria-labelledby="season-card-heading">
+            <div class="section-heading"><h2 id="season-card-heading">本季要务</h2></div>
+            <button type="button" id="season-card-action" data-command-action="advice" aria-haspopup="dialog"></button>
+            <div class="priority-feed" id="priority-feed"></div>
+          </section>
+        </div>
+      </div>
+
       <section class="panel revenue">
         <div class="section-heading">
-          <h2>本季收入</h2>
+          <h2>季度收支</h2>
           <div class="force-actions">
             <button type="button" class="quiet" id="open-finance">财政</button>
-            <button type="button" class="quiet" id="open-holdings">国政总览</button>
+            <button type="button" class="quiet" id="open-holdings">总览</button>
           </div>
         </div>
         <dl class="stat-grid" id="revenue"></dl>
@@ -87,15 +119,8 @@
     <section class="center-column" aria-label="地图和奏报">
       <section class="panel map-panel">
         <div class="map-heading">
-          <div class="section-heading"><h2>天下图</h2><span class="muted" id="city-total"></span>
-            <button type="button" id="map-weather" class="quiet" aria-haspopup="dialog" hidden></button></div>
-          <div class="map-tools" role="group" aria-label="地图视图">
-            <button type="button" data-map-layer="cities" aria-pressed="true">城池</button>
-            <button type="button" data-map-layer="factions" aria-pressed="false">势力</button>
-            <button type="button" data-map-layer="roads" aria-pressed="false" hidden>军路</button>
-            <button type="button" id="zoom-out" aria-label="缩小地图">−</button>
-            <button type="button" id="zoom-in" aria-label="放大地图">＋</button>
-          </div>
+          <div class="section-heading"><h2>天下图</h2><span class="muted" id="city-total"></span></div>
+          <div class="map-tools" role="group" aria-label="地图视图"></div>
         </div>
         <div class="map-stage" id="map-stage">
           <canvas aria-label="可缩放的三国势力和城池地图" role="img"></canvas>
@@ -144,7 +169,6 @@
         <div class="map-footer">
           <label for="city-picker">定位</label>
           <select id="city-picker"></select>
-          <button type="button" class="quiet" id="open-city-search" aria-haspopup="dialog" aria-keyshortcuts="/">搜索</button>
           <button type="button" class="quiet" id="open-frontier">前线</button>
           <button type="button" class="quiet" id="open-grand-shortcut">方略</button>
           <span class="muted map-hint">滚轮缩放 · 拖动地图</span>
@@ -155,19 +179,28 @@
           <button type="button" id="inspect-city">查看城池</button>
         </div>
       </section>
-
     </section>
 
     <aside class="panel command-panel" aria-label="城池和政令">
-      <section class="city-heading">
-        <div>
-          <span id="city-region" class="muted"></span>
+      <section class="city-heading" id="city-heading-bar">
+        <div class="city-title-group">
+          <div class="city-meta-line">
+            <span id="city-region"></span>
+            <span class="ownership" id="city-owner"></span>
+          </div>
           <h2 id="city-name"></h2>
           <p id="city-period-name" class="muted" hidden></p>
         </div>
-        <span class="ownership" id="city-owner"></span>
+        <div class="city-header-actions">
+          <button type="button" class="quiet city-nav-btn" id="prev-own-city" title="上一座己方城池 ([)" aria-label="上一座己方城池">‹</button>
+          <button type="button" class="quiet city-nav-btn" id="next-own-city" title="下一座己方城池 (])" aria-label="下一座己方城池">›</button>
+          <button type="button" class="quiet city-nav-btn" id="close-city-drawer" title="收起城池面板 (Esc)" aria-label="收起城池面板">×</button>
+        </div>
       </section>
-      <dl class="stat-grid city-stats" id="city-stats"></dl>
+      <div class="city-stats-wrap">
+        <dl class="stat-grid city-stats" id="city-stats"></dl>
+        <div class="city-vital-strip" id="city-vital-strip"></div>
+      </div>
       <div class="tabs" role="tablist" aria-label="城池操作">
         <button type="button" role="tab" id="tab-governance" aria-selected="true" aria-controls="governance" data-tab="governance">内政</button>
         <button type="button" role="tab" id="tab-expedition" aria-selected="false" aria-controls="expedition" data-tab="expedition">出征</button>
@@ -176,29 +209,39 @@
         <button type="button" role="tab" id="tab-appointments" aria-selected="false" aria-controls="appointments" data-tab="appointments">任命</button>
       </div>
       <section class="tab-body" id="governance" role="tabpanel" aria-labelledby="tab-governance">
-        <div class="fields">
-          <label for="mode">治理</label>
-          <select id="mode"><option value="direct">直辖</option><option value="delegated">委任太守</option></select>
-        </div>
-        <label class="inline-field" id="focus-wrap" for="focus" hidden>发展方向
-          <select id="focus"><option value="farming">屯田</option><option value="commerce">商贸</option><option value="defense">城防</option><option value="recruit">征兵</option><option value="auto">自主发展</option></select>
-        </label>
-        <div class="inline-field" id="budget-wrap" hidden>
-          <label for="delegate-budget">每季预算</label>
-          <div class="budget-controls">
-            <input id="delegate-budget" type="number" min="0" max="100" step="1" placeholder="不限（钱）" inputmode="numeric">
-            <button type="button" class="quiet" id="preview-city-program" aria-label="预演本城委任">预演</button>
-          </div>
-        </div>
-        <p class="development" id="development"></p>
-        <form id="domestic-form" class="fields compact-order">
+        <div class="ux-section-title" id="domestic-cards-heading"><span>本季城池施政（点击即入队）</span><span id="domestic-slot-hint"></span></div>
+        <div class="domestic-cards" id="domestic-cards"></div>
+        <form id="domestic-form" class="fields compact-order ux-replaced">
           <label for="domestic-order">本季施政</label>
           <select id="domestic-order"></select>
           <button type="submit">加入政令</button>
         </form>
-        <button type="button" id="open-batch" class="wide batch-trigger">批量委任己方城池</button>
+
+        <div class="ux-card-box">
+          <div class="fields">
+            <label for="mode">治理方式</label>
+            <select id="mode"><option value="direct">直辖</option><option value="delegated">委任太守</option></select>
+          </div>
+          <label class="inline-field" id="focus-wrap" for="focus" hidden>发展方向
+            <select id="focus"><option value="farming">屯田</option><option value="commerce">商贸</option><option value="defense">城防</option><option value="recruit">征兵</option><option value="auto">自主发展</option></select>
+          </label>
+          <div class="pill-group" id="delegate-focus-pills" hidden></div>
+          <div class="inline-field" id="budget-wrap" hidden>
+            <label for="delegate-budget">每季预算</label>
+            <div class="budget-controls">
+              <input id="delegate-budget" type="number" min="0" max="100" step="1" placeholder="不限（钱）" inputmode="numeric">
+              <button type="button" class="quiet" id="preview-city-program" aria-label="预演本城委任">预演</button>
+            </div>
+          </div>
+          <div class="pill-group" id="delegate-budget-chips" hidden></div>
+          <p class="development" id="development"></p>
+          <button type="button" id="open-batch" class="wide batch-trigger">批量委任己方城池</button>
+        </div>
+
+        <div class="city-quick-links" id="city-quick-links"></div>
       </section>
       <section class="tab-body" id="expedition" role="tabpanel" aria-labelledby="tab-expedition" hidden>
+        <button type="button" class="attack-map-trigger" id="attack-map-pick">⚔ 在地图点选目标 / 编组军团</button>
         <p id="expedition-status" class="muted" hidden></p>
         <div id="attack-from" class="stacked-form" hidden>
           <label for="origin-picker">选择己方出征城</label>
@@ -206,27 +249,58 @@
           <button type="button" id="go-origin">选作出征城</button>
         </div>
         <form class="fields" id="attack-form" hidden>
+          <div class="target-quick-cards" id="attack-target-cards" style="grid-column: 1 / -1;"></div>
           <label for="target-picker">相邻目标</label>
           <select id="target-picker"></select>
           <label for="officer-picker">出征武将</label>
           <select id="officer-picker"></select>
+          <div id="attack-officer-traits" class="officer-trait-strip" hidden></div>
+          <label for="attack-tactic" id="attack-tactic-label">阵前军策</label>
+          <select id="attack-tactic">
+            <option value="assault">正面强攻</option>
+            <option value="siege">围城破垒（12钱 8粮）</option>
+            <option value="stratagem">火攻奇袭（8钱）</option>
+            <option value="rally">攻心摇动（6钱）</option>
+          </select>
           <label for="troops">出征兵力</label>
           <input id="troops" type="number" min="200" step="1" inputmode="numeric" required>
+          <div class="troop-slider-wrap" id="attack-slider-wrap">
+            <input id="troops-slider" type="range" min="200" max="2000" step="50" aria-label="拖动调整出征兵力">
+            <div class="ratio-chips" data-ratio-for="troops">
+              <button type="button" data-ratio="0.3">30%</button>
+              <button type="button" data-ratio="0.5">50%</button>
+              <button type="button" data-ratio="0.75">75%</button>
+              <button type="button" data-ratio="1">最大</button>
+            </div>
+          </div>
+          <div class="power-compare" id="attack-power-compare" hidden>
+            <div class="power-bar"><div class="power-bar-off" id="power-bar-off"></div><div class="power-bar-def" id="power-bar-def"></div></div>
+          </div>
           <p id="attack-forecast" class="forecast" aria-live="polite"></p>
-          <button type="submit" id="send-order">加入出征令</button>
+          <button type="submit" class="primary" id="send-order">加入出征令</button>
         </form>
       </section>
       <section class="tab-body" id="reinforcement" role="tabpanel" aria-labelledby="tab-reinforcement" hidden>
+        <button type="button" class="attack-map-trigger" id="transfer-map-pick">⚑ 在地图点选调兵目标</button>
         <p id="transfer-status" class="muted" role="status" hidden></p>
         <form class="fields" id="transfer-form" hidden>
           <label for="transfer-target">调往城池</label>
           <select id="transfer-target"></select>
           <label for="transfer-troops">调动兵力</label>
           <input id="transfer-troops" type="number" min="200" step="1" inputmode="numeric" required>
+          <div class="troop-slider-wrap" id="transfer-slider-wrap">
+            <input id="transfer-troops-slider" type="range" min="200" max="2000" step="50" aria-label="拖动调整调动兵力">
+            <div class="ratio-chips" data-ratio-for="transfer-troops">
+              <button type="button" data-ratio="0.25">25%</button>
+              <button type="button" data-ratio="0.5">50%</button>
+              <button type="button" data-ratio="0.75">75%</button>
+              <button type="button" data-ratio="1">最大</button>
+            </div>
+          </div>
           <p id="transfer-forecast" class="forecast" aria-live="polite">
             <span id="transfer-route" hidden></span><span id="transfer-summary"></span>
           </p>
-          <button type="submit" id="send-transfer">加入调兵令</button>
+          <button type="submit" class="primary" id="send-transfer">加入调兵令</button>
         </form>
       </section>
       <section class="tab-body" id="officers" role="tabpanel" aria-labelledby="tab-officers" hidden>
@@ -237,11 +311,14 @@
         <div class="pager" id="officers-pages"></div>
       </section>
       <section class="tab-body" id="appointments" role="tabpanel" aria-labelledby="tab-appointments" hidden>
-        <div class="fields">
-          <label for="governor">太守</label><select id="governor"></select>
-          <label for="commander">守将</label><select id="commander"></select>
+        <div id="appointment-cards" class="appointment-cards"></div>
+        <div class="ux-card-box">
+          <div class="fields">
+            <label for="governor">太守</label><select id="governor"></select>
+            <label for="commander">守将</label><select id="commander"></select>
+          </div>
+          <p class="development" id="appointment-hint"></p>
         </div>
-        <p class="development" id="appointment-hint"></p>
       </section>
       <section class="order-footer" aria-label="政令队列">
         <div><strong>本城待执行</strong><p id="queued-order" aria-live="polite"></p></div>
@@ -249,20 +326,48 @@
       </section>
     </aside>
   </main>
+
+  <div class="bottom-hud" id="bottom-hud" hidden>
+    <div class="hud-pill-bar map-lens-bar" role="group" aria-label="地图图层">
+      <button type="button" data-map-layer="cities" aria-pressed="true">城池</button>
+      <button type="button" data-map-layer="factions" aria-pressed="false">势力</button>
+      <button type="button" data-map-layer="roads" aria-pressed="false" hidden>军路</button>
+      <button type="button" data-hud-lens="economy" aria-pressed="false" hidden>粮运</button>
+      <button type="button" data-hud-lens="regions" aria-pressed="false" hidden>政区</button>
+      <button type="button" data-hud-lens="war" aria-pressed="false" hidden>战局</button>
+    </div>
+
+    <nav class="command-dock" id="command-dock" aria-label="常用指令" hidden>
+      <button type="button" data-command-action="policy">国策 <span class="dock-key">1</span></button>
+      <button type="button" data-command-action="war">军事 <span class="dock-key">2</span></button>
+      <button type="button" data-command-action="armies">军团</button>
+      <button type="button" data-command-action="diplomacy">外交 <span class="dock-key">3</span><span id="dock-diplomacy-pending" hidden>待复</span></button>
+      <button type="button" data-command-action="roster">人才 <span class="dock-key">4</span></button>
+      <button type="button" data-command-action="polity">纪事 <span class="dock-key">5</span></button>
+    </nav>
+
+    <nav class="sovereign-dock" id="sovereign-dock" aria-label="君主大势中枢">
+      <button type="button" id="sov-open-memorials" aria-pressed="false">军政呈报 <span id="sov-memorial-badge" class="sov-badge" hidden></span></button>
+      <button type="button" id="sov-open-doctrine" aria-pressed="false">方略州牧 <span id="sov-doctrine-tag" class="sov-tag">未托</span></button>
+      <button type="button" id="sov-open-diplomacy">外交合纵 <span id="sov-diplo-dot" class="sov-badge" hidden>!</span></button>
+      <button type="button" id="sov-toggle-forces" aria-pressed="false">天下势力</button>
+    </nav>
+
+    <div class="hud-pill-bar map-zoom-bar" role="group" aria-label="地图缩放与搜索">
+      <button type="button" id="open-city-search" aria-haspopup="dialog" aria-keyshortcuts="/" title="搜索城池 (/)">🔍</button>
+      <button type="button" id="zoom-out" aria-label="缩小地图" title="缩小 (−)">−</button>
+      <button type="button" id="zoom-reset" aria-label="重置地图视角" title="全景复位 (0)">◎</button>
+      <button type="button" id="zoom-in" aria-label="放大地图" title="放大 (+)">＋</button>
+      <button type="button" id="open-shortcuts" aria-haspopup="dialog" title="快捷键说明 (?)">?</button>
+    </div>
+  </div>
+
   <nav class="view-switcher" id="view-switcher" aria-label="游戏面板" hidden>
     <button type="button" data-view="map" aria-pressed="true">天下图</button>
     <button type="button" data-view="city" aria-pressed="false">城池</button>
     <button type="button" data-view="forces" aria-pressed="false">势力</button>
     <button type="button" data-command-action="advice">议事</button>
     <button type="button" data-command-action="orders">政令</button>
-  </nav>
-  <nav class="command-dock" id="command-dock" aria-label="常用指令" hidden>
-    <button type="button" data-command-action="policy">国政</button>
-    <button type="button" data-command-action="war">战役</button>
-    <button type="button" data-command-action="armies">军团</button>
-    <button type="button" data-command-action="diplomacy">外交<span id="dock-diplomacy-pending" hidden>待复</span></button>
-    <button type="button" data-command-action="roster">文武</button>
-    <button type="button" data-command-action="polity">天下演变</button>
   </nav>
 
   <dialog id="city-search-dialog" aria-labelledby="city-search-title">
@@ -1514,6 +1619,7 @@
         <button type="button" data-diplomacy-tab="incoming" aria-pressed="false" id="inbox-tab">来使</button>
       </div>
       <form class="diplomacy-pane" id="diplomacy-form">
+        <div id="diplomacy-cards" class="diplomacy-cards"></div>
         <div class="fields" id="diplomacy-fields">
           <label for="diplomacy-target">势力</label>
           <select id="diplomacy-target"></select>
@@ -1565,10 +1671,22 @@
 
   <dialog id="campaign-dialog" aria-labelledby="campaign-title">
     <form class="dialog-content" id="campaign-form">
-      <h2 id="campaign-title">新开局</h2>
-      <div class="fields">
+      <div class="dialog-heading">
+        <h2 id="campaign-title">新开局 · 选择剧本与势力</h2>
+        <button type="button" class="quiet" data-close="campaign-dialog">取消</button>
+      </div>
+      <div id="era-cards" class="era-cards" aria-label="剧本时间轴"></div>
+      <div id="force-cards" class="force-cards" aria-label="可选势力"></div>
+      <div id="difficulty-cards" class="difficulty-cards" aria-label="对局难度"></div>
+      <div class="fields campaign-legacy-selects">
         <label for="era-select">剧本</label><select id="era-select"></select>
         <label for="force-select">势力</label><select id="force-select"></select>
+        <label for="difficulty-select">难度</label>
+        <select id="difficulty-select">
+          <option value="standard">经略常势</option>
+          <option value="hard" selected>史实激战</option>
+          <option value="hell">乱世炼狱</option>
+        </select>
       </div>
       <div class="report-switch campaign-switch" id="campaign-panes" role="group" aria-label="开局情报">
         <button type="button" data-campaign-pane="summary" aria-controls="campaign-summary" aria-pressed="true">概况</button>
@@ -1613,27 +1731,48 @@
 
   <dialog id="menu-dialog" aria-labelledby="menu-title">
     <div class="dialog-content">
-      <div class="dialog-heading"><h2 id="menu-title">游戏菜单</h2><button type="button" id="open-frontline-menu">山河会战</button><button type="button" id="open-sandtable-menu">天下沙盘</button></div>
-      <div class="dynasty-row"><button type="button" id="open-century-menu">山河百年</button><button type="button" id="open-reign-menu">王朝兴替</button><button type="button" id="open-strategy-nine-menu">诸侯争衡</button><button type="button" id="open-dynasty-menu">天下秩序</button></div>
-      <div class="menu-items">
-        <button type="button" id="save-game">存档</button>
-        <button type="button" id="load-game">读档</button>
-        <button type="button" id="open-game-guide">本局指引</button>
-        <button type="button" id="open-model-settings">模型设置</button>
-        <button type="button" id="open-outcome">查看战局</button>
-        <button type="button" id="open-campaign-council">战役方略</button>
-        <button type="button" id="open-armies">军团</button>
-        <button type="button" id="open-theaters">战区</button>
-        <button type="button" id="open-war">战役指挥</button>
-        <button type="button" id="open-grand-menu">天下大势</button>
-        <button type="button" id="open-landscape-menu">山河变局</button>
-        <button type="button" id="open-statecraft-menu">总揽天下</button>
-        <button type="button" id="open-polity">天下演变</button>
-        <button type="button" id="open-realm">天下格局</button>
-        <button type="button" id="open-recruitment">招揽人才</button>
-        <button type="button" id="open-saves">存档管理</button>
-        <button type="button" id="download-century-backup" hidden>导出升级前存档</button>
+      <div class="dialog-heading">
+        <h2 id="menu-title">游戏菜单</h2>
+        <button type="button" class="quiet" data-close="menu-dialog">返回游戏</button>
       </div>
+      <section class="menu-group">
+        <span class="menu-group-label">存档与系统</span>
+        <div class="menu-grid-primary">
+          <button type="button" id="save-game">快速存档</button>
+          <button type="button" id="load-game">快速读档</button>
+          <button type="button" id="open-saves">存档管理</button>
+          <button type="button" id="open-model-settings">模型 AI 设置</button>
+          <button type="button" id="open-game-guide">本局指引</button>
+          <button type="button" id="open-outcome">查看战局</button>
+        </div>
+        <button type="button" class="quiet" id="download-century-backup" hidden>导出升级前存档</button>
+      </section>
+      <section class="menu-group">
+        <span class="menu-group-label">核心中枢</span>
+        <div class="menu-grid-primary">
+          <button type="button" id="open-century-menu">山河百年</button>
+          <button type="button" id="open-frontline-menu">国势与战局</button>
+          <button type="button" id="open-recruitment">招揽人才</button>
+        </div>
+      </section>
+      <details class="menu-legacy-fold">
+        <summary>经典模式与专项面板（1.0–10.0）</summary>
+        <div class="menu-items">
+          <button type="button" id="open-reign-menu">王朝兴替</button>
+          <button type="button" id="open-strategy-nine-menu">诸侯争衡</button>
+          <button type="button" id="open-dynasty-menu">天下秩序</button>
+          <button type="button" id="open-sandtable-menu">天下沙盘</button>
+          <button type="button" id="open-statecraft-menu">总揽天下</button>
+          <button type="button" id="open-landscape-menu">山河变局</button>
+          <button type="button" id="open-grand-menu">天下大势</button>
+          <button type="button" id="open-polity">天下演变</button>
+          <button type="button" id="open-realm">天下格局</button>
+          <button type="button" id="open-war">战役指挥</button>
+          <button type="button" id="open-theaters">战区</button>
+          <button type="button" id="open-armies">军团</button>
+          <button type="button" id="open-campaign-council">战役方略</button>
+        </div>
+      </details>
       <footer class="credits">
         疆域及城址参考
         <a href="https://github.com/DeanChensj/jiangshan-map/tree/main/data/atlas/donghan" target="_blank" rel="noopener noreferrer">江山时序</a>、
@@ -1641,7 +1780,6 @@
         <a href="https://tgaz.fudan.edu.cn/tgaz/" target="_blank" rel="noopener noreferrer">CHGIS</a>。
         地形参考 <a href="https://www.naturalearthdata.com/downloads/50m-raster-data/50m-shaded-relief/" target="_blank" rel="noopener noreferrer">Natural Earth</a>。
       </footer>
-      <div class="dialog-actions"><button type="button" data-close="menu-dialog">返回游戏</button></div>
     </div>
   </dialog>
 
@@ -1992,6 +2130,7 @@
       </div>
       <p class="muted" id="person-current"></p>
       <dl class="stat-grid person-stats" id="person-stats"></dl>
+      <div id="person-traits-box" class="person-traits-box"></div>
       <p id="person-duty"></p>
       <p class="muted" id="person-expedition" hidden></p>
       <div class="person-actions" id="person-actions">
@@ -2098,6 +2237,109 @@
         <button type="submit" class="primary" id="save-model-settings">保存</button>
       </div>
     </form>
+  </dialog>
+
+  <div id="map-hover-card" role="tooltip" hidden></div>
+
+  <section id="quick-orders-popover" aria-label="本季政令速览" hidden>
+    <div class="qo-head">
+      <strong>本季政令队列</strong>
+      <span id="qo-balance" class="muted"></span>
+      <button type="button" class="quiet city-nav-btn" id="qo-close" aria-label="关闭政令速览">×</button>
+    </div>
+    <ol id="qo-list" class="qo-list"></ol>
+    <p id="qo-error" class="qo-error" role="status" hidden></p>
+    <div class="qo-foot">
+      <button type="button" class="quiet" id="qo-open-preview">逐令预演 ›</button>
+      <button type="button" class="primary" id="qo-advance">推进一季</button>
+    </div>
+  </section>
+
+  <section id="season-recap" aria-live="polite" hidden>
+    <div class="recap-head">
+      <h3 id="recap-title"></h3>
+      <button type="button" class="quiet city-nav-btn" id="recap-close" aria-label="关闭季末速报">×</button>
+    </div>
+    <div class="recap-deltas" id="recap-deltas"></div>
+    <div class="recap-events" id="recap-events"></div>
+    <div class="recap-foot">
+      <span class="muted" id="recap-note" style="font-size:.76rem;"></span>
+      <button type="button" class="quiet" id="recap-open-chronicle">查看完整奏报 ›</button>
+    </div>
+  </section>
+
+  <section id="sovereign-memorials" class="sovereign-sheet" aria-label="军政呈报" hidden>
+    <div class="sov-sheet-head">
+      <span class="officer-seal sm" id="sov-advisor-seal">谋</span>
+      <div class="sov-advisor-meta">
+        <strong id="sov-advisor-name">军师禀报</strong>
+        <span class="muted" id="sov-advisor-sub">本季仅呈最要紧军国大事</span>
+      </div>
+      <button type="button" class="quiet city-nav-btn" id="sov-memorials-close" aria-label="收起呈报">×</button>
+    </div>
+    <div class="recap-deltas" id="sov-recap-deltas" hidden></div>
+    <div class="sov-memorial-list" id="sov-memorial-list"></div>
+    <div class="sov-sheet-foot">
+      <button type="button" class="quiet" id="sov-open-chronicle">完整奏报 ›</button>
+      <button type="button" class="primary" id="sov-memorial-advance">推进一季</button>
+    </div>
+  </section>
+
+  <section id="sovereign-doctrine-popover" class="sovereign-sheet" aria-label="方略与州牧统筹" hidden>
+    <div class="sov-sheet-head">
+      <div class="sov-advisor-meta">
+        <strong id="sov-doctrine-title">方略与州牧 · 统一经略</strong>
+        <span class="muted" id="sov-doctrine-zones">定方略即同步年度国策与各州委任，免去繁琐细表</span>
+      </div>
+      <button type="button" class="quiet city-nav-btn" id="sov-doctrine-close" aria-label="关闭方略州牧">×</button>
+    </div>
+    <div class="doctrine-cards" id="sov-doctrine-cards"></div>
+    <div id="sov-province-section" class="sov-prov-section">
+      <div class="sov-prov-head">
+        <strong>州牧统筹（拜牧守土 · 免逐城微操）</strong>
+        <button type="button" class="quiet" id="sov-appoint-all-provs">一键遍任州牧</button>
+      </div>
+      <div id="sov-province-list" class="sov-province-list"></div>
+    </div>
+    <div class="sov-sheet-foot">
+      <button type="button" class="quiet" id="sov-autostaff-btn">补任城池官缺</button>
+      <button type="button" class="quiet" id="sov-clear-doctrine" hidden>暂撤总纲</button>
+    </div>
+  </section>
+
+  <section id="sovereign-city-card" class="sovereign-sheet" aria-label="城池详情" hidden>
+    <div class="sov-sheet-head sov-city-head" id="sov-city-head">
+      <div class="sov-advisor-meta">
+        <div class="city-meta-line">
+          <span id="sov-city-region"></span>
+          <span class="ownership" id="sov-city-owner"></span>
+        </div>
+        <h3 id="sov-city-name"></h3>
+      </div>
+      <button type="button" class="quiet city-nav-btn" id="sov-city-close" aria-label="收起城池御览">×</button>
+    </div>
+    <dl class="stat-grid city-stats" id="sov-city-stats"></dl>
+    <div id="sov-city-body" class="sov-city-body"></div>
+    <div class="sov-sheet-foot" id="sov-city-actions"></div>
+  </section>
+
+  <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
+    <div class="dialog-content">
+      <div class="dialog-heading">
+        <h2 id="shortcuts-title">键鼠快捷键</h2>
+        <button type="button" class="quiet" data-close="shortcuts-dialog">关闭</button>
+      </div>
+      <ul class="shortcut-list">
+        <li><span>搜索并定位城池</span><kbd>/</kbd></li>
+        <li><span>推进一季</span><kbd>Space</kbd></li>
+        <li><span>切换己方城池（上一城 / 下一城）</span><span><kbd>[</kbd> / <kbd>]</kbd></span></li>
+        <li><span>城池面板切换（内政 / 出征 / 调兵 / 官吏）</span><span><kbd>G</kbd> <kbd>A</kbd> <kbd>T</kbd> <kbd>O</kbd></span></li>
+        <li><span>打开底部中枢（国策 / 军事 / 外交 / 人才 / 纪事）</span><span><kbd>1</kbd>–<kbd>5</kbd></span></li>
+        <li><span>地图缩放与全景复位</span><span><kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd></span></li>
+        <li><span>收起抽屉 / 取消选城 / 关闭浮窗</span><kbd>Esc</kbd></li>
+        <li><span>打开或关闭此快捷键说明</span><kbd>?</kbd></li>
+      </ul>
+    </div>
   </dialog>
 </body>
 </html>

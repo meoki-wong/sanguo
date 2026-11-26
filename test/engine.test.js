@@ -16,11 +16,11 @@ import { createSaveBackup, readGameRecord, saveFileLimit } from "../dist/saves.j
 
 const world = JSON.parse(readFileSync(new URL("../dist/assets/world.json", import.meta.url), "utf8"));
 
-test("every playable start loads the same 42 cities, territory paths and a valid save", () => {
-  assert.equal(world.cities.length, 42);
-  assert.equal(new Set(world.cities.map(({ key }) => key)).size, 42);
+test("every playable start loads the same 44 cities, territory paths and a valid save", () => {
+  assert.equal(world.cities.length, 44);
+  assert.equal(new Set(world.cities.map(({ key }) => key)).size, 44);
   for (const era of world.scenarios) {
-    assert.equal(Object.keys(era.zones).length, 42);
+    assert.equal(Object.keys(era.zones).length, 44);
     assert.ok(Object.values(era.zones).every(Boolean));
     for (const faction of playableFactions(era)) {
       const game = createGame(world, era.year, faction.key);
@@ -544,7 +544,7 @@ test("portable saves keep the game and ledger, validate old formats, and omit un
   assert.throws(() => readGameRecord(world, JSON.stringify({ format: "other" })), /格式/);
   const damaged = structuredClone(state);
   delete damaged.cities.luoyang;
-  assert.throws(() => readGameRecord(world, createSaveBackup({ state: damaged, selected: "xu" })), /完整的 42 城/);
+  assert.throws(() => readGameRecord(world, createSaveBackup({ state: damaged, selected: "xu" })), /完整的 44 城/);
   const oversized = structuredClone(state);
   oversized.history[0].entries[0].text = "城".repeat(saveFileLimit);
   assert.throws(() => createSaveBackup({ state: oversized }), /大小限制/);

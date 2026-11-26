@@ -69,7 +69,7 @@ function plannedBattle() {
   return { state, plan };
 }
 
-test("all eight eras share the same 42 cities and a custom opening applies all three kinds of edits", () => {
+test("all eight eras share the same 44 cities and a custom opening applies all three kinds of edits", () => {
   assert.deepEqual(world.scenarios.map(({ year }) => year).sort(), [184, 190, 199, 208, 219, 234, 262, 265]);
   for (const era of world.scenarios) assert.deepEqual(Object.keys(era.ownership).sort(), world.cities.map(({ key }) => key).sort());
   const opening = { title: "南线推演", owners: { changan: "cao" }, stocks: { cao: { treasury: 256, grain: 318 } }, stations: { "cao-1": "changan" } };
@@ -242,7 +242,7 @@ for (const [year, faction] of [[190, "cao"], [190, "dong"], [199, "cao"], [199, 
       const advice = seasonAdvice(world, militaryView(state)).find(({ order }) => order);
       if (advice) state = queueOrder(world, state, advice.order);
       state = restore(advanceQuarter(world, state));
-      assert.equal(Object.keys(state.cities).length, 42);
+      assert.equal(Object.keys(state.cities).length, 44);
     }
     assert.ok(state.turn === 100 || gameOutcome(state) !== "ongoing");
     context.diagnostic(state.turn + " quarters · " + gameOutcome(state));
@@ -293,7 +293,7 @@ for (const [version, rules] of [["5.0", "sandtable"], ["6.0", "frontline"], ["7.
     assert.equal(restore(concludeCoalition(world, state)).scenarioEnding.kind, "coalition");
   });
 
-  test(`standard Jin opening can unify all 42 cities in ${version}`, () => {
+  test(`standard Jin opening can unify all 44 cities in ${version}`, () => {
     let state = standingStrategy(createGame(world, 265, "jin", { [rules]: true }));
     while (gameOutcome(state) === "ongoing" && state.turn < 70) {
       const era = eraByYear(world, state);
@@ -313,7 +313,7 @@ for (const [version, rules] of [["5.0", "sandtable"], ["6.0", "frontline"], ["7.
       }
       state = restore(advanceQuarter(world, state));
     }
-    assert.equal(forceTotals(state, "jin").cities, 42);
+    assert.equal(forceTotals(state, "jin").cities, 44);
     assert.equal(gameOutcome(state), "victory");
   });
 }

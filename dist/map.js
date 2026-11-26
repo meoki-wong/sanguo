@@ -7,6 +7,7 @@ import { convoyRoute } from "./landscape-economy.js";
 import { edgeWeather, seasonWeather } from "./landscape-terrain.js";
 import { frontStatuses } from "./front-command.js";
 import { postOwner, strategicPost, strategicPosts } from "./sandtable-posts.js";
+import { hanEmperorStatus } from "./imperial.js";
 import { formationKinds, formationOf } from "./frontline.js";
 import { campaignStages } from "./high-command.js";
 import { paintUnit, troopCanvas } from "./troop-art.js";
@@ -53,7 +54,7 @@ function labelBox(side, x, y, length) {
   return [x + 8, y - 9, x + width + 8, y + 9];
 }
 
-export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGate, onConvoy, onFront, onPost, onCampaign, onCivilConvoy) {
+export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGate, onConvoy, onFront, onPost, onCampaign, onCivilConvoy, onHover) {
   const canvas = stage.querySelector("canvas");
   const markerLayer = stage.querySelector(".map-markers");
   const armyLayer = stage.querySelector("#army-markers");
@@ -152,7 +153,48 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     },
   ]));
   const camera = { zoom: 1, x: field[0].center, y: field[1].center };
+  let cameraFrame = 0;
   const pointers = new Map();
+
+  function cancelCameraAnimation() {
+    if (cameraFrame) {
+      cancelAnimationFrame(cameraFrame);
+      cameraFrame = 0;
+    }
+  }
+
+  function animateCamera(targetZoom, targetX, targetY, duration = 260) {
+    cancelCameraAnimation();
+    const toZoom = clamp(targetZoom, 1, 5);
+    const xMargin = field[0].span / (2 * toZoom);
+    const yMargin = field[1].span / (2 * toZoom);
+    const toX = clamp(targetX, xMargin, width - xMargin);
+    const toY = clamp(targetY, yMargin, height - yMargin);
+    if (!mapState || matchMedia("(prefers-reduced-motion: reduce)").matches || duration <= 0) {
+      camera.zoom = toZoom;
+      camera.x = toX;
+      camera.y = toY;
+      restrictCamera();
+      draw();
+      return;
+    }
+    const fromZoom = camera.zoom;
+    const fromX = camera.x;
+    const fromY = camera.y;
+    const start = performance.now();
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      camera.zoom = fromZoom + (toZoom - fromZoom) * eased;
+      camera.x = fromX + (toX - fromX) * eased;
+      camera.y = fromY + (toY - fromY) * eased;
+      restrictCamera();
+      draw();
+      if (t < 1) cameraFrame = requestAnimationFrame(tick);
+      else cameraFrame = 0;
+    };
+    cameraFrame = requestAnimationFrame(tick);
+  }
   let layer = "cities";
   let dynastyLayer = false;
   let reignMode;
@@ -178,6 +220,9 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
   let theaterPins = [];
   let territories = [];
   let visibleRoster;
+  let battlePulses = [];
+  let pulseFrame = 0;
+  let lastAnimatedTurn = null;
 
   function toView([x, y]) {
     return [(x - camera.x) * camera.zoom + center[0], (y - camera.y) * camera.zoom + center[1]];
@@ -213,12 +258,17 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     draw();
   }
 
-  function reset(next = "cities") {
+  function reset(next = "cities", smooth = false) {
     trade = undefined;
     warRoute = undefined;
     switchLayer(next);
-    Object.assign(camera, { zoom: 1, x: field[0].center, y: field[1].center });
-    draw();
+    if (smooth && mapState) {
+      animateCamera(1, field[0].center, field[1].center, 240);
+    } else {
+      cancelCameraAnimation();
+      Object.assign(camera, { zoom: 1, x: field[0].center, y: field[1].center });
+      draw();
+    }
   }
 
   function rebuildMarkers(era) {
@@ -248,9 +298,21 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
       dot.setAttribute("aria-hidden", "true");
       const title = document.createElement("span");
       title.className = "city-name-tag";
-      title.textContent = city.name;
+      const labelText = document.createElement("span");
+      labelText.textContent = city.name;
+      const troopTag = document.createElement("span");
+      troopTag.className = "city-troop-tag";
+      title.append(labelText, troopTag);
       token.append(dot, title);
+      token.addEventListener("pointerenter", (event) => {
+        if (event.pointerType === "mouse") onHover?.({ type: "city", key: city.key, x: event.clientX, y: event.clientY });
+      });
+      token.addEventListener("pointermove", (event) => {
+        if (event.pointerType === "mouse") onHover?.({ type: "city", key: city.key, x: event.clientX, y: event.clientY });
+      });
+      token.addEventListener("pointerleave", () => onHover?.(null));
       token.addEventListener("click", (event) => {
+        onHover?.(null);
         if (!event.detail) {
           onCity(city.key);
           return;
@@ -266,7 +328,7 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
           }, { key: city.key, distance: Infinity });
         onCity(nearest.distance > 6 && event.target.closest(".city-name-tag") ? city.key : nearest.key);
       });
-      markers.push({ type: "city", entry: city, token, title });
+      markers.push({ type: "city", entry: city, token, title, troopTag });
       markerLayer.append(token);
     }
   }
@@ -282,12 +344,16 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
       if (!historical) for (const city of cities) path.addPath(paths.zones[city.key]);
       return { key, path, populated: cities.length > 0, cities };
     });
+    const capitalsByFaction = new Map(era.factions.map(({ key }) => [key, firstCity(world, mapState, key)]));
+    const queuedCities = new Set((mapState.orders ?? []).flatMap((order) => [order.city, order.from, order.to]).filter(Boolean));
     for (const { entry, token, type } of markers) {
       if (type === "city") {
         const owner = ownerAt(entry.key);
         const occupation = historicalFrame ? historicalFrame.distress.includes(entry.key) : mapState.cities[entry.key].occupation;
         token.style.setProperty("--force", forceColor(owner));
         token.dataset.owner = owner;
+        token.dataset.capital = String(!historicalFrame && capitalsByFaction.get(owner) === entry.key);
+        token.dataset.queued = String(!historicalFrame && queuedCities.has(entry.key));
         token.dataset.occupation = String(Boolean(occupation));
         token.setAttribute("aria-label", entry.name + " · " + factionName(era, owner) + (occupation ? " · 整顿中" : ""));
       } else {
@@ -342,7 +408,14 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
       token.dataset.cut = String(!supply && !army.observed);
       if (mapState.highCommand) token.dataset.phase = army.phase;
       token.style.setProperty("--force", forceColor(army.faction));
-      token.addEventListener("click", () => onArmy?.(army.officer));
+      token.addEventListener("pointerenter", (event) => {
+        if (event.pointerType === "mouse") onHover?.({ type: "army", army, label, kind, supply: Boolean(supply), x: event.clientX, y: event.clientY });
+      });
+      token.addEventListener("pointermove", (event) => {
+        if (event.pointerType === "mouse") onHover?.({ type: "army", army, label, kind, supply: Boolean(supply), x: event.clientX, y: event.clientY });
+      });
+      token.addEventListener("pointerleave", () => onHover?.(null));
+      token.addEventListener("click", () => { onHover?.(null); onArmy?.(army.officer); });
       return { army, supply, token, previous: oldPositions.get(army.officer) };
     });
     convoyPins = mapState.frontline ? mapState.landscape.convoys.filter((convoy) => convoy.faction === mapState.player
@@ -446,7 +519,7 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     const visible = (x, y) => x >= 0 && x <= rect.width && y >= 0 && y <= rect.height;
     const originalOwnership = eraByYear(world, mapState.year).ownership;
     const placed = [];
-    for (const { token, title, type, entry } of markers) {
+    for (const { token, title, troopTag, type, entry } of markers) {
       const district = type === "faction" ? territories.find(({ key }) => key === entry.key) : null;
       const hasOriginalHolding = district?.cities.some(({ key }) => originalOwnership[key] === entry.key);
       const position = district?.populated && !hasOriginalHolding ? district.cities[0].position : entry.position;
@@ -466,6 +539,13 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
         if (commandTargets) token.dataset.commandTarget = String(commandTargets.has(entry.key));
         else delete token.dataset.commandTarget;
         token.setAttribute("aria-pressed", String(active === entry.key));
+        if (troopTag) {
+          const holding = mapState.cities[entry.key];
+          const showNum = !historicalFrame && camera.zoom >= 1.35 && (holding.owner === mapState.player || !mapState.war);
+          if (showNum) {
+            troopTag.textContent = holding.troops >= 1000 ? (holding.troops / 1000).toFixed(1) + "k" : String(holding.troops);
+          } else troopTag.textContent = "";
+        }
         placed.push({ entry, token, title, x, y });
       }
     }
@@ -630,7 +710,62 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     ctx.globalAlpha = 1;
   }
 
+  function drawArrowPath(coords, color, { dashed = false, badge = "" } = {}) {
+    if (coords.length < 2) return;
+    const link = new Path2D();
+    link.moveTo(...coords[0]);
+    for (const point of coords.slice(1)) link.lineTo(...point);
+    if (dashed) ctx.setLineDash([5 / camera.zoom, 3.5 / camera.zoom]);
+    trace(link, "#fff1c7", 5.2, dashed ? .6 : .8);
+    trace(link, color, 3.1, dashed ? .82 : .98);
+    ctx.setLineDash([]);
+    const chevrons = new Path2D();
+    const arrowSize = 7 / camera.zoom;
+    for (let i = 0; i < coords.length - 1; i++) {
+      const [ax, ay] = coords[i];
+      const [bx, by] = coords[i + 1];
+      const mx = (ax + bx) / 2;
+      const my = (ay + by) / 2;
+      const angle = Math.atan2(by - ay, bx - ax);
+      chevrons.moveTo(mx - Math.cos(angle - 0.55) * arrowSize, my - Math.sin(angle - 0.55) * arrowSize);
+      chevrons.lineTo(mx, my);
+      chevrons.lineTo(mx - Math.cos(angle + 0.55) * arrowSize, my - Math.sin(angle + 0.55) * arrowSize);
+    }
+    trace(chevrons, "#fff3cc", 4.2, .9);
+    trace(chevrons, color, 2.2, 1);
+    if (badge) {
+      const [ax, ay] = coords[0];
+      const [bx, by] = coords[1];
+      const mx = ax + (bx - ax) * 0.34;
+      const my = ay + (by - ay) * 0.34;
+      const r = 7 / camera.zoom;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(mx, my, r, 0, Math.PI * 2);
+      ctx.fillStyle = "#201b14";
+      ctx.fill();
+      ctx.lineWidth = 1.4 / camera.zoom;
+      ctx.strokeStyle = "#f4d28b";
+      ctx.stroke();
+      ctx.fillStyle = "#fff1c9";
+      ctx.font = "700 " + (9.5 / camera.zoom) + "px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(badge, mx, my + 0.5 / camera.zoom);
+      ctx.restore();
+    }
+  }
+
   function drawRoutes() {
+    if (layer !== "roads") {
+      for (const [index, order] of (mapState.orders ?? []).entries()) {
+        if (!["attack", "mobilize", "transfer"].includes(order.type)) continue;
+        const pts = order.route?.length >= 2 ? order.route : [order.from, order.to];
+        const coords = pts.map((site) => cityPositions.get(site)).filter(Boolean);
+        const color = order.type === "transfer" ? "#267294" : "#c23b26";
+        drawArrowPath(coords, color, { badge: String(index + 1) });
+      }
+    }
     const origin = world.cities.find(({ key }) => key === routeOrigin);
     if (!origin || layer !== "cities" || (camera.zoom < 1.6 && !target)) return;
     const web = new Path2D();
@@ -643,11 +778,107 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     ctx.setLineDash([]);
     const route = itinerary ?? (target && origin.links.includes(target) ? [routeOrigin, target] : null);
     if (route) {
-      const link = new Path2D();
-      link.moveTo(...origin.position);
-      for (const site of route.slice(1)) link.lineTo(...world.cities.find(({ key }) => key === site).position);
-      trace(link, routeType === "transfer" ? "#215c79" : "#903b27", 3);
+      const coords = route.map((site) => cityPositions.get(site)).filter(Boolean);
+      const routeColor = routeType === "transfer" ? "#3b9bc4" : "#e35a39";
+      drawArrowPath(coords, routeColor, { dashed: Boolean((mapState.orders ?? []).length) });
     }
+  }
+
+  function drawBattlePulses() {
+    if (!battlePulses.length) return;
+    const now = performance.now();
+    const duration = 1600;
+    battlePulses = battlePulses.filter((p) => now - p.start < duration);
+    if (!battlePulses.length) {
+      pulseFrame = 0;
+      return;
+    }
+    for (const pulse of battlePulses) {
+      const pos = cityPositions.get(pulse.city);
+      if (!pos) continue;
+      const t = (now - pulse.start) / duration;
+      const radius = (6 + t * 24) / camera.zoom;
+      const alpha = (1 - t) * 0.9;
+      const ring = new Path2D();
+      ring.arc(pos[0], pos[1], radius, 0, Math.PI * 2);
+      trace(ring, pulse.kind === "capture" ? "#f4cc72" : "#e05b3e", 2.8, alpha);
+      if (t < 0.65) {
+        const inner = new Path2D();
+        inner.arc(pos[0], pos[1], (3 + t * 14) / camera.zoom, 0, Math.PI * 2);
+        trace(inner, "#fff3cf", 1.8, (0.65 - t));
+      }
+    }
+  }
+
+  function drawStrategicLandmarks() {
+    if (layer !== "cities") return;
+    const z = camera.zoom;
+    ctx.save();
+    for (const post of strategicPosts) {
+      if (post.kind !== "pass" && post.kind !== "port" && post.kind !== "ferry") continue;
+      const a = cityPositions.get(post.seat);
+      const b = cityPositions.get(post.to);
+      if (!a || !b) continue;
+      const mx = (a[0] + b[0]) * 0.5;
+      const my = (a[1] + b[1]) * 0.5;
+      const isPass = post.kind === "pass";
+      const r = (isPass ? 3.2 : 2.5) / z;
+      ctx.beginPath();
+      if (isPass) {
+        ctx.moveTo(mx, my - r);
+        ctx.lineTo(mx + r, my);
+        ctx.lineTo(mx, my + r);
+        ctx.lineTo(mx - r, my);
+        ctx.closePath();
+        ctx.fillStyle = "#7c3024";
+        ctx.strokeStyle = "#f2d08a";
+      } else {
+        ctx.arc(mx, my, r, 0, Math.PI * 2);
+        ctx.fillStyle = "#225968";
+        ctx.strokeStyle = "#b8e3eb";
+      }
+      ctx.lineWidth = 1.1 / z;
+      ctx.fill();
+      ctx.stroke();
+
+      if (z >= 1.32) {
+        ctx.font = "600 " + (Math.max(7.2, 8.8) / z) + "px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.lineWidth = 2.4 / z;
+        ctx.strokeStyle = "rgba(18, 16, 13, 0.85)";
+        ctx.strokeText(post.name, mx, my - r - 1.5 / z);
+        ctx.fillStyle = isPass ? "#f7dfb0" : "#cbeaf2";
+        ctx.fillText(post.name, mx, my - r - 1.5 / z);
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawEmperorSeal() {
+    if (historicalFrame || !mapState) return;
+    const han = hanEmperorStatus(mapState);
+    if (!han.active || !han.cityKey) return;
+    const pos = cityPositions.get(han.cityKey);
+    if (!pos) return;
+    const z = camera.zoom;
+    const sx = pos[0] - 9 / z;
+    const sy = pos[1] - 9 / z;
+    const r = 6.2 / z;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fillStyle = "#b23626";
+    ctx.fill();
+    ctx.lineWidth = 1.4 / z;
+    ctx.strokeStyle = "#f9df97";
+    ctx.stroke();
+    ctx.fillStyle = "#ffe9ad";
+    ctx.font = "700 " + (8.4 / z) + "px Georgia, serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("帝", sx, sy + 0.4 / z);
+    ctx.restore();
   }
 
   function drawArmyRoutes() {
@@ -758,6 +989,7 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     ctx.textAlign = "center";
     for (const { key, links } of world.cities) for (const neighbor of links) {
       if (key > neighbor) continue;
+      if (strategicPost([key, neighbor].sort().join(":"))) continue;
       const terrain = roadTerrain(key, neighbor);
       if (!terrain) continue;
       const a = cityPositions.get(key);
@@ -823,6 +1055,8 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
       if (layer === "roads" && mapState.grand) {
         refreshRoadPins();
         drawStrategicRoads();
+      } else {
+        drawStrategicLandmarks();
       }
       drawRoutes();
       drawTheaterLines();
@@ -832,6 +1066,8 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
       drawWar();
       if (campaignPins.length) drawCampaigns();
       if (mapState.frontline) drawGarrisons(fit);
+      drawBattlePulses();
+      drawEmperorSeal();
     }
     if (dynastyLayer && mapState.dynasty) drawDynasty(fit);
     if (reignMode && mapState.reign && !historicalFrame) drawReign(fit);
@@ -1052,10 +1288,7 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     const city = world.cities.find((entry) => entry.key === key);
     if (!city) return;
     switchLayer("cities");
-    camera.zoom = Math.max(2.15, camera.zoom);
-    [camera.x, camera.y] = city.position;
-    restrictCamera();
-    draw();
+    animateCamera(Math.max(2.15, camera.zoom), city.position[0], city.position[1], 280);
   }
 
   function relativePoint(event) {
@@ -1072,6 +1305,8 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
 
   stage.addEventListener("wheel", (event) => {
     event.preventDefault();
+    cancelCameraAnimation();
+    onHover?.(null);
     const sensitivity = event.deltaMode === 0 ? .00155 : .023;
     scale(camera.zoom * Math.exp(-event.deltaY * sensitivity), relativePoint(event));
   }, { passive: false });
@@ -1082,6 +1317,8 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
   }, { capture: true });
   canvas.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
+    cancelCameraAnimation();
+    onHover?.(null);
     const point = relativePoint(event);
     if (!pointers.size) pressedSnapshot = point;
     pointers.set(event.pointerId, point);
@@ -1137,7 +1374,18 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
       draw();
     },
     showWarRoute(path) { warRoute = path; draw(); },
-    zoom: (amount) => scale(camera.zoom * amount),
+    zoom: (amount) => {
+      const nextZoom = clamp(camera.zoom * amount, 1, 5);
+      if (!commandTargets && !dynastyLayer && reignMode !== "economy" && reignMode !== "regions") {
+        if (mapState?.grand && Math.abs(nextZoom - camera.zoom) > .001) {
+          switchLayer(nextZoom < 1.04 ? "factions" : nextZoom < 1.46 ? "roads" : "cities");
+        } else {
+          if (nextZoom > camera.zoom && nextZoom > 1.16) switchLayer("cities");
+          if (nextZoom < camera.zoom && nextZoom < 1.04) switchLayer("factions");
+        }
+      }
+      animateCamera(nextZoom, camera.x, camera.y, 180);
+    },
     show(state, selected, destination, route, path, command) {
       const changed = state !== mapState;
       mapState = state;
@@ -1157,6 +1405,24 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
         strategyImpact = [];
         trade = undefined;
         warRoute = undefined;
+        if (lastAnimatedTurn !== null && state.turn > lastAnimatedTurn && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          const entries = state.history.at(-1)?.entries ?? [];
+          const now = performance.now();
+          const hits = entries.filter((e) => (e.type === "capture" || e.type === "battle") && e.city);
+          if (hits.length) {
+            battlePulses = hits.slice(0, 10).map((e) => ({ city: e.city, kind: e.type, start: now }));
+            if (!pulseFrame) {
+              const stepPulse = () => {
+                pulseFrame = 0;
+                if (!battlePulses.length) return;
+                draw();
+                if (battlePulses.length) pulseFrame = requestAnimationFrame(stepPulse);
+              };
+              pulseFrame = requestAnimationFrame(stepPulse);
+            }
+          }
+        }
+        lastAnimatedTurn = state.turn;
         rebuildTerritories(era);
         rebuildArmies(era);
         rebuildFreights();

@@ -33,7 +33,7 @@ test("Vercel validates a 10.0 save and advances the actual rule engine using JSO
   const streamed = await readTurnResponse(await call("turn", { state }, turnStreamType));
   assert.deepEqual(streamed, plain);
   assert.equal(streamed.state.turn, 1);
-  assert.equal(Object.keys(streamed.state.cities).length, 42);
+  assert.equal(Object.keys(streamed.state.cities).length, 44);
   assert.ok(streamed.state.highCommand);
   assert.equal(streamed.state.dynasty.timelines[0].turn, 1);
   assert.equal(streamed.state.strategy9.since, 0);

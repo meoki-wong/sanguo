@@ -10,6 +10,7 @@ import { intelSummary, queueScout, scoutCost } from "./war-intel.js";
 import { officerSkill } from "./campaign.js";
 import { forceColor } from "./map.js";
 import { travelModes, weatherAllows } from "./landscape-terrain.js";
+import { BATTLE_TACTICS } from "./tactics.js";
 
 const number = new Intl.NumberFormat("zh-CN");
 const format = (value) => number.format(value);
@@ -275,6 +276,10 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
       }
       selectField("officer", "主将", selection.officers.map((person) => [person.key, person.name + " · " + officerSkill(state, person, "command")]),
         movementDraft?.officer);
+      if (state.century) {
+        selectField("tactic", "军策", Object.values(BATTLE_TACTICS).map((t) => [t.id, t.name + (t.treasury ? `（${t.treasury}钱${t.grain ? t.grain + "粮" : ""}）` : "")]),
+          movementDraft?.tactic ?? "assault");
+      }
     }
     if (action === "attack" || action === "transfer") {
       const available = planned.factions[state.player].grain;
@@ -315,7 +320,9 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
     if (action === "transfer") return { type: "transfer", from, to, troops, ...(route.length > 2 ? { route } : {}) };
     const mode = get("method").value;
     const travel = get("travel")?.value;
+    const tactic = state?.century && mode === "attack" ? get("tactic")?.value : undefined;
     return { type: mode === "attack" ? "attack" : "mobilize", from, to, troops, officer: get("officer").value,
+      ...(tactic ? { tactic } : {}),
       ...(mode === "attack" ? {} : { stance: mode, ...(travel ? { travel } : {}) }) };
   }
 
@@ -370,7 +377,9 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
       + format(planned.cities[item.from].troops - item.troops) + " · " + (selection.route.length - 1) + " 段道路";
     if (item.type === "attack") {
       const odds = forecastAttack(era, planned, item);
-      summary = (odds.wins ? "预计占优" : "预计失利") + " · 耗粮 " + odds.grain + " · 留守 " + format(planned.cities[item.from].troops - item.troops);
+      const tHint = odds.tacticTag ? ` · ${odds.tacticTag}（预计损 ${odds.estimatedAttackerLoss} 人）` : "";
+      summary = (odds.wins ? "预计占优" : "预计失利") + " · 耗粮 " + odds.grain + (odds.treasury ? " · 耗钱 " + odds.treasury : "")
+        + " · 留守 " + format(planned.cities[item.from].troops - item.troops) + tHint;
       if (state.war) summary += " · 按现有情报估算";
     }
     if (item.type === "mobilize") {
@@ -436,6 +445,14 @@ export function createCityCommand(world, { snapshot, commit, showDetails, redraw
 
   return {
     open(key) { city = key; menu(true); },
+    startAction(key, act) {
+      city = key;
+      candidates = new Map();
+      selection = null;
+      movementDraft = null;
+      action = null;
+      start(act);
+    },
     close,
     pick,
     sync() {

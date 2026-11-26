@@ -3,6 +3,8 @@ import { officerSkill } from "./campaign.js";
 import { availableAttackers, cityReserve, defensiveStrength, eraByYear, expeditionGrain, forecastAttack, gameOutcome, minimumMarch,
   pendingExpedition, previewOrders, queueOrder, seasonOrderLimit, transferGrain, transferRoutes, transferRoutesTo, validateOrder } from "./engine.js";
 
+import { BATTLE_TACTICS, isOpeningPrepTurn } from "./tactics.js";
+
 export function frontierCities(world, state) {
   return world.cities
     .filter(({ key, links }) => state.cities[key].owner === state.player && links.some((link) => state.cities[link].owner !== state.player))
@@ -62,6 +64,7 @@ function compareExpeditions(a, b) {
 
 export function frontierAttackOpportunities(world, state, planned, { faction } = {}) {
   if (gameOutcome(state) !== "ongoing") return { entries: [], blocker: "ended" };
+  if (isOpeningPrepTurn(state)) return { entries: [], blocker: "opening-prep" };
   if (faction) {
     if (!Object.values(state.cities).some(({ owner }) => owner === faction)) return { entries: [], blocker: "eliminated" };
     if (treatyWith(planned, state.player, faction)) return { entries: [], blocker: "treaty" };
@@ -70,13 +73,13 @@ export function frontierAttackOpportunities(world, state, planned, { faction } =
   if (state.orders.length >= seasonOrderLimit) return { entries: [], blocker: "queue" };
   const grain = planned.factions[state.player].grain;
   if (grain < expeditionGrain(minimumMarch)) return { entries: [], blocker: "grain" };
+  const treasury = planned.factions[state.player].treasury;
   const era = eraByYear(world, state);
   const opportunities = new Map();
+  const tacticPool = state.century ? ["assault", "stratagem", "siege"] : [undefined];
   for (const { key: from, exposed } of frontierCities(world, planned)) {
     if (!exposed) continue;
     const troops = planned.cities[from].troops;
-    const capacity = Math.min(troops - cityReserve, grain * 100);
-    if (capacity < minimumMarch) continue;
     const officer = availableAttackers(era, planned, state.player, from).filter(({ key }) => !pendingExpedition(state, key))
       .sort((a, b) => officerSkill(state, b, "command") - officerSkill(state, a, "command"))[0];
     if (!officer) continue;
@@ -85,13 +88,23 @@ export function frontierAttackOpportunities(world, state, planned, { faction } =
       const owner = planned.cities[to].owner;
       if (faction && owner !== faction) continue;
       if (!isHostile(planned, state.player, owner)) continue;
-      const order = minimumWinningExpedition(era, planned, { type: "attack", from, to, officer: officer.key }, capacity);
-      if (!order) continue;
-      const entry = { order, officer, owner, forecast: forecastAttack(era, planned, order), retained: troops - order.troops };
+      let chosen = null;
+      for (const tactic of tacticPool) {
+        const extra = tactic ? BATTLE_TACTICS[tactic] : { treasury: 0, grain: 0 };
+        if (treasury < extra.treasury) continue;
+        const capacity = Math.min(troops - cityReserve, Math.max(0, grain - extra.grain) * 100);
+        if (capacity < minimumMarch) continue;
+        const draft = { type: "attack", from, to, officer: officer.key, ...(tactic ? { tactic } : {}) };
+        const candidate = minimumWinningExpedition(era, planned, draft, capacity);
+        if (!candidate) continue;
+        if (!chosen || candidate.troops < chosen.troops) chosen = candidate;
+      }
+      if (!chosen) continue;
+      const entry = { order: chosen, officer, owner, forecast: forecastAttack(era, planned, chosen), retained: troops - chosen.troops };
       const previous = opportunities.get(to);
       if (previous && compareExpeditions(entry, previous) >= 0) continue;
       try {
-        queueOrder(world, state, order);
+        queueOrder(world, state, chosen);
       } catch {
         continue;
       }

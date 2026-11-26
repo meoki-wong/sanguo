@@ -189,7 +189,7 @@ for (const [year, players] of [[184, ["han", "yellow"]], [190, ["cao", "dong"]],
     let state = create(year, player);
     while (state.turn < 100 && gameOutcome(state) === "ongoing") {
       state = quarter(state);
-      assert.equal(Object.keys(state.cities).length, 42);
+      assert.equal(Object.keys(state.cities).length, 44);
     }
     assert.ok(state.turn === 100 || gameOutcome(state) !== "ongoing");
     context.diagnostic(state.turn + " seasons · " + gameOutcome(state));

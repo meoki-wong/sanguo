@@ -11,6 +11,7 @@ import { courtFor } from "./polity-governance.js";
 import { livingSide } from "./polities-data.js";
 import { strategicFronts9, theaterRoles9 } from "./strategy-nine.js";
 import { strategicPost } from "./sandtable-posts.js";
+import { factionCourtProfile } from "./imperial.js";
 
 const pages = { summary: "总览", policy: "国制", staff: "册任", markets: "粮政", leagues: "诸侯", record: "回放" };
 const staffPages = { offices: "朝廷", regions: "州郡", commands: "战区", succession: "继嗣" };
@@ -208,11 +209,13 @@ export function createReignDesk(world, actions) {
       button("返回授权", "policy-back", () => { setup = 1; render(); })));
   }
   function staff(state, era) {
-    const choose = select("册任范围", entries(staffPages), staffPane, (value) => { staffPane = value; render(); });
+    const courtLabel = factionCourtProfile(world, state).lexicon.courtLabel;
+    const choose = select("册任范围", entries(staffPages).map(([k, v]) => [k, k === "offices" ? courtLabel : v]), staffPane, (value) => { staffPane = value; render(); });
     body.append(row(choose.wrapper, button("招揽人才", "talent", () => leave("talent"))));
     const person = (key) => era.officers.find((item) => item.key === key)?.name ?? "空缺";
     const roster = (people) => people.map(({ key, name }) => [key, name]);
     if (staffPane === "offices") {
+      body.append(heading(courtLabel + "署理公卿", "以" + courtLabel + "名义统筹全国府库与军政。"));
       const department = select("朝廷职责", entries(administrativeDuties), office, (value) => { office = value; render(); });
       const officeKey = department.value;
       const old = state.realm.offices[officeKey];
@@ -220,8 +223,8 @@ export function createReignDesk(world, actions) {
       const lead = select("朝廷主官", [["", "空缺"], ...picks], old?.holder);
       const deputy = select("朝廷副手", [["", "暂不任命"], ...picks], old?.deputy);
       const cap = number("每季授权上限", state.reign.offices[officeKey]?.cap ?? 28, 0, 90);
-      body.append(row(department.wrapper, lead.wrapper, deputy.wrapper), row(cap.wrapper, button("册任朝官", "court-grant", () =>
-        apply((next) => giveCourtCharter(world, next, officeKey, lead.value || null, deputy.value || null, cap.value), "朝廷授权已登记。"))));
+      body.append(row(department.wrapper, lead.wrapper, deputy.wrapper), row(cap.wrapper, button("册任要职", "court-grant", () =>
+        apply((next) => giveCourtCharter(world, next, officeKey, lead.value || null, deputy.value || null, cap.value), courtLabel + "授权已登记。"))));
       return;
     }
     if (staffPane === "succession") {

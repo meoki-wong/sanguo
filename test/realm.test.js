@@ -41,12 +41,12 @@ function restore(state, selected = "luoyang") {
   return result.state;
 }
 
-test("all opening factions share the same 42 cities and an old midsession save upgrades without losing data", () => {
+test("all opening factions share the same 44 cities and an old midsession save upgrades without losing data", () => {
   assert.deepEqual(world.scenarios.map(({ year }) => year).sort(), [184, 190, 199, 208, 219, 234, 262, 265]);
   for (const era of world.scenarios) for (const { key } of playableFactions(era)) {
     const state = createGame(world, era.year, key, { realm: true });
-    assert.equal(Object.keys(state.realm.cities).length, 42);
-    assert.equal(Object.keys(state.cities).length, 42);
+    assert.equal(Object.keys(state.realm.cities).length, 44);
+    assert.equal(Object.keys(state.cities).length, 44);
     assert.ok(forceTotals(state, key).cities > 0);
     restore(state);
   }
@@ -218,7 +218,7 @@ for (const [year, faction] of [[199, "cao"], [199, "lu"], [208, "cao"], [208, "l
         if (order) state = queueOrder(world, state, order);
       }
       state = restore(advanceQuarter(world, state));
-      assert.equal(Object.keys(state.cities).length, 42);
+      assert.equal(Object.keys(state.cities).length, 44);
       assert.equal(state.turn, i + 1);
       assert.equal(gameOutcome(state), "ongoing");
     }
@@ -252,7 +252,7 @@ test("Liu Bei can reach the coalition ending from one city against ordinary rule
   t.diagnostic(`coalition ending at quarter ${state.turn}`);
 });
 
-test("1.1 supports a complete 42-city unification from the regular Jin opening", (t) => {
+test("1.1 supports a complete 44-city unification from the regular Jin opening", (t) => {
   const era = eraByYear(world, 265);
   let state = createGame(world, 265, "jin", { realm: true });
   while (gameOutcome(state) === "ongoing" && state.turn < 60) {
@@ -275,8 +275,8 @@ test("1.1 supports a complete 42-city unification from the regular Jin opening",
     }
     state = restore(advanceQuarter(world, state));
   }
-  assert.equal(forceTotals(state, "jin").cities, 42);
+  assert.equal(forceTotals(state, "jin").cities, 44);
   assert.equal(gameOutcome(state), "victory");
-  assert.equal(state.campaignRecord.peak, 42);
+  assert.equal(state.campaignRecord.peak, 44);
   t.diagnostic(`unified in ${state.turn} quarters`);
 });

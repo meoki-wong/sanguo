@@ -62,6 +62,11 @@ import { enrichWorld, knownOfficer } from "./personnel.js";
 import { nationalRoster, nationalVacancies, officerProfile, personnelDestinations, reassignmentOptions, usePersonnel } from "./roster.js";
 import { describeGoalProgress } from "./strategy.js";
 import { createSaveBackup, readGameRecord, saveFileLimit } from "./saves.js";
+import { createUxHud } from "./ux-hud.js";
+import { officerMeta } from "./traits.js";
+import { createSoundController } from "./sound.js";
+import { historicalProvince } from "./imperial.js";
+import { DIFFICULTY_LEVELS, isOpeningPrepTurn, validDifficulty } from "./tactics.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -69,10 +74,10 @@ const focusLabels = { farming: "屯田", commerce: "商贸", defense: "城防", 
 const zoneLabels = { front: "前线", rear: "后方" };
 const reinforcementBlockers = { queue: "政令队列已满", grain: "储粮不足以调兵", donor: "暂无可调援军", planned: "本案已为该城拟令" };
 const defensePressureLabels = { treaty: "协定保护", interior: "无相邻敌方", unavailable: "邻敌无法出征" };
-const autoSlot = "jinglue-sanguo:auto:v1";
+const autoSlot = "jinglue-sanguo:auto:v3";
 const preCenturySlot = "jinglue-sanguo:before-century";
-const manualSlot = "jinglue-sanguo:manual:v1";
-const manualSlots = [manualSlot, "jinglue-sanguo:manual-2:v1", "jinglue-sanguo:manual-3:v1"];
+const manualSlot = "jinglue-sanguo:manual:v3";
+const manualSlots = [manualSlot, "jinglue-sanguo:manual-2:v3", "jinglue-sanguo:manual-3:v3"];
 const opponentModeSlot = "jinglue-sanguo:opponents:v1";
 const cloudModelSlot = "jinglue-sanguo:cloud-model:v1";
 const sources = { model: "模型", rules: "规则", fallback: "规则接管" };
@@ -110,6 +115,8 @@ let dynastyDesk;
 let strategyDesk;
 let reignDesk;
 let centuryDesk;
+let uxHud;
+let sound;
 let lastAutoSave;
 let requestingTurn = false;
 let lastTurnClick = -1000;
@@ -343,6 +350,8 @@ function keepProgress() {
 function mutate(operation, message = "") {
   try {
     state = operation();
+    if (message.includes("出征") || message.includes("集结")) sound?.play("march");
+    else if (message) sound?.play("order");
     notify(message);
     render();
     keepProgress();
@@ -368,7 +377,8 @@ function statList(target, items) {
 function renderResources() {
   const scenario = era();
   const name = factionName(scenario, state.player);
-  find("active-era").textContent = state.year + " 年 · " + scenario.title + " · " + name;
+  const diff = state.difficulty && DIFFICULTY_LEVELS[state.difficulty];
+  find("active-era").textContent = state.year + " 年 · " + scenario.title + " · " + name + (diff ? " · " + diff.short : "");
   find("turn-date").textContent = seasonTitle(state.turn);
   const holdings = forceTotals(state, state.player);
   const stock = state.factions[state.player];
@@ -442,20 +452,32 @@ function renderForces() {
     modelLabel.textContent = turnProgress ? turnProgressLabel() : modelReady ? savedModel.model : "模型未配置";
     modelLabel.title = modelLabel.textContent;
   }
-  const forces = playableFactions(era());
+  const forces = playableFactions(era()).slice().sort((a, b) => {
+    if (a.key === state.player) return -1;
+    if (b.key === state.player) return 1;
+    return forceTotals(state, b.key).cities - forceTotals(state, a.key).cities;
+  });
   const list = find("forces");
-  const [heading, mode] = list.parentElement.children;
-  const panel = list.parentElement;
-  const style = getComputedStyle(panel);
-  const rowsHeight = panel.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
-    - heading.offsetHeight - mode.offsetHeight - parseFloat(getComputedStyle(mode).marginTop)
-    - parseFloat(getComputedStyle(list).marginTop) - 4;
-  const columns = matchMedia("(max-width: 960px)").matches ? 2 : 1;
-  const rowHeight = innerHeight <= 650 ? 30 : 38;
-  const forceSize = Math.floor(rowsHeight / rowHeight) * columns >= forces.length
-    ? forces.length
-    : Math.max(columns, Math.floor((rowsHeight - 34) / rowHeight) * columns);
-  const items = pageOf(forces, "forces", forceSize, renderForces).map(({ key, name }) => {
+  const isCompact = matchMedia("(max-width: 960px)").matches;
+  const shown = isCompact ? (() => {
+    const [heading, mode] = list.parentElement.children;
+    const panel = list.parentElement;
+    const style = getComputedStyle(panel);
+    const rowsHeight = panel.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+      - heading.offsetHeight - mode.offsetHeight - parseFloat(getComputedStyle(mode).marginTop)
+      - parseFloat(getComputedStyle(list).marginTop) - 4;
+    const columns = 2;
+    const rowHeight = innerHeight <= 650 ? 30 : 38;
+    const forceSize = Math.floor(rowsHeight / rowHeight) * columns >= forces.length
+      ? forces.length
+      : Math.max(columns, Math.floor((rowsHeight - 34) / rowHeight) * columns);
+    return pageOf(forces, "forces", forceSize, renderForces);
+  })() : (() => {
+    find("forces-pages").hidden = true;
+    return forces;
+  })();
+  const maxCities = Math.max(1, ...forces.map(({ key }) => forceTotals(state, key).cities));
+  const items = shown.map(({ key, name }) => {
     const owned = forceTotals(state, key).cities;
     const row = make("li");
     const player = key === state.player;
@@ -466,11 +488,11 @@ function renderForces() {
     dot.setAttribute("aria-hidden", "true");
     const decision = last.find((entry) => entry.faction === key);
     const progress = turnProgress?.get(key);
-    const source = player ? "玩家" : progressLabels[progress] || sources[decision?.source] || requested;
+    const source = player ? "本方" : progressLabels[progress] || sources[decision?.source] || requested;
     if (decision) row.dataset.aiSource = decision.source;
     if (progress) row.dataset.planStatus = progress;
     const treaty = treatyWith(state, state.player, key);
-    const status = owned ? (treaty && !progress ? treatyTerms[treaty.kind].name : source) + " · " + owned + " 城" : "已失去辖城";
+    const status = owned ? (treaty && !progress ? treatyTerms[treaty.kind].name : source) + " · " + owned + "城" : "已灭";
     if (treaty) {
       row.dataset.treaty = treaty.kind;
       row.title = source + " · " + treatyTerms[treaty.kind].name + "余 " + (treaty.expires - state.turn) + " 季";
@@ -482,7 +504,12 @@ function renderForces() {
       title.setAttribute("aria-label", "查看" + name + "简报");
       title.addEventListener("click", () => openOpponentBrief(key));
     }
-    row.append(dot, title, make("span", status, "muted"));
+    const barTrack = make("div", undefined, "force-bar-track");
+    const barFill = make("div", undefined, "force-bar-fill");
+    barFill.style.setProperty("--force", forceColor(key));
+    barFill.style.width = Math.round((owned / maxCities) * 100) + "%";
+    barTrack.append(barFill);
+    row.append(dot, title, make("span", status, "muted"), barTrack);
     return row;
   });
   list.replaceChildren(...items);
@@ -622,13 +649,17 @@ function syncStartFields() {
   find("era-select").value = state.year;
   updateDraftFactions();
   find("force-select").value = state.player;
+  const diffEl = find("difficulty-select");
+  if (diffEl) diffEl.value = validDifficulty(state.difficulty) ? state.difficulty : "hard";
 }
 
 function renderCampaignPreview() {
   const year = Number(find("era-select").value);
   const player = find("force-select").value;
+  const diffEl = find("difficulty-select");
+  const difficulty = diffEl && validDifficulty(diffEl.value) ? diffEl.value : "hard";
   const scenario = eraByYear(world, year);
-  const opening = createGame(world, year, player, { century: true });
+  const opening = createGame(world, year, player, { century: true, difficulty });
   campaignOpening = opening;
   pages["campaign-cities"] = pages["campaign-roster"] = 0;
   const { cities, troops } = forceTotals(opening, player);
@@ -747,7 +778,7 @@ function openMapSearch() {
 function renderCity() {
   const city = currentCity();
   const holding = state.cities[selected];
-  find("city-region").textContent = city.region;
+  find("city-region").textContent = historicalProvince(selected, city.region);
   find("city-name").textContent = city.name;
   const priorName = era().periodNames[city.key];
   find("city-period-name").textContent = priorName || "";
@@ -821,6 +852,7 @@ function renderGovernance() {
   const development = find("development");
   const levels = Object.entries(projects).map(([key, project]) => project.name + " " + holding[key] + " 级").join(" · ");
   development.title = levels;
+  development.dataset.occupation = String(Boolean(holding.occupation));
   development.textContent = holding.occupation
     ? holding.troops < cityReserve ? "整顿暂停 · 至少留守 " + cityReserve + " 人" : "整顿余 " + holding.occupation + " 季 · 税粮减半"
     : levels;
@@ -845,6 +877,30 @@ function renderGovernance() {
   form.querySelector("button").disabled = !order.value || state.orders.length >= seasonOrderLimit;
 }
 
+function buildTraitPill(trait) {
+  const pill = make("span", trait.name, "trait-pill");
+  pill.dataset.tone = trait.tone;
+  pill.title = trait.detail;
+  return pill;
+}
+
+function buildOfficerCardDecor(person, limit = 2) {
+  const meta = officerMeta(person);
+  const seal = make("span", meta.seal, "officer-seal sm");
+  seal.style.setProperty("--force", forceColor(person.faction));
+  seal.setAttribute("aria-hidden", "true");
+  const statText = "统 " + officerSkill(state, person, "command")
+    + " · 武 " + meta.might
+    + " · 智 " + meta.intellect
+    + " · 政 " + officerSkill(state, person, "governance");
+  let traitRow = null;
+  if (meta.traits.length) {
+    traitRow = make("div", undefined, "trait-pills-row");
+    for (const trait of meta.traits.slice(0, limit)) traitRow.append(buildTraitPill(trait));
+  }
+  return { meta, seal, statText, traitRow };
+}
+
 function renderOfficers() {
   const current = state.cities[selected];
   const foreign = state.war && current.owner !== state.player;
@@ -854,18 +910,21 @@ function renderOfficers() {
   const officers = roster.filter(({ key, name }) => !filter || name.includes(filter)
     || (state.stations[key] && cityName(world, state.stations[key]).includes(filter)));
   const height = find("officers").clientHeight;
-  const size = height ? Math.max(1, Math.min(9, Math.floor((height - 87) / 46))) : 3;
+  const size = height ? Math.max(1, Math.min(5, Math.floor((height - 110) / 88))) : 3;
   const list = pageOf(officers, "officers", size, renderOfficers).map((officer) => {
-    const person = make("li");
+    const person = make("li", undefined, "officer-card-row");
     const duty = postingOf(state, officer.key);
     const dispatch = pendingExpedition(state, officer.key);
     const station = state.stations[officer.key];
     const location = station ? cityName(world, station) : "无驻地";
     const dutyText = dispatch ? "待出征" : duty ? labels[duty.role] : "待任";
-    const details = make("div");
-    details.append(make("strong", officer.name),
-      make("span", "政 " + officerSkill(state, officer, "governance") + " · 统 " + officerSkill(state, officer, "command") + " · " + location + " · " + dutyText, "muted"));
-    person.append(details);
+    const { seal, statText, traitRow } = buildOfficerCardDecor(officer, 2);
+    const details = make("div", undefined, "officer-card-main");
+    const heading = make("div", undefined, "holding-heading");
+    heading.append(make("strong", officer.name), make("span", location + " · " + dutyText, "muted"));
+    details.append(heading, make("span", statText, "officer-stat-line"));
+    if (traitRow) details.append(traitRow);
+    person.append(seal, details);
     if (canTransfer && !duty && !dispatch && station !== selected) {
       const transfer = make("button", "调来此城");
       transfer.type = "button";
@@ -968,8 +1027,8 @@ function renderOrderPreview() {
   find("order-preview-list").replaceChildren(...rows);
 }
 
-function openOrdersDialog(officer) {
-  orderPreview = false;
+function openOrdersDialog(officer, preview = false) {
+  orderPreview = Boolean(preview);
   orderFocusOfficer = officer;
   pages["order-preview"] = 0;
   find("orders-status").hidden = true;
@@ -979,9 +1038,11 @@ function openOrdersDialog(officer) {
 }
 
 function readAttack() {
+  const tacticEl = find("attack-tactic");
   return {
     type: "attack", from: selected, to: find("target-picker").value,
     officer: find("officer-picker").value, troops: Number(find("troops").value),
+    ...(state?.century && tacticEl?.value ? { tactic: tacticEl.value } : {}),
   };
 }
 
@@ -996,10 +1057,19 @@ function updateForecast() {
     return;
   }
   const outcome = forecastAttack(era(), militaryView(planned), attack);
-  const enough = planned.factions[state.player].grain >= outcome.grain;
+  const stock = planned.factions[state.player];
+  const enoughGrain = stock.grain >= outcome.grain;
+  const enoughTreasury = stock.treasury >= (outcome.treasury ?? 0);
+  const enough = enoughGrain && enoughTreasury;
   const result = outcome.wins ? "预计占优" : "预计失利";
   const strength = formatted.format(outcome.offense) + " 对 " + formatted.format(outcome.defense);
-  forecast.textContent = result + " · " + (state.war ? "情报估算 " : "战力 ") + strength + " · 耗粮 " + outcome.grain + (enough ? "" : " · 储粮不足");
+  const traitList = [...(outcome.traitNotes?.attacker || []), ...(outcome.traitNotes?.defender || [])];
+  const traitSuffix = traitList.length ? " · ✦ " + traitList.join(" · ") : "";
+  const tacTag = outcome.tacticTag ? `【${outcome.tacticTag}】` : "";
+  const costText = `耗粮 ${outcome.grain}${outcome.treasury ? ` · 耗钱 ${outcome.treasury}` : ""}`;
+  const lossText = state.century ? ` · 预损 我${formatted.format(outcome.estimatedAttackerLoss)}/敌${formatted.format(outcome.estimatedDefenderLoss)}` : "";
+  const shortText = !enoughGrain ? " · 储粮不足" : !enoughTreasury ? " · 国库不足" : "";
+  forecast.textContent = tacTag + result + " · " + (state.war ? "情报估算 " : "战力 ") + strength + lossText + " · " + costText + shortText + traitSuffix;
   forecast.dataset.state = outcome.wins ? "advantage" : "disadvantage";
   find("send-order").disabled = !enough || state.orders.length >= seasonOrderLimit;
 }
@@ -1015,17 +1085,19 @@ function renderAttack() {
     .filter(({ key }) => !pendingExpedition(state, key));
   const capacity = origin.troops - cityReserve;
   const ongoing = gameOutcome(state) === "ongoing";
-  const canAttack = ongoing && !enemy && targets.length > 0 && commanders.length > 0 && capacity >= minimumMarch;
+  const prepLocked = isOpeningPrepTurn(state);
+  const canAttack = ongoing && !prepLocked && !enemy && targets.length > 0 && commanders.length > 0 && capacity >= minimumMarch;
   const attackFrom = find("attack-from");
   const hint = find("expedition-status");
   const form = find("attack-form");
-  attackFrom.hidden = !ongoing || !enemy || protectedCity || !origins.length;
+  attackFrom.hidden = !ongoing || prepLocked || !enemy || protectedCity || !origins.length;
   if (!attackFrom.hidden) {
     find("origin-picker").replaceChildren(...origins.map((key) => new Option(cityName(world, key), key)));
   }
   hint.hidden = canAttack || !attackFrom.hidden;
   if (!hint.hidden) {
     if (!ongoing) hint.textContent = "战局已结束。";
+    else if (prepLocked) hint.textContent = "开局首季为整军备战期，须先定国策、任州牧并整顿边备，次季方可正式兴兵。";
     else if (protectedCity) hint.textContent = "此城受有效约定保护，期满后才可出征。";
     else if (enemy) hint.textContent = "这座城附近没有己方出征城。";
     else if (!targets.length) hint.textContent = "相邻城池均为己方或受约定保护。";
@@ -1037,6 +1109,10 @@ function renderAttack() {
 
   const to = find("target-picker");
   const officer = find("officer-picker");
+  const tacticEl = find("attack-tactic");
+  const tacticLabel = find("attack-tactic-label");
+  if (tacticEl) tacticEl.hidden = !state.century;
+  if (tacticLabel) tacticLabel.hidden = !state.century;
   const amount = find("troops");
   if (attackDraft.from !== selected) attackDraft = {};
   to.replaceChildren(...targets.map((key) => new Option(cityName(world, key) + " · " + factionName(era(), planned.cities[key].owner), key)));
@@ -1044,6 +1120,7 @@ function renderAttack() {
     .map(({ key, name, command }) => new Option(name + " · 统率 " + command, key)));
   if (targets.includes(attackDraft.to)) to.value = attackDraft.to;
   if (commanders.some(({ key }) => key === attackDraft.officer)) officer.value = attackDraft.officer;
+  if (tacticEl && attackDraft.tactic) tacticEl.value = attackDraft.tactic;
   amount.max = capacity;
   amount.value = Math.max(minimumMarch, Math.min(capacity, attackDraft.troops ?? planned.factions[state.player].grain * 100));
   attackDraft = readAttack();
@@ -1399,10 +1476,29 @@ function renderBattlePane(pane) {
 function renderPersonProfile(onPage) {
   const profile = officerProfile(world, state, detailView.officer);
   const { person, station, posting, expedition, army, available, timeline } = profile;
-  find("person-title").textContent = person.name;
+  const meta = officerMeta(person);
+  find("person-title").textContent = person.name + (meta.title ? " · 字" + meta.title : "");
   find("person-back").textContent = detailBackLabel();
   find("person-current").textContent = "当前 · " + seasonTitle(state.turn) + " · " + factionName(era(), person.faction);
-  statList(find("person-stats"), [["政务", officerSkill(state, person, "governance")], ["统率", officerSkill(state, person, "command")]]);
+  statList(find("person-stats"), [
+    ["统率", officerSkill(state, person, "command")],
+    ["武力", meta.might],
+    ["智力", meta.intellect],
+    ["政治", officerSkill(state, person, "governance")],
+  ]);
+  const traitsBox = find("person-traits-box");
+  if (traitsBox) {
+    traitsBox.hidden = false;
+    if (meta.traits.length) {
+      traitsBox.replaceChildren(...meta.traits.map((trait) => {
+        const item = make("div", undefined, "person-trait-item");
+        item.append(buildTraitPill(trait), make("span", trait.detail));
+        return item;
+      }));
+    } else {
+      traitsBox.replaceChildren(make("div", "无特殊历史特技，依基础统政能力效命。", "person-trait-item muted"));
+    }
+  }
   const duty = realmOffices[nationalDuty(state, person.key)];
   find("person-duty").textContent = army ? "随军 · " + cityName(world, army.location) + " · " + armyPhases[army.phase]
     : "驻地 " + (station ? cityName(world, station) : "无驻地") + " · " + (duty ? duty + "官" : posting ? labels[posting.role] : expedition ? "待出征" : "待任");
@@ -2497,20 +2593,22 @@ function renderRoster() {
   const size = status === "relocated" ? (innerHeight <= 460 ? 2 : innerHeight <= 690 ? 3 : 5)
     : innerHeight <= 440 ? 3 : innerHeight <= 690 ? 4 : 6;
   const rows = pageOf(matching, "roster", size, renderRoster).map(({ person, posting, expedition, army, office, station, stationName, available, relocation }) => {
-    const row = make("li");
+    const row = make("li", undefined, "officer-card-row");
     row.dataset.officer = person.key;
-    const details = make("div", undefined, "holding-detail");
+    const { seal, statText, traitRow } = buildOfficerCardDecor(person, 3);
+    const details = make("div", undefined, "holding-detail officer-card-main");
     const heading = make("div", undefined, "holding-heading");
     const role = office ? realmOffices[office] + "官" : posting ? labels[posting.role] : available ? "待任" : "";
     const march = army ? "领军 · " + armyPhases[army.phase] : expedition ? "待出征至" + cityName(world, expedition.to) : "";
     heading.append(officerLink(person.key, "roster-dialog"), make("span", [role, march].filter(Boolean).join(" · "), "muted"));
-    details.append(heading, make("span", (stationName || "无驻地") + " · 政务 " + person.governance + " · 统率 " + person.command, "muted"));
+    details.append(heading, make("span", (stationName || "无驻地") + " · " + statText, "muted"));
+    if (traitRow) details.append(traitRow);
     if (relocation) {
       const before = cityName(world, relocation.entry.city);
       const after = relocation.destination ? cityName(world, relocation.destination) : "无驻地";
       details.append(make("span", seasonTitle(relocation.turn - 1) + " · " + before + " → " + after, "muted"));
     }
-    row.append(details);
+    row.append(seal, details);
 
     const actions = make("div", undefined, "roster-actions");
     if (stationName) {
@@ -3574,6 +3672,7 @@ function renderDiplomacyInbox() {
 function renderDiplomacy() {
   renderDiplomacyOffer();
   renderDiplomacyInbox();
+  uxHud?.renderDiplomacyCards();
 }
 
 function selectDiplomacyPane(pane) {
@@ -3636,19 +3735,31 @@ function followAdvice(item) {
 }
 
 function performDeskAction(action, target) {
+  if (action === "advice" && uxHud?.isSovereignMode()) {
+    uxHud.toggleSovereignMemorials();
+    return;
+  }
   const actions = {
-    advice: openAdvice, orders: () => openOrdersDialog(), policy: () => state.grand ? grandPanel.open("govern") : openCouncil("policy"),
-    war: () => state.grand ? grandPanel.open("campaign") : warPanel.open(), armies: () => armyPanel.open(),
-    diplomacy: () => state.incomingTreaty?.answer === null || !state.grand ? openDiplomacyDialog() : grandPanel.open("treaty"),
-    envoy: () => openDiplomacyDialog("incoming"), roster: () => openRoster(), polity: () => polityPanel.open(),
-    "polity-inbox": () => polityPanel.open("diplomacy", target), province: () => polityPanel.open("province", target),
-    edict: () => polityPanel.open("tasks", "edict"), succession: () => polityPanel.open("court"), events: () => openCouncil("events"),
+    advice: openAdvice,
+    orders: () => openOrdersDialog(),
+    policy: () => state.century ? centuryDesk.open() : state.reign ? reignDesk.open() : state.grand ? grandPanel.open("govern") : openCouncil("policy"),
+    war: () => state.highCommand ? highCommandDesk.open() : state.frontline ? frontlineDesk.open() : state.grand ? grandPanel.open("campaign") : warPanel.open(),
+    armies: () => state.frontline ? frontlineDesk.open("formation") : armyPanel.open(),
+    diplomacy: () => state.incomingTreaty?.answer === null || !state.grand ? openDiplomacyDialog() : openDiplomacyDialog(),
+    envoy: () => openDiplomacyDialog("incoming"),
+    roster: () => openRoster(),
+    polity: () => state.century ? openChronicle() : polityPanel.open(),
+    "polity-inbox": () => polityPanel.open("diplomacy", target),
+    province: () => polityPanel.open("province", target),
+    edict: () => polityPanel.open("tasks", "edict"),
+    succession: () => polityPanel.open("court"),
+    events: () => openCouncil("events"),
     "war-alert": () => warPanel.open("plans", Number(target)),
     "grand-inbox": () => grandPanel.open("treaty", target),
     "grand-campaign": () => grandPanel.open("campaign", target),
     outcome: openOutcome,
   };
-  actions[action]();
+  actions[action]?.();
 }
 
 function renderAdvice() {
@@ -3789,6 +3900,7 @@ function render() {
   }
   const roadTab = document.querySelector('[data-map-layer="roads"]');
   roadTab.textContent = state.sandtable ? "据点粮道" : state.landscape ? "关隘粮道" : "军路";
+  uxHud?.render();
   renderMap();
 }
 
@@ -3809,10 +3921,24 @@ function selectCity(key, locate = false, view = "city") {
 }
 
 function selectMapCity(key, locate = false) {
-  if (key === selected && !locate) return;
+  if (uxHud?.isSovereignMode()) {
+    selectCity(key, locate, "map");
+    landscapeMap?.close();
+    cityCommand?.close();
+    uxHud.setCityDrawer(false);
+    uxHud.openSovereignCityCard(key);
+    return;
+  }
+  if (key === selected && !locate) {
+    if (!matchMedia("(max-width: 960px)").matches) uxHud?.setCityDrawer(true);
+    return;
+  }
   selectCity(key, locate, "map");
   selectTab(state.cities[key].owner === state.player ? "governance" : "expedition");
-  if (locate) {
+  if (!matchMedia("(max-width: 960px)").matches) {
+    landscapeMap?.close();
+    uxHud?.setCityDrawer(true);
+  } else if (locate) {
     landscapeMap?.close();
     cityCommand?.open(key);
   }
@@ -3834,9 +3960,18 @@ function clickMapCity(key) {
     return;
   }
   if (statecraftDesk?.pick(key) || cityCommand?.pick(key) || landscapeMap?.pick(key)) return;
+  if (uxHud?.isSovereignMode()) {
+    selectMapCity(key);
+    return;
+  }
   landscapeMap?.close();
+  cityCommand?.close();
   selectMapCity(key);
-  cityCommand?.open(key);
+  if (!matchMedia("(max-width: 960px)").matches) {
+    uxHud?.setCityDrawer(true);
+  } else {
+    cityCommand?.open(key);
+  }
 }
 
 function selectTab(id, focus = false) {
@@ -4379,6 +4514,14 @@ function settleTurn(operation, status) {
   else if (state.campaignEvents?.pending?.turn === state.turn) notify("有新的战役事件，可从「战役方略」处理。");
   else if (state.incomingTreaty?.answer === null) notify("有新的外交提议，可从「奏报」摘要前往答复。");
   else if (state.realm?.proposals.some((item) => item.to === state.player && item.submitted === state.turn)) notify("有新的通商或合兵提案，可从「天下格局 → 外交」答复。");
+  if (gameOutcome(state) === "ongoing" && !advancingYear) {
+    const hasUrgent = urgentCommands(state).some(({ alert }) => alert.turn === state.turn - 1)
+      || reignAlerts(state).some(({ turn }) => turn === state.turn)
+      || strategicAlerts9(state).some(({ turn }) => turn === state.turn)
+      || state.incomingTreaty?.answer === null;
+    sound?.play(hasUrgent ? "alert" : "turn");
+    uxHud?.showSeasonRecap(state);
+  }
 }
 
 function saveChangedInAnotherTab() {
@@ -4503,6 +4646,7 @@ function openCampaign() {
   showCampaignPane("summary");
   find("campaign-roster-sort").value = "command";
   renderCampaignPreview();
+  uxHud?.renderCampaignCards();
   find("campaign-dialog").showModal();
 }
 
@@ -4547,13 +4691,17 @@ function toggleReignMap(mode, impact = [], key) {
     }[mode];
   } else document.querySelector(".map-hint").textContent = "滚轮缩放 · 拖动地图";
   map?.setReignMap(mode, impact);
+  uxHud?.syncLensButtons(mode);
 }
 
 function wireControls() {
   for (const button of document.querySelectorAll("[data-command-action]")) {
     button.addEventListener("click", () => performDeskAction(button.dataset.commandAction, button.dataset.commandTarget));
   }
-  find("turn-orders").addEventListener("click", () => openOrdersDialog());
+  find("turn-orders").addEventListener("click", () => {
+    if (uxHud && !window.matchMedia("(max-width: 960px)").matches) uxHud.toggleOrdersPopover();
+    else openOrdersDialog();
+  });
   find("advance-from-orders").addEventListener("click", () => {
     find("orders-dialog").close();
     find("advance").click();
@@ -4681,6 +4829,7 @@ function wireControls() {
     renderCampaignPreview();
   });
   find("force-select").addEventListener("change", renderCampaignPreview);
+  find("difficulty-select")?.addEventListener("change", renderCampaignPreview);
   for (const button of find("campaign-panes").querySelectorAll("button")) {
     button.addEventListener("click", () => showCampaignPane(button.dataset.campaignPane));
   }
@@ -4909,8 +5058,8 @@ function wireControls() {
     mutate(() => queueOrder(world, state, order), "已下达政令 · " + describeOrder(order));
   });
   find("go-origin").addEventListener("click", () => selectCity(find("origin-picker").value, true));
-  for (const id of ["target-picker", "officer-picker", "troops"]) {
-    find(id).addEventListener("input", () => {
+  for (const id of ["target-picker", "officer-picker", "attack-tactic", "troops"]) {
+    find(id)?.addEventListener("input", () => {
       attackDraft = readAttack();
       updateForecast();
       renderMap();
@@ -5328,7 +5477,7 @@ async function start() {
   if (!data.ok) throw new Error("地图数据加载失败。");
   oldWorld = await data.json();
   world = enrichWorld(oldWorld);
-  if (world.cities.length !== 42) throw new Error("地图数据需要包含 42 座主城。");
+  if (world.cities.length !== 44) throw new Error("地图数据需要包含 44 座主城。");
   try {
     lastAutoSave = localStorage.getItem(autoSlot);
     const saved = readSave(autoSlot);
@@ -5339,7 +5488,7 @@ async function start() {
   } catch (error) {
     notify("自动存档无法读取，已载入初始剧本。 " + error.message, true);
   }
-  state ??= createGame(world, 199, "cao", { century: true });
+  state ??= createGame(world, 199, "cao", { century: true, difficulty: "hard" });
   selected ??= state.year === 199 && state.player === "cao" ? "luoyang" : firstCity(world, state);
   find("boot").hidden = true;
   find("workspace").hidden = false;
@@ -5427,7 +5576,7 @@ async function start() {
     const row = strategicFronts9(state).find(({ campaign }) => campaign === id);
     if (row) strategyDesk.open("fronts", row.id);
     else highCommandDesk.open(undefined, id);
-  }, (key) => dynastyDesk.open("supply", key));
+  }, (key) => dynastyDesk.open("supply", key), (info) => uxHud?.showHover(info));
   frontlineDesk = createFrontlineDesk(world, {
     snapshot: () => ({ state, era: era() }),
     commit: (next, message) => mutate(() => next, message),
@@ -5601,10 +5750,54 @@ async function start() {
     openStrategy: (id) => state.century ? centuryDesk.open("local", id) : strategyDesk.open("fronts", id),
     redraw: renderMap,
   });
+  sound = createSoundController();
+  uxHud = createUxHud(world, {
+    snapshot: () => ({ state, planned, era: era(), selected }),
+    getPriorities: () => commandPriorities(),
+    performAction: (action, target) => performDeskAction(action, target),
+    commitOrder: (order) => mutate(() => queueOrder(world, state, order), "已入队 · " + describeOrder(order)),
+    commitState: (operation, msg = "") => mutate(operation, msg),
+    openFullOrders: (preview = false) => openOrdersDialog(undefined, preview),
+    openCityDetail: (key, tab = "governance") => {
+      selectCity(key, false, matchMedia("(max-width: 960px)").matches ? "city" : "map");
+      selectTab(tab);
+      uxHud?.closeSovereignCityCard();
+      uxHud?.setCityDrawer(true);
+    },
+    openDiplomacyFor: (factionKey) => {
+      openDiplomacyDialog("outgoing");
+      const sel = find("diplomacy-target");
+      if (sel && factionKey) {
+        sel.value = factionKey;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+        uxHud?.renderDiplomacyCards();
+      }
+    },
+    sound,
+    locateAndSelect: (key) => selectMapCity(key, true),
+    selectTab: (id) => selectTab(id),
+    resetMapSmooth: () => {
+      if (reignLens) toggleReignMap(null);
+      if (dynastyMap) toggleDynastyMap(false);
+      map.reset("cities", true);
+    },
+    toggleLens: (lens) => toggleReignMap(lens),
+    takeYear: () => takeYear(),
+    startMapAction: (key, action) => {
+      cityCommand?.startAction(key, action);
+    },
+    openProvince: (key) => centuryDesk.open("local", world.cities.find((city) => city.key === key).region),
+    openConvoy: (key) => openLandscapeMap("convoy", { from: key }),
+    openBattle: (key) => state.highCommand ? highCommandDesk.open(key) : frontlineDesk.open("plan", key),
+    openFrontier: () => openFrontier(),
+    openCenturyPending: (item) => centuryDesk.open("pending", "century" + item.id),
+    openBattleEntry: (entry, turn) => openBattleReport(entry, turn, "chronicle"),
+  });
   wireControls();
   wirePanels();
   find("view-switcher").hidden = false;
   find("command-dock").hidden = false;
+  find("bottom-hud").hidden = false;
   showView("map");
   selectTab("governance");
   render();

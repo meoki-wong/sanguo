@@ -79,7 +79,10 @@ export function reviewAlliances(world, state) {
 }
 
 export function opponentTreaty(world, state) {
-  if (state.turn < 4 || state.turn % 2) return null;
+  const minTurn = state.century ? 2 : 4;
+  if (state.turn < minTurn) return null;
+  const checkEveryTurn = Boolean(state.century && state.difficulty && state.difficulty !== "standard");
+  if (!checkEveryTurn && state.turn % 2) return null;
   const fronts = diplomaticFronts(world, state);
   const opponents = [...fronts.keys()].filter((faction) => faction !== state.player);
   const offers = [];

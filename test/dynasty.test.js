@@ -131,7 +131,7 @@ for (const year of [184, 190, 199, 208, 219, 234, 262, 265]) {
     test(era.year + " " + faction.key + " completes a 100-quarter soak or reaches a normal outcome", (t) => {
       let state = createGame(world, era.year, faction.key, { dynasty: true });
       const cityKeys = Object.keys(state.cities).sort();
-      assert.equal(cityKeys.length, 42);
+      assert.equal(cityKeys.length, 44);
       for (let quarter = 0; quarter < 100 && gameOutcome(state) === "ongoing"; quarter++) {
         state = advanceQuarter(world, state);
         assert.deepEqual(Object.keys(state.cities).sort(), cityKeys);

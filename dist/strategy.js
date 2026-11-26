@@ -9,6 +9,8 @@ import { militaryView } from "./war-intel.js";
 import { alliedDuty, pactTarget } from "./accords.js";
 import { weatherAllows } from "./landscape-terrain.js";
 import { congressDuty, congressTarget } from "./landscape-treaty.js";
+import { officerMeta } from "./traits.js";
+import { BATTLE_TACTICS, isOpeningPrepTurn } from "./tactics.js";
 
 function goalDuration(goal) {
   return goal.since < 4 ? 3 : goal.type === "defend" ? 5 : 4;
@@ -41,20 +43,62 @@ export function assessGoal(state, faction, goal, adaptive = true) {
   return { goal, progress, status };
 }
 
-function attackFrom(era, state, faction, from, to) {
-  if (!weatherAllows(state, from, to)) return null;
+function attackFrom(era, state, faction, from, to, { quick = false } = {}) {
+  if (isOpeningPrepTurn(state) || !weatherAllows(state, from, to)) return null;
   const troops = Math.min(state.cities[from].troops - cityReserve, state.factions[faction].grain * 100);
   if (troops < minimumMarch) return null;
-  const officer = availableAttackers(era, state, faction, from).sort((a, b) => b.command - a.command)[0];
-  if (!officer && state.observer && state.observer !== faction) return { type: "attack", from, to, troops, officer: null };
-  return officer ? { type: "attack", from, to, troops, officer: officer.key } : null;
+  const pool = availableAttackers(era, state, faction, from);
+  if (!pool.length) {
+    return state.observer && state.observer !== faction ? { type: "attack", from, to, troops, officer: null } : null;
+  }
+  const topCmd = [...pool].sort((a, b) => b.command - a.command)[0];
+  if (!state.century || quick) {
+    return { type: "attack", from, to, troops, officer: topCmd.key };
+  }
+  const topInt = [...pool].sort((a, b) => (officerMeta(b).intellect ?? 50) - (officerMeta(a).intellect ?? 50))[0];
+  const treasury = state.factions[faction]?.treasury ?? 0;
+  const grain = state.factions[faction]?.grain ?? 0;
+  const baseGrain = Math.ceil(troops / 100);
+  const targetCity = state.cities[to];
+  const defender = era.officers.find(({ key }) => key === (targetCity.commander ?? targetCity.governor));
+  const defInt = defender ? (officerMeta(defender).intellect ?? 50) : 50;
+
+  const candidates = [{ tactic: "assault", officer: topCmd.key }];
+  if (treasury >= BATTLE_TACTICS.siege.treasury && grain >= baseGrain + BATTLE_TACTICS.siege.grain
+    && (targetCity.walls > 0 || state.landscape)) {
+    candidates.push({ tactic: "siege", officer: topCmd.key });
+  }
+  if (treasury >= BATTLE_TACTICS.stratagem.treasury && grain >= baseGrain
+    && (officerMeta(topInt).intellect ?? 50) > defInt) {
+    candidates.push({ tactic: "stratagem", officer: topInt.key });
+  }
+  if (treasury >= BATTLE_TACTICS.rally.treasury && grain >= baseGrain
+    && (targetCity.occupation > 0 || (state.realm?.cities?.[to]?.welfare ?? 60) < 58 || (targetCity.morale ?? 75) < 68)) {
+    candidates.push({ tactic: "rally", officer: topCmd.key });
+  }
+
+  let bestOrder = { type: "attack", from, to, troops, officer: topCmd.key };
+  let bestRatio = -1;
+  for (const { tactic, officer } of candidates) {
+    const tCost = BATTLE_TACTICS[tactic];
+    const cand = tactic === "assault"
+      ? { type: "attack", from, to, troops, officer }
+      : { type: "attack", from, to, troops, officer, tactic };
+    const fc = forecastAttack(era, state, cand, faction);
+    const ratio = fc.offense / Math.max(1, fc.defense) + (fc.wins ? 0.25 : 0) - (tCost.treasury * 0.004);
+    if (ratio > bestRatio) {
+      bestRatio = ratio;
+      bestOrder = cand;
+    }
+  }
+  return bestOrder;
 }
 
 function threatenedCity(era, state, faction, owned, seat) {
   const threats = owned.flatMap(({ key, links }) => links.flatMap((target) => {
     const enemy = state.cities[target].owner;
     if (!isHostile(state, faction, enemy)) return [];
-    const order = attackFrom(era, state, enemy, target, key);
+    const order = attackFrom(era, state, enemy, target, key, { quick: true });
     if (!order) return [];
     const { offense, defense } = forecastAttack(era, state, order, enemy);
     const margin = offense - defense;
@@ -172,7 +216,9 @@ function newGoals(world, era, state, faction, owned, allowDeployment) {
     }
     if (!order) return [];
     const battle = forecastAttack(era, state, order, faction);
-    return [{ city, target, ratio: battle.offense / Math.max(1, battle.defense) * (preparing ? .88 : 1) }];
+    const enemyCity = state.cities[target];
+    const opportunistic = state.century && (enemyCity.occupation > 0 || enemyCity.troops < 900) ? 1.15 : 1;
+    return [{ city, target, ratio: (battle.offense / Math.max(1, battle.defense)) * opportunistic * (preparing ? .88 : 1) }];
   }).sort((a, b) => b.ratio - a.ratio);
   const chance = opportunities[0];
   const defense = vulnerable?.gap > 0
@@ -246,7 +292,7 @@ function needsImmediateMilitaryAction(world, era, state, faction, { goal, order 
   if (["attack", "mobilize", "deploy"].includes(order.type)) return true;
   if (goal.type !== "defend") return false;
   const rival = state.cities[goal.target].owner;
-  const threat = attackFrom(era, state, rival, goal.target, goal.city);
+  const threat = attackFrom(era, state, rival, goal.target, goal.city, { quick: true });
   if (!threat || !forecastAttack(era, state, threat, rival).wins) return false;
   if (goal.city === alternativeCity) return true;
   const afterDefense = previewOrders(world, { ...state, player: faction, orders: [order] });
@@ -290,7 +336,8 @@ export function factionPlans(world, era, state, faction, {
   const active = existing && assessGoal(state, faction, existing, adaptive).status === "active";
   const march = active && existing.type === "expand" && attackFrom(era, state, faction, existing.city, existing.target);
   const readyAttack = march && forecastAttack(era, state, march, faction).wins;
-  const danger = adaptive && state.turn >= 4 && !recovering && !readyAttack && threatenedCity(era, state, faction, owned, seat);
+  const dangerTurn = state.century ? 1 : 4;
+  const danger = adaptive && state.turn >= dangerTurn && !recovering && !readyAttack && threatenedCity(era, state, faction, owned, seat);
   const cut = allowArmies && !recovering && supplyStrike(world, era, state, faction, owned);
   const keep = active && !cut && (!recovering || existing.type === "economy") && (!danger || existing.type === "defend" && existing.city === danger.city);
   let goals = keep ? [existing] : newGoals(world, era, state, faction, owned, allowDeployment);

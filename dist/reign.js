@@ -40,9 +40,22 @@ export function validReignPolicy(value) {
 
 export function regionCandidates10(world, state, region) {
   const towns = new Set(world.cities.filter((city) => city.region === region && controlling(state, state.player, city.key)).map(({ key }) => key));
-  return eraByYear(world, state).officers.filter((person) => person.faction === state.player && knownOfficer(state, person)
-    && towns.has(state.stations[person.key])).sort((a, b) =>
-    b.governance + (state.reign.audits[b.key]?.merit ?? 0) / 5 - a.governance - (state.reign.audits[a.key]?.merit ?? 0) / 5);
+  const eligible = eraByYear(world, state).officers.filter((person) => person.faction === state.player && knownOfficer(state, person)
+    && controlling(state, state.player, state.stations[person.key]));
+  const local = eligible.filter((person) => towns.has(state.stations[person.key]));
+  const rank = (person) => person.governance + (state.reign?.audits?.[person.key]?.merit ?? 0) / 5;
+  if (local.length >= 2) {
+    return local.sort((a, b) => rank(b) - rank(a));
+  }
+  const seatLeads = new Set(Object.entries(state.reign?.seats ?? {})
+    .filter(([area, seat]) => area !== region && seat?.lead)
+    .map(([, seat]) => seat.lead));
+  const localKeys = new Set(local.map(({ key }) => key));
+  const transferPool = eligible.filter((person) => !localKeys.has(person.key)
+    && !armyByOfficer(state, person.key) && !seatLeads.has(person.key));
+  const combined = [...local, ...transferPool];
+  const fallbackPool = combined.length ? combined : eligible;
+  return fallbackPool.sort((a, b) => Number(localKeys.has(b.key)) - Number(localKeys.has(a.key)) || rank(b) - rank(a));
 }
 
 export function publishReign(world, state, draft, { batch = false } = {}) {
@@ -54,7 +67,16 @@ export function publishReign(world, state, draft, { batch = false } = {}) {
   next.reign.blueprint = Object.fromEntries(Object.keys(defaultBlueprint).map((key) => [key, draft[key]]));
   next.reign.emergency = draft.objective === "defense";
   if (batch) {
-    for (const province of dynastyProvinces(world, next)) {
+    const provinces = dynastyProvinces(world, next);
+    const hasLocal = (region) => {
+      const towns = new Set(world.cities.filter((c) => c.region === region && controlling(next, next.player, c.key)).map((c) => c.key));
+      return eraByYear(world, next).officers.some((o) => o.faction === next.player && knownOfficer(next, o) && towns.has(next.stations[o.key]));
+    };
+    const ordered = [
+      ...provinces.filter((p) => hasLocal(p.region)),
+      ...provinces.filter((p) => !hasLocal(p.region)),
+    ];
+    for (const province of ordered) {
       if (next.reign.seats[province.region]) continue;
       const [lead, deputy] = regionCandidates10(world, next, province.region);
       if (!lead) continue;
@@ -188,7 +210,7 @@ export function resolveReignAlert(world, state, id, answer) {
 function evaluateOfficer(state, key, result) {
   if (!key) return;
   const row = state.reign.audits[key] ??= { seasons: 0, merit: 0, burden: 0 };
-  row.seasons++;
+  row.seasons = Math.min(state.turn + 1, row.seasons + 1);
   row.merit = limit(row.merit + (result > 0 ? 3 : 0));
   row.burden = limit(row.burden + (result < 0 ? 4 : -1));
 }
@@ -376,7 +398,8 @@ export function validReign(world, state, officers) {
   const map = (value, keys, check) => plain(value) && Object.entries(value).every(([key, entry]) => keys(key) && check(entry));
   const note = (row) => plain(row) && id(row.id) && date(row.turn) && side(row.side) && city(row.city) && (row.region === null || region(row.region))
     && typeof row.kind === "string" && row.kind.length <= 40 && typeof row.text === "string" && row.text.length <= 220;
-  const movement = (row) => plain(row) && city(row.city) && city(row.to) && list(row.route, 42, city);
+  const cityCount = Math.max(44, world.cities.length);
+  const movement = (row) => plain(row) && city(row.city) && city(row.to) && list(row.route, cityCount, city);
   return Object.hasOwn(reignStages, d.stage) && date(d.stageSince) && (d.blueprint === undefined || validReignPolicy(d.blueprint))
     && (d.emergency === undefined || typeof d.emergency === "boolean")
     && map(d.seats, region, (row) => plain(row) && officer(row.lead) && officer(row.deputy) && ["growth", "defense", "relief"].includes(row.objective)
@@ -390,12 +413,12 @@ export function validReign(world, state, officers) {
     && list(d.generations, 16, (row) => plain(row) && date(row.at) && officer(row.head) && bounded(row.support, 0, 100) && bounded(row.offices, 0, 3)
       && ["succession", "regency", "court-crisis"].includes(row.result))
     && list(d.records, 24, (row) => plain(row) && date(row.at) && Object.hasOwn(reignStages, row.stage)
-      && list(row.moves, 12, movement) && list(row.cargos, 6, movement) && list(row.losses, 42, city) && list(row.distress, 42, city)
+      && list(row.moves, 12, movement) && list(row.cargos, 6, movement) && list(row.losses, cityCount, city) && list(row.distress, cityCount, city)
       && list(row.battles, 5, (item) => plain(item) && bounded(item.id, 1, state.frontline.sequence - 1)
         && item.turn === row.at - 1 && validFrontlineBattle(state, officers, item))
       && ["cash", "grain", "decision"].every((key) => bounded(row[key], 0, Number.MAX_SAFE_INTEGER)))
     && (d.stewardship === null || plain(d.stewardship) && date(d.stewardship.from)
-      && ["unification", "coalition", "peace", "scenario"].includes(d.stewardship.kind) && bounded(d.stewardship.floor, 1, 42)
+      && ["unification", "coalition", "peace", "scenario"].includes(d.stewardship.kind) && bounded(d.stewardship.floor, 1, cityCount)
       && bounded(d.stewardship.stable, 0, 6) && [d.stewardship.transferred, d.stewardship.finished].every((turn) => turn === null || date(turn)))
     && validMarkets(world, state, d) && validLeagues(state, d);
 }

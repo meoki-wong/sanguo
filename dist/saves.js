@@ -2,7 +2,7 @@ import { decodeSave, firstCity } from "./engine.js";
 
 const format = "jinglue-sanguo-save";
 export const saveFileLimit = 370_000;
-const gameFields = ["version", "year", "player", "turn", "factions", "cities", "order", "orders", "strategies",
+const gameFields = ["version", "year", "player", "difficulty", "imperialChoice", "turn", "factions", "cities", "order", "orders", "strategies",
   "stations", "treaties", "treatyOffers", "incomingTreaty", "stageCompletedAt", "delegationPriority", "delegationReserve", "history", "personnelHistory",
   "campaignMilestones", "campaignEvents", "officerService", "nationalPolicy", "policyOverrides", "armies", "theaters", "warBudget", "recruitedOfficers",
   "scenarioEnding", "campaignRecord", "realm", "war", "polity", "grand", "landscape", "statecraft", "sandtable", "frontline", "highCommand", "dynasty", "strategy9", "reign", "century"];

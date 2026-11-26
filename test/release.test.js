@@ -179,7 +179,7 @@ for (const [year, player] of [[199, "cao"], [199, "lu"], [262, "wei"], [262, "sh
       if (order) state = queueOrder(world, state, order);
       state = restore(advanceQuarter(world, state));
       assert.equal(state.turn, turn);
-      assert.equal(Object.keys(state.cities).length, 42);
+      assert.equal(Object.keys(state.cities).length, 44);
       assert.equal(gameOutcome(state), "ongoing");
     }
     const counts = forceTotals(state, player);
@@ -195,7 +195,7 @@ for (const [year, player] of [[199, "cao"], [199, "lu"], [262, "wei"], [262, "sh
   });
 }
 
-test("a new 265 campaign can play from opening to full 42-city unification", (t) => {
+test("a new 265 campaign can play from opening to full 44-city unification", (t) => {
   const era = eraByYear(world, 265);
   let state = createGame(world, 265, "jin");
   while (gameOutcome(state) === "ongoing" && state.turn < 60) {
@@ -219,8 +219,8 @@ test("a new 265 campaign can play from opening to full 42-city unification", (t)
     state = restore(advanceQuarter(world, state));
   }
   assert.equal(gameOutcome(state), "victory");
-  assert.equal(forceTotals(state, "jin").cities, 42);
-  assert.equal(state.campaignRecord.peak, 42);
+  assert.equal(forceTotals(state, "jin").cities, 44);
+  assert.equal(state.campaignRecord.peak, 44);
   assert.ok(state.campaignRecord.battles.length > 0);
   assert.throws(() => advanceQuarter(world, state), /战局已结束/);
   t.diagnostic(`unified in ${state.turn} quarters`);

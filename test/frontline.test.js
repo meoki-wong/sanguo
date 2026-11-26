@@ -216,12 +216,12 @@ test("direct and delegated command use the same post casualties and garrison tra
   assert.equal(own.troops - armyByOfficer(direct, own.officer).troops, scene.sides[0].loss + direct.sandtable.posts["changan:luoyang"].troops);
 });
 
-test("all eight eras retain 42 cities for two actual choices each, with up to a hundred 6.0 quarters", { timeout: 140000 }, () => {
+test("all eight eras retain 44 cities for two actual choices each, with up to a hundred 6.0 quarters", { timeout: 140000 }, () => {
   for (const era of world.scenarios) {
     const factions = era.factions.filter(({ key }) => Object.values(era.ownership).includes(key));
     for (const { key } of [factions[0], factions.at(-1)]) {
       let state = create(era.year, key);
-      assert.equal(Object.keys(state.cities).length, 42);
+      assert.equal(Object.keys(state.cities).length, 44);
       const storageBefore = JSON.stringify(state);
       const forecast = forecastFinance(world, state);
       assert.deepEqual(JSON.stringify(state), storageBefore);
@@ -229,7 +229,7 @@ test("all eight eras retain 42 cities for two actual choices each, with up to a 
       for (let step = 0; step < 100 && gameOutcome(state) === "ongoing"; step++) {
         state = advanceQuarter(world, state);
         if (step % 12 === 0) verify(state);
-        assert.equal(Object.keys(state.cities).length, 42);
+        assert.equal(Object.keys(state.cities).length, 44);
       }
       verify(state);
     }

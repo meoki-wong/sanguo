@@ -1,9 +1,10 @@
 import { annualDraft15, annualObjectives15, answerCase15, concludeChapter15, frame15, labor15, openCases15, previewYear15,
   provinceAgreement15, publishYear15, reignChapters15, renewAccord15, setFrontPriority15 } from "./century.js";
 import { dynastyNotices, dynastyProvinces } from "./dynasty.js";
-import { cityName, firstCity, gameOutcome } from "./engine.js";
+import { cityName, eraByYear, gameOutcome, setNationalPolicy } from "./engine.js";
 import { courtFor } from "./polity-governance.js";
-import { reignAlerts, reignPeople, reignSuccession, resolveReignAlert } from "./reign.js";
+import { regionCandidates10, reignAlerts, reignPeople, reignSuccession, resolveReignAlert } from "./reign.js";
+import { SOVEREIGN_DOCTRINES, appointAllProvinceGovernors } from "./sovereign.js";
 import { marketRow } from "./reign-economy.js";
 import { strategicAlerts9, strategicFronts9, theaterRoles9 } from "./strategy-nine.js";
 
@@ -150,11 +151,17 @@ export function createCenturyDesk(world, api) {
 
   function policy(state) {
     if (!draft) {
-      draft = state.century.plan ? { ...state.century.plan } : annualDraft15("recovery");
+      draft = state.century.plan ? { ...state.century.plan } : annualDraft15("accord");
       auto = state.century.plan?.auto ?? true;
     }
     const options = Object.entries(annualObjectives15);
     const active = gameOutcome(state) === "ongoing";
+    const annualToDoctrine = { recovery: "rest", accord: "prepare", expansion: "expand" };
+    const descriptions = {
+      expansion: "倾力前线募兵扩土，积极调度军费粮草与接管新城。",
+      accord: "兼顾边防、商贸与外交通盟，稳中求进（兼配守边）。",
+      recovery: "着重垦殖、赈济与安定民心，蓄积钱粮恢复元气。",
+    };
     const presets = options.map(([id, label]) => {
       const button = control(label, "preset-" + id, () => { draft = annualDraft15(id); comparison = null; render(); }, { disabled: !active });
       button.setAttribute("aria-pressed", String(id === draft.primary));
@@ -167,16 +174,21 @@ export function createCenturyDesk(world, api) {
     delegation.type = "checkbox";
     delegation.checked = auto;
     delegation.addEventListener("change", () => { auto = delegation.checked; comparison = null; render(); });
-    body.append(section("年度方略", row(...presets), row(design.field, field("代办续任和新城接管", delegation)),
-      row(control("比较四季", "preview", () => {
-        try {
-          comparison = previewYear15(world, state, draft, { auto });
-          feedback.textContent = "";
-          render();
-        } catch (error) { feedback.textContent = error.message; }
-      }, { disabled: !active }), control("颁布", "publish", () => change((value) => publishYear15(world, value, draft, { auto }), "年度国策已颁布。",
-        () => { pane = "overview"; draft = undefined; comparison = null; }), { primary: true, disabled: !active }),
-      control(expanded ? "收起额度" : "调整额度", "edit", () => { expanded = !expanded; render(); }))));
+    body.append(section("年度国策（三选一统一施行）",
+      paragraph(descriptions[draft.primary] + " 颁布时同步配置城池委任与州牧。"),
+      row(...presets),
+      row(control("施行此国策", "publish", () => change((value) => {
+        let next = publishYear15(world, value, draft, { auto });
+        const doc = SOVEREIGN_DOCTRINES.find((d) => d.id === annualToDoctrine[draft.primary]);
+        if (doc) {
+          next = setNationalPolicy(next, null);
+          next = setNationalPolicy(next, doc.policy);
+        }
+        next = appointAllProvinceGovernors(world, next).state;
+        return next;
+      }, "已统一颁布「" + annualObjectives15[draft.primary] + "」并任免州牧。",
+      () => { pane = "overview"; draft = undefined; comparison = null; }), { primary: true, disabled: !active }),
+      control(expanded ? "收起高级细项" : "高级与四季推演", "edit", () => { expanded = !expanded; render(); }))));
     if (expanded) {
       const fields = Object.entries(numberFields).map(([id, label]) => {
         const input = element("input");
@@ -189,7 +201,16 @@ export function createCenturyDesk(world, api) {
         input.addEventListener("change", () => { draft[id] = input.valueAsNumber; comparison = null; });
         return field(label, input);
       });
-      body.append(section("每季额度", row(...fields)));
+      body.append(section("高级配额（非必要无需调整）",
+        row(design.field, field("代办续任和新城接管", delegation)),
+        row(...fields),
+        row(control("比较四季走势", "preview", () => {
+          try {
+            comparison = previewYear15(world, state, draft, { auto });
+            feedback.textContent = "";
+            render();
+          } catch (error) { feedback.textContent = error.message; }
+        }, { disabled: !active }))));
     }
     if (comparison) {
       const table = element("table", undefined, "century-table");
@@ -249,23 +270,47 @@ export function createCenturyDesk(world, api) {
   function local(state) {
     const provinces = dynastyProvinces(world, state);
     const province = provinces.find((item) => item.region === fieldKey) ?? provinces[0];
+    const active = gameOutcome(state) === "ongoing";
+    const officerMap = new Map(eraByYear(world, state).officers.map((o) => [o.key, o]));
     if (province) {
       const city = province.cities[0];
       const select = selector("州郡", provinces.map(({ region }) => [region, region]), province.region,
         (value) => detail("local", value), "region");
+      const seat = state.reign.seats[province.region];
+      const governor = seat?.lead && seat.end > state.turn ? officerMap.get(seat.lead) : null;
+      const candidates = regionCandidates10(world, state, province.region);
+      const leadPicker = selector(
+        "选任州牧",
+        candidates.length ? candidates.map((o) => [o.key, `${o.name}（政${o.governance}·统${o.command}）`]) : [["", "暂无闲员"]],
+        governor?.key ?? candidates[0]?.key ?? "",
+        null,
+        "governor-pick",
+      );
       const charter = state.century.charters[province.region];
       const labor = labor15(state, city);
       const stores = marketRow(state, city);
-      body.append(section("地方授权", select.field,
-        paragraph(province.cities.length + " 城 · 民心 " + province.welfare + " · 地方压力 " + province.pressure
-          + (charter ? " · 留粮 " + charter.retain + "% · 已履约 " + charter.served + " 季" : "")),
+      body.append(section("州牧任免与地方统筹",
+        row(select.field, leadPicker.field),
+        paragraph(province.cities.length + " 城 · 现任州牧：" + (governor ? governor.name + "（余" + (seat.end - state.turn) + "季）" : "空缺")
+          + " · 民心 " + province.welfare + " · 地方压力 " + province.pressure
+          + (charter ? " · 留粮 " + charter.retain + "%" : "")),
         paragraph(cityName(world, city) + " 民仓 " + stores.bins + " · 可耕劳力 " + labor.cultivation + " / " + labor.capacity),
-        row(control("委任州牧", "delegate", () => change((value) => provinceAgreement15(world, value, province.region, "renew"), "州郡已授权。"),
-          { disabled: !state.century.plan }), control("签订共治", "compact", () => change(
-          (value) => provinceAgreement15(world, value, province.region, "compact"), "共治协议已生效。"), { disabled: !state.century.plan }),
-        control("详细册任", "staff", () => leave("staff", province.region)),
-        control("人才", "talent", () => leave("talent")),
-        control("地图", "province-map", () => leave("map", ["regions", city])))));
+        row(
+          control(governor ? "重签 / 换任州牧" : "委任州牧", "delegate", () => {
+            const leadKey = leadPicker.input.value || undefined;
+            change((value) => provinceAgreement15(world, value, province.region, "renew", { leadKey }),
+              "已委任 " + (officerMap.get(leadKey)?.name || "能吏") + " 出任" + province.region + "州牧。");
+          }, { primary: true, disabled: !active || !candidates.length }),
+          control("签订共治安民", "compact", () => {
+            const leadKey = leadPicker.input.value || undefined;
+            change((value) => provinceAgreement15(world, value, province.region, "compact", { leadKey }),
+              province.region + "共治安民协议已生效。");
+          }, { disabled: !active || !candidates.length }),
+          control("一键遍任各州", "appoint-all", () => change(
+            (value) => appointAllProvinceGovernors(world, value).state, "已为各缺额州郡遍任州牧。"), { disabled: !active }),
+          control("详细册任", "staff", () => leave("staff", province.region)),
+          control("地图", "province-map", () => leave("map", ["regions", city])),
+        )));
     }
     const fronts = strategicFronts9(state);
     if (fronts.length) {

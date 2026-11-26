@@ -143,14 +143,14 @@ test("an independent rival can ratify a real alliance of interests, and tactical
 for (const year of [184, 190, 199, 208, 219, 234, 262, 265]) {
   const era = eraByYear(world, year);
   for (const side of [playableFactions(era)[0], playableFactions(era).at(-1)]) {
-    test(year + " " + side.key + " preserves 42 cities over 100 quarters or a natural ending in 9.0", (t) => {
+    test(year + " " + side.key + " preserves 44 cities over 100 quarters or a natural ending in 9.0", (t) => {
       let state = createGame(world, year, side.key, { strategic: true });
       const owned = world.cities.find(({ key }) => state.cities[key].owner === side.key).key;
       const partner = Object.keys(state.factions).find((key) => key !== side.key && Object.values(state.cities).some(({ owner }) => owner === key));
       state = publishStrategy9(world, state, { ...policy, primary: { kind: "stability", key: owned }, secondary: { kind: "concord", key: partner } });
       for (let i = 0; i < 100 && gameOutcome(state) === "ongoing"; i++) {
         state = advanceQuarter(world, state);
-        assert.equal(Object.keys(state.cities).length, 42);
+        assert.equal(Object.keys(state.cities).length, 44);
         decodeSave(world, JSON.stringify(state));
         if (i % 16 === 0) save(state);
       }

@@ -16,6 +16,41 @@ export const strategicPosts = [
   ["xu", "chenliu", "许昌转运仓", "depot"], ["runan", "shouchun", "淮汝转运仓", "depot"],
   ["beiping", "ji", "幽蓟军营", "camp"], ["ye", "pingyuan", "河北军营", "camp"],
   ["chengdu", "zitong", "蜀道转运仓", "depot"],
+  // Complete RTK11 Passes (关隘)
+  ["luoyang", "chenliu", "虎牢关", "pass"],
+  ["changan", "jinyang", "潼关", "pass"],
+  ["jinyang", "ye", "壶关", "pass"],
+  ["changan", "wan", "武关", "pass"],
+  ["nanzheng", "tianshui", "阳平关", "pass"],
+  ["wan", "luoyang", "伊阙关", "pass"],
+  ["xiangyang", "shangyong", "房陵关", "pass"],
+  // Complete RTK11 River & Sea Ports / Ferries (港埠渡口)
+  ["ye", "puyang", "白马港", "port"],
+  ["chenliu", "puyang", "官渡港", "ferry"],
+  ["luoyang", "ye", "孟津港", "ferry"],
+  ["pingyuan", "beihai", "临济港", "port"],
+  ["nanpi", "pingyuan", "平原港", "port"],
+  ["shouchun", "lujiang", "濡须口", "port"],
+  ["shouchun", "moling", "广陵港", "port"],
+  ["xiangyang", "jiangling", "乌林港", "ferry"],
+  ["xiangyang", "jiangxia", "汉津港", "ferry"],
+  ["xiangyang", "xinye", "樊城渡", "ferry"],
+  ["moling", "wu", "曲阿港", "port"],
+  ["wu", "shanyin", "吴港", "port"],
+  ["jiangling", "linyuan", "公安港", "port"],
+  ["jiangling", "linxiang", "洞庭港", "ferry"],
+  ["chaisang", "lujiang", "湖口港", "port"],
+  ["xiapi", "shouchun", "淮阴港", "port"],
+  ["xiaopei", "xiapi", "下邳港", "port"],
+  ["beihai", "xiapi", "海西港", "port"],
+  ["chaisang", "shanyin", "鄱阳港", "port"],
+  // Historic Camp
+  ["wan", "xinye", "博望坡", "camp"],
+  // Jiaozhou & Lingnan Passes and Ports
+  ["guiyang", "panyu", "梅关", "pass"],
+  ["quanling", "jiaozhi", "灵渠渡", "ferry"],
+  ["panyu", "jiaozhi", "合浦港", "port"],
+  ["shanyin", "panyu", "东冶港", "port"],
 ].map(([seat, to, name, kind]) => ({ key: edgeKey(seat, to), seat, to, name, kind }));
 
 const index = new Map(strategicPosts.map((post) => [post.key, post]));

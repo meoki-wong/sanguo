@@ -36,6 +36,11 @@ import { workforceYield } from "./sandtable-economy.js";
 import { postTransit, settlePosts } from "./sandtable-posts.js";
 import { authorizeWars } from "./sandtable-war.js";
 import { directGrandCampaigns } from "./grand-campaign.js";
+import { combatTraitEffects, governorTraitDiscount, hasTrait } from "./traits.js";
+import {
+  BATTLE_TACTICS, DEFAULT_TACTIC, difficultyConfig, estimateCasualties, evaluateTactic, isOpeningPrepTurn,
+  moraleModifier, normalizeTactic, tacticCost, validDifficulty, validTactic,
+} from "./tactics.js";
 
 export const projects = {
   farming: { name: "屯田", cost: 18 },
@@ -146,11 +151,13 @@ function requireCampaignOpen(state) {
 }
 
 export function createGame(world, year, player, { realm = year === 208, war = false, polity = false, grand = false, landscape = false,
-  statecraft = false, sandtable = false, frontline = false, highCommand = false, dynasty = false, strategic = false, reign = false, century = false, opening } = {}) {
+  statecraft = false, sandtable = false, frontline = false, highCommand = false, dynasty = false, strategic = false, reign = false, century = false, difficulty, opening } = {}) {
   reign ||= century;
   strategic ||= reign;
   dynasty ||= strategic;
   highCommand ||= dynasty;
+  const diffKey = century ? (validDifficulty(difficulty) ? difficulty : "standard") : undefined;
+  const diff = difficultyConfig(diffKey ? { difficulty: diffKey } : null);
   const era = eraByYear(world, year);
   requireRule(era && era.factions.some(({ key }) => key === player), "请选择拥有主城的势力。");
   validateOpening(world, era, player, opening);
@@ -161,12 +168,13 @@ export function createGame(world, year, player, { realm = year === 208, war = fa
     const owner = ownership[key];
     const isCapital = key === openingCapital(era, owner);
     const border = links.some((neighbor) => ownership[neighbor] !== owner);
+    const bonusTroops = century && owner !== player && (isCapital || border) ? diff.aiStartTroops : 0;
     holdings[key] = {
       owner,
-      troops: isCapital ? 2450 : (border ? 1450 : 800) + ((index * 97 + year) % 390),
+      troops: (isCapital ? 2450 : (border ? 1450 : 800) + ((index * 97 + year) % 390)) + bonusTroops,
       farming: index % 4 === 0 ? 1 : 0,
       commerce: isCapital ? 1 : 0,
-      defense: isCapital ? 2 : 1,
+      defense: century ? (isCapital ? 3 : border ? 2 : 1) : (isCapital ? 2 : 1),
       occupation: 0,
       governor: null,
       commander: null,
@@ -179,10 +187,21 @@ export function createGame(world, year, player, { realm = year === 208, war = fa
     version: 1,
     year,
     player,
+    ...(diffKey ? { difficulty: diffKey } : {}),
     turn: 0,
-    factions: Object.fromEntries(era.factions.map(({ key, stats }) => [
-      key, { treasury: opening?.stocks[key]?.treasury ?? stats[0], grain: opening?.stocks[key]?.grain ?? stats[1], morale: stats[2] },
-    ])),
+    factions: Object.fromEntries(era.factions.map(({ key, stats }) => {
+      const startBonus = century && key !== player && !opening?.stocks[key] ? diff.aiStartBonus : 0;
+      const baseTreasury = opening?.stocks[key]?.treasury ?? stats[0];
+      const baseGrain = opening?.stocks[key]?.grain ?? stats[1];
+      return [
+        key,
+        {
+          treasury: baseTreasury + Math.round(baseTreasury * startBonus),
+          grain: baseGrain + Math.round(baseGrain * startBonus),
+          morale: stats[2],
+        },
+      ];
+    })),
     cities: holdings,
     orders: [],
     strategies: {},
@@ -195,12 +214,42 @@ export function createGame(world, year, player, { realm = year === 208, war = fa
 
   for (const key of new Set(Object.values(ownership))) {
     if (key === player) continue;
-    const seat = state.cities[firstCity(world, state, key)];
+    const seatKey = firstCity(world, state, key);
+    const seat = state.cities[seatKey];
     const roster = era.officers.filter((person) => person.faction === key && knownOfficer(state, person));
+    const taken = new Set();
     const administrator = [...roster].sort((a, b) => b.governance - a.governance)[0];
-    const general = roster.filter(({ key }) => key !== administrator?.key).sort((a, b) => b.command - a.command)[0];
-    if (administrator) seat.governor = administrator.key;
-    if (general) seat.commander = general.key;
+    if (administrator) {
+      seat.governor = administrator.key;
+      taken.add(administrator.key);
+    }
+    const general = roster.filter((o) => !taken.has(o.key)).sort((a, b) => b.command - a.command)[0];
+    if (general) {
+      seat.commander = general.key;
+      taken.add(general.key);
+    }
+    if (century) {
+      const borderCities = world.cities
+        .filter(({ key: cityKey, links }) => cityKey !== seatKey && ownership[cityKey] === key
+          && links.some((n) => ownership[n] !== key));
+      for (const city of borderCities) {
+        if (state.cities[city.key].commander) continue;
+        const guard = roster
+          .filter((o) => !taken.has(o.key))
+          .sort((a, b) => (b.command + (hasTrait(b, "fortress") ? 14 : 0)) - (a.command + (hasTrait(a, "fortress") ? 14 : 0)))[0];
+        if (!guard) break;
+        state.cities[city.key].commander = guard.key;
+        taken.add(guard.key);
+      }
+      const otherCities = world.cities.filter(({ key: cityKey }) => cityKey !== seatKey && ownership[cityKey] === key);
+      for (const city of otherCities) {
+        if (state.cities[city.key].governor) continue;
+        const gov = roster.filter((o) => !taken.has(o.key)).sort((a, b) => b.governance - a.governance)[0];
+        if (!gov) break;
+        state.cities[city.key].governor = gov.key;
+        taken.add(gov.key);
+      }
+    }
   }
   for (const [officer, city] of Object.entries(opening?.stations ?? {})) {
     const role = postingOf(state, officer);
@@ -639,6 +688,8 @@ export function validateOrder(world, state, faction, order) {
     return;
   }
   if (order.type === "attack") {
+    requireRule(!isOpeningPrepTurn(state), "开局首季为整军备战期，须先定国策、任州牧并整顿边备，次季方可兴兵。");
+    requireRule(order.tactic === undefined || validTactic(order.tactic), "未知阵前军策。");
     const origin = world.cities.find(({ key }) => key === order.from);
     requireRule(owns(state, order.from, faction), "出征城池已经易主。");
     requireRule(origin.links.includes(order.to) && !owns(state, order.to, faction), "只能攻打相邻的非己方城池。");
@@ -649,7 +700,9 @@ export function validateOrder(world, state, faction, order) {
     requireRule(availableAttackers(era, state, faction, order.from).some(({ key }) => key === order.officer), "请选择驻在出征城的待任武将或守将。");
     const maximum = state.cities[order.from].troops - cityReserve;
     requireRule(Number.isInteger(order.troops) && order.troops >= minimumMarch && order.troops <= maximum, "请至少派出 200 人，并留守 250 人。");
-    requireRule(state.factions[faction].grain >= expeditionGrain(order.troops), "储粮不足。");
+    const extra = tacticCost(order.tactic, state);
+    requireRule(state.factions[faction].grain >= expeditionGrain(order.troops) + extra.grain, "储粮不足。");
+    requireRule(state.factions[faction].treasury >= extra.treasury, "国库不足以支应此项军策。");
     return;
   }
   if (order.type === "transfer") {
@@ -853,7 +906,9 @@ export function describeOrder(world, era, order) {
   }
   if (order.type === "attack") {
     const general = era.officers.find(({ key }) => key === order.officer);
-    return general.name + "率 " + order.troops.toLocaleString("zh-CN") + " 人自" + cityName(world, order.from) + "攻打" + cityName(world, order.to);
+    const tacticTag = order.tactic && validTactic(order.tactic) && order.tactic !== DEFAULT_TACTIC
+      ? "（" + BATTLE_TACTICS[order.tactic].name + "）" : "";
+    return general.name + "率 " + order.troops.toLocaleString("zh-CN") + " 人自" + cityName(world, order.from) + "攻打" + cityName(world, order.to) + tacticTag;
   }
   if (order.type === "mobilize") {
     const general = era.officers.find(({ key }) => key === order.officer);
@@ -867,26 +922,82 @@ export function describeOrder(world, era, order) {
   return cityName(world, order.city) + "扩建" + projects[order.project].name;
 }
 
-export function defensiveStrength(era, target, state, key) {
-  const defender = era.officers.find(({ key }) => key === target.commander);
+export function defensiveStrength(era, target, state, key, wallFactor = 1) {
+  const defender = era.officers.find(({ key: id }) => id === target.commander);
   const guard = holdingArmies(state, target.owner, key).reduce((total, army) => {
-    const leader = era.officers.find(({ key }) => key === army.officer);
+    const leader = era.officers.find(({ key: id }) => id === army.officer);
     return total + army.troops * (1 + officerSkill(state, leader, "command") / 145);
   }, 0);
-  return Math.round(target.troops * (1 + officerSkill(state, defender, "command") / 145) + 180 * target.defense + guard);
+  if (!state?.century) {
+    return Math.round(target.troops * (1 + officerSkill(state, defender, "command") / 145) + 180 * target.defense * wallFactor + guard);
+  }
+  const wallBonus = (340 * target.defense + target.troops * 0.085 * target.defense) * wallFactor;
+  const base = target.troops * (1 + officerSkill(state, defender, "command") / 135) + wallBonus + guard;
+  const morale = moraleModifier(state.factions?.[target.owner]?.morale ?? 75);
+  const aiMult = target.owner !== state.player ? difficultyConfig(state).aiCombatMult : 1;
+  return Math.round(base * morale * aiMult);
 }
 
 export function forecastAttack(era, state, order, faction = state.player, conditions = {}) {
   const leader = era.officers.find(({ key, faction: allegiance }) => key === order.officer && allegiance === faction);
+  const targetHolding = state.cities[order.to];
+  const defender = era.officers.find(({ key }) => key === targetHolding?.commander);
   const gear = Math.min(.14, (conditions.equipment ?? 0) * 22 / order.troops);
   const weather = edgeWeather(state, order.from, order.to);
-  const travel = conditions.travel === "water" && weather.terrain === "river" ? 1.12 : 1 - Math.min(.15, weather.cost * .035);
-  const offense = Math.round(order.troops * (1 + officerSkill(state, leader, "command") / 120 + gear) * travel * (conditions.readiness ?? 1));
+  const traitFx = combatTraitEffects({ attacker: leader, defender, weather, travel: conditions.travel, state });
+  const tacticFx = evaluateTactic({
+    tacticId: order.tactic,
+    attacker: leader,
+    defender,
+    targetHolding: targetHolding ? { ...targetHolding, key: order.to } : null,
+    defenderMorale: targetHolding ? state.factions?.[targetHolding.owner]?.morale : 75,
+    state,
+  });
+  const rawTravel = conditions.travel === "water" && weather.terrain === "river" ? 1.12 : 1 - Math.min(.15, weather.cost * .035);
+  const travel = traitFx.ignoreWeather && rawTravel < 1 ? 1 : rawTravel;
+  const offenseMorale = state?.century ? moraleModifier(state.factions?.[faction]?.morale ?? 75) : 1;
+  const offenseAiMult = state?.century && faction !== state.player ? difficultyConfig(state).aiCombatMult : 1;
+  const offense = Math.round(order.troops * (1 + officerSkill(state, leader, "command") / 120 + gear)
+    * travel * (conditions.readiness ?? 1) * traitFx.attackMult * tacticFx.attackMult * offenseMorale * offenseAiMult);
   const terrain = state.war && weather.terrain;
-  const ground = terrain === "pass" ? 1.12 : terrain === "river" ? 1.08 : 1;
+  const rawGround = state?.century
+    ? (terrain === "pass" ? 1.24 : terrain === "river" ? (hasTrait(leader, "navy") || conditions.travel === "water" ? 1.04 : 1.16) : 1)
+    : (terrain === "pass" ? 1.12 : terrain === "river" ? 1.08 : 1);
+  const ground = rawGround > 1 ? 1 + (rawGround - 1) * (1 - tacticFx.terrainReduction) : rawGround;
+  const combinedWallFactor = traitFx.wallFactor * tacticFx.wallFactor;
   const defense = conditions.surrender ? Math.max(0, offense - 1)
-    : Math.round((defensiveStrength(era, state.cities[order.to], state, order.to) + (conditions.relief ?? 0)) * ground * (1 - (conditions.breach ?? 0) / 330));
-  return { offense, defense, grain: expeditionGrain(order.troops), wins: offense > defense };
+    : Math.round((defensiveStrength(era, targetHolding, state, order.to, combinedWallFactor) + (conditions.relief ?? 0))
+      * ground * (1 - (conditions.breach ?? 0) / 330) * traitFx.defenseMult * tacticFx.defenseMult);
+  const wins = offense > defense;
+  const defenders = (targetHolding?.troops ?? 0) + (targetHolding ? holdingArmies(state, targetHolding.owner, order.to)
+    .reduce((total, guard) => total + guard.troops, 0) : 0);
+  const est = estimateCasualties({
+    troops: order.troops,
+    defenders,
+    offense,
+    defense,
+    wins,
+    tacticFx,
+    surrender: conditions.surrender,
+    century: Boolean(state?.century),
+  });
+  return {
+    offense,
+    defense,
+    grain: expeditionGrain(order.troops) + tacticFx.extraGrain,
+    treasury: tacticFx.extraTreasury,
+    wins,
+    tactic: tacticFx.id,
+    tacticName: tacticFx.name,
+    tacticTag: tacticFx.tag,
+    tacticSummary: tacticFx.summary,
+    postCaptureOccupationDelta: tacticFx.postCaptureOccupationDelta,
+    estimatedAttackerLoss: est.attackerLoss,
+    estimatedDefenderLoss: est.defenderLoss,
+    terrainLabel: terrain === "pass" ? "关隘险要" : terrain === "river" ? "大江渡口" : "",
+    traitNotes: { attacker: traitFx.attackerTraits, defender: traitFx.defenderTraits },
+    tacticFx,
+  };
 }
 
 export function occupationProgress(city, capturedThisSeason) {
@@ -908,10 +1019,18 @@ function resolveAttack(world, era, state, faction, order, army, conditions = {})
   const target = state.cities[order.to];
   const oldOwner = target.owner;
   const odds = forecastAttack(era, state, order, faction, conditions);
-  const attackerLoss = Math.min(order.troops - 1, Math.max(1, Math.round(order.troops * (conditions.surrender ? .02 : odds.wins ? .25 : .39))));
   const fieldGuard = holdingArmies(state, oldOwner, order.to);
   const defenders = target.troops + fieldGuard.reduce((total, guard) => total + guard.troops, 0);
-  const defensiveLoss = Math.round(defenders * (conditions.surrender ? .05 : odds.wins ? .62 : .22));
+  const { attackerLoss, defenderLoss: defensiveLoss } = estimateCasualties({
+    troops: order.troops,
+    defenders,
+    offense: odds.offense,
+    defense: odds.defense,
+    wins: odds.wins,
+    tacticFx: odds.tacticFx,
+    surrender: conditions.surrender,
+    century: Boolean(state.century),
+  });
   const lossUpTo = (troops) => defenders ? Math.floor(defensiveLoss * troops / defenders) : 0;
   let counted = target.troops;
   const garrisonLoss = lossUpTo(counted);
@@ -926,18 +1045,37 @@ function resolveAttack(world, era, state, faction, order, army, conditions = {})
     attacker: { faction, troops: order.troops, strength: odds.offense, casualties: attackerLoss },
     defender: { faction: oldOwner, troops: defenders, strength: odds.defense, casualties: defensiveLoss },
     personnel: { attacker: order.officer, defender: target.commander },
-    ...(army?.stance ? { tactic: conditions.surrender ? "surrender" : army.stance } : {}),
+    ...(army?.stance ? { tactic: conditions.surrender ? "surrender" : army.stance }
+      : state.century && odds.tactic ? { tactic: odds.tactic } : {}),
   };
-  if (!army) state.factions[faction].grain -= odds.grain;
+  if (!army) {
+    state.factions[faction].grain -= odds.grain;
+    if (odds.treasury) state.factions[faction].treasury = Math.max(0, state.factions[faction].treasury - odds.treasury);
+  }
+  if (state.century) {
+    const attMorale = state.factions[faction];
+    const defMorale = state.factions[oldOwner];
+    const clampMorale = (m) => Math.max(15, Math.min(100, m));
+    if (odds.wins) {
+      if (attMorale) attMorale.morale = clampMorale(attMorale.morale + 3);
+      if (defMorale) defMorale.morale = clampMorale(defMorale.morale - 4);
+    } else {
+      if (attMorale) attMorale.morale = clampMorale(attMorale.morale - 4);
+      if (defMorale) defMorale.morale = clampMorale(defMorale.morale + 3);
+    }
+  }
+  const tacticSuffix = !army && state.century && odds.tacticSummary
+    ? "（施「" + odds.tacticName + "」· " + odds.tacticSummary + "）" : "";
   if (!odds.wins) {
     if (army) {
       army.troops -= attackerLoss;
       army.phase = "hold";
     } else origin.troops -= attackerLoss;
     target.troops -= garrisonLoss;
+    const fxTag = odds.traitNotes?.defender?.length ? "（守军发动" + odds.traitNotes.defender.join("、") + "）" : "";
     return {
       type: "battle", faction, city: order.to, participants: [faction, oldOwner], battle,
-      text: factionName(era, faction) + "攻打" + cityName(world, order.to) + "失利，折损 " + attackerLoss + " 人。",
+      text: factionName(era, faction) + "攻打" + cityName(world, order.to) + "失利，折损 " + attackerLoss + " 人。" + tacticSuffix + fxTag,
     };
   }
 
@@ -965,11 +1103,12 @@ function resolveAttack(world, era, state, faction, order, army, conditions = {})
   state.stations[order.officer] = marching ? null : order.to;
   removeDelegationPriority(state, order.to);
   if (state.policyOverrides?.includes(order.to)) setPolicyCityOverride(state, order.to, false);
+  const nextOccupation = Math.max(1, occupationSeasons + (state.century ? (odds.postCaptureOccupationDelta ?? 0) : 0));
   Object.assign(target, {
     owner: faction,
     troops: survivors - marching,
     defense: Math.max(0, target.defense - 1),
-    occupation: occupationSeasons,
+    occupation: nextOccupation,
     governor: null,
     commander: marching ? null : order.officer,
     mode: "direct",
@@ -982,7 +1121,8 @@ function resolveAttack(world, era, state, faction, order, army, conditions = {})
     battle: { ...battle, occupation: { garrison: target.troops, retreatTo: retreat?.key ?? null,
       ...(marching ? { inArmy: marching } : {}), ...(fieldRemaining ? { fieldRemaining } : {}) } },
     text: factionName(era, faction) + "攻占" + cityName(world, order.to) + "。" + cityName(world, order.to)
-      + "留下 " + target.troops + " 人驻守，进入整顿。",
+      + "留下 " + target.troops + " 人驻守，进入整顿。" + tacticSuffix
+      + (odds.traitNotes?.attacker?.length ? "（发动" + odds.traitNotes.attacker.join("、") + "）" : ""),
   };
 }
 
@@ -1043,9 +1183,69 @@ function applyOrder(world, era, state, faction, order) {
   return executeOrder(world, era, state, faction, order);
 }
 
+function extraOpponentOrders(world, era, state, faction, primary, maxCount) {
+  if (!state.century || maxCount <= 0) return [];
+  const lite = {
+    ...state,
+    player: faction,
+    orders: primary ? [primary] : [],
+    history: [],
+    ...(state.century ? { century: { ...state.century, frames: [], battles: [] } } : {}),
+    ...(state.polity ? { polity: { ...state.polity, history: [], atlas: [] } } : {}),
+    ...(state.reign ? { reign: { ...state.reign, reports: [], records: [] } } : {}),
+  };
+  delete lite.policyOverrides;
+  delete lite.nationalPolicy;
+  let working;
+  try {
+    working = primary ? previewOrders(world, lite) : lite;
+  } catch {
+    return [];
+  }
+  const extras = [];
+  const usedOrders = primary ? [primary] : [];
+  const usedOfficers = new Set(primary && ["attack", "mobilize"].includes(primary.type) ? [primary.officer] : []);
+  const usedKey = (order) => order ? (order.to ?? order.city ?? order.from) : null;
+  for (let slot = 0; slot < maxCount; slot += 1) {
+    let candidatePlan;
+    try {
+      candidatePlan = factionPlans(world, era, working, faction);
+    } catch {
+      break;
+    }
+    const picked = candidatePlan.choices.find(({ order }) => {
+      if (!order) return false;
+      if (["attack", "mobilize"].includes(order.type) && usedOfficers.has(order.officer)) return false;
+      const target = usedKey(order);
+      if (usedOrders.some((prev) => prev.type === order.type && usedKey(prev) === target)) return false;
+      try {
+        validateOrder(world, working, faction, order);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (!picked?.order) break;
+    const chosen = { ...picked.order };
+    extras.push(chosen);
+    usedOrders.push(chosen);
+    if (["attack", "mobilize"].includes(chosen.type)) usedOfficers.add(chosen.officer);
+    if (slot + 1 < maxCount) {
+      try {
+        working = previewOrders(world, { ...working, orders: [chosen] });
+      } catch {
+        break;
+      }
+    }
+  }
+  return extras;
+}
+
 function prepareOpponents(world, era, state, proposals) {
   const orders = new Map();
+  const extras = new Map();
   const decisions = [];
+  const diff = difficultyConfig(state);
   for (const { key } of playableFactions(era)) {
     if (key === state.player || forceTotals(state, key).cities === 0) continue;
     const proposal = proposals[key];
@@ -1078,13 +1278,16 @@ function prepareOpponents(world, era, state, proposals) {
     if (source === "rules" && plan.urgent && goal.type === "defend") reason = "边境有实际失守风险，先稳住守军。";
     if (source === "rules" && goal === plan.supplyCut) reason = "趁对方军团在外，尝试切断补给。";
     orders.set(key, choice);
+    if (state.century && source !== "model" && forceTotals(state, key).cities >= 2 && diff.aiOrders > 1) {
+      extras.set(key, extraOpponentOrders(world, era, state, key, choice, diff.aiOrders - 1));
+    }
     decisions.push({
       faction: key, source, reason: typeof reason === "string" ? reason.slice(0, 64) : "",
       action: describeOrder(world, era, choice), orderType: choice?.type ?? "rest",
       goal,
     });
   }
-  return { orders, decisions };
+  return { orders, extras, decisions };
 }
 
 function cityProgramTerms(era, city, focus = city.focus, state) {
@@ -1094,7 +1297,8 @@ function cityProgramTerms(era, city, focus = city.focus, state) {
   if (!recruiting && city[focus] >= 5) return { result: "level" };
   const governor = era.officers.find(({ key }) => key === city.governor);
   const oversight = city.owner === state?.player && !recruiting && officeSkill(era, state, "civil") >= 80 ? 2 : 0;
-  const price = (recruiting ? recruitment.treasury : projects[focus].cost) - Math.floor(officerSkill(state, governor, "governance") / 25) - oversight;
+  const traitDiscount = governorTraitDiscount(era, city, focus, state);
+  const price = Math.max(4, (recruiting ? recruitment.treasury : projects[focus].cost) - Math.floor(officerSkill(state, governor, "governance") / 25) - oversight - traitDiscount);
   const grain = recruiting ? recruitment.grain : 0;
   return { governor: governor.name, required: { treasury: price, grain } };
 }
@@ -1475,12 +1679,14 @@ export function advanceQuarter(world, state, proposals = {}) {
   const opponents = prepareOpponents(world, era, state, proposals);
   const orders = era.factions.map(({ key }) => ({
     faction: key,
-    orders: key === state.player ? state.orders : [opponents.orders.get(key)],
+    orders: key === state.player ? state.orders : [opponents.orders.get(key), ...(opponents.extras?.get(key) ?? [])],
   }));
+  const diff = difficultyConfig(state);
   for (const { key } of era.factions) {
     const income = forceTotals(state, key);
-    next.factions[key].treasury += income.treasury;
-    next.factions[key].grain += income.grain;
+    const mult = state.century && key !== state.player ? diff.aiIncomeMult : 1;
+    next.factions[key].treasury += Math.round(income.treasury * mult);
+    next.factions[key].grain += Math.round(income.grain * mult);
     if (key === state.player) {
       entries.push({ type: "income", faction: key, text: "税粮入库。国库 +" + income.treasury + " · 储粮 +" + income.grain + "。" });
       const trade = allianceTrade(state, key);
@@ -1493,7 +1699,7 @@ export function advanceQuarter(world, state, proposals = {}) {
   const captured = new Set();
   for (let step = 0; step < orders.length; step += 1) {
     const turn = orders[(state.turn + step) % orders.length];
-    for (const order of turn.orders) {
+    for (const [orderIdx, order] of turn.orders.entries()) {
       if (!order) continue;
       const entry = next.war && order.type === "attack" && captured.has(order.to)
         ? { type: "notice", orderType: "attack", faction: turn.faction, city: order.to,
@@ -1501,7 +1707,7 @@ export function advanceQuarter(world, state, proposals = {}) {
         : applyOrder(world, era, next, turn.faction, order);
       if (entry.type === "capture") captured.add(entry.city);
       entries.push(entry);
-      if (turn.faction !== state.player) receipts.set(turn.faction, entry);
+      if (turn.faction !== state.player && orderIdx === 0 && !receipts.has(turn.faction)) receipts.set(turn.faction, entry);
     }
   }
   const theaterWork = directTheaters(world, era, next, state.orders.length, (order) => applyOrder(world, era, next, next.player, order));
@@ -1720,7 +1926,7 @@ export function decodeSave(world, text) {
     && state.recruitedOfficers.every((key) => officers.get(key)?.reserve?.turn <= state.turn)), "存档招揽名单无效。");
   requireRule(validTheaters(state, officers), "存档战区或军费无效。");
   const occupied = new Set();
-  requireRule(state.cities && Object.keys(state.cities).length === world.cities.length, "存档需要包含完整的 42 城。");
+  requireRule(state.cities && Object.keys(state.cities).length === world.cities.length, "存档需要包含完整的 " + world.cities.length + " 城。");
   requireRule(state.factions && Object.keys(state.factions).length === era.factions.length, "存档势力资料不全。");
   requireRule(validPolity(world, state, era, base), "存档势力演变、州郡或议案资料无效。");
   requireRule(validGrand(world, state, officers), "存档战略调度、联军编组或议约资料无效。");
@@ -1734,6 +1940,8 @@ export function decodeSave(world, text) {
   requireRule(validReign(world, state, officers), "存档王朝兴替、民仓、册任或集团资料无效。");
   requireRule(validCentury(world, state, officers), "存档山河百年、年度方略或战役纪事无效。");
   requireRule(validCampaignProgress(state, officers), "存档战役或武将资历无效。");
+  requireRule(state.imperialChoice === undefined || state.imperialChoice === "emperor" || state.imperialChoice === "loyalist", "存档正统称谓记录无效。");
+  requireRule(state.difficulty === undefined || validDifficulty(state.difficulty), "存档难度设定无效。");
   requireRule(state.nationalPolicy === undefined || validNationalPolicy(state.nationalPolicy), "存档国策无效。");
   const overrides = state.policyOverrides;
   requireRule(overrides === undefined || (state.nationalPolicy && Array.isArray(overrides) && new Set(overrides).size === overrides.length

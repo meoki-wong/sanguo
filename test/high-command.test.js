@@ -238,7 +238,7 @@ test("an authorized navy uses the river approach and takes the actual crossing",
   assert.ok(state.frontline.battles.some(({ terrain, sides }) => terrain === "river" && sides.some(({ kind }) => kind === "navy")));
 });
 
-test("all sixteen 7.0 scenario starts hold 42 cities through 100 turns or a natural finish", { timeout: 160000 }, () => {
+test("all sixteen 7.0 scenario starts hold 44 cities through 100 turns or a natural finish", { timeout: 160000 }, () => {
   for (const { year, factions, ownership } of world.scenarios) {
     const sides = factions.filter(({ key }) => Object.values(ownership).includes(key));
     for (const { key } of [sides[0], sides.at(-1)]) {
@@ -248,7 +248,7 @@ test("all sixteen 7.0 scenario starts hold 42 cities through 100 turns or a natu
       if (candidate) state = warrant(state, candidate);
       for (let round = 0; round < 100 && gameOutcome(state) === "ongoing"; round++) {
         state = advanceQuarter(world, state);
-        assert.equal(Object.keys(state.cities).length, 42);
+        assert.equal(Object.keys(state.cities).length, 44);
         const planned = campaign(state);
         if (planned?.stage === "settlement" && gameOutcome(state) === "ongoing") state = decideCampaign(world, state, planned.id, "secure");
         if (round % 14 === 0) {

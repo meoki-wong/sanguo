@@ -250,7 +250,7 @@ for (const [year, faction] of [[199, "cao"], [199, "lu"], [208, "cao"], [208, "l
       if (advice) state = queueOrder(world, state, advice.order);
       state = restored(advanceQuarter(world, state));
       assert.equal(state.turn, turn + 1);
-      assert.equal(Object.keys(state.cities).length, 42);
+      assert.equal(Object.keys(state.cities).length, 44);
       assert.equal(gameOutcome(state), "ongoing");
     }
     t.diagnostic(`${initial} → ${forceTotals(state, faction).cities} cities in ${state.turn} quarters`);
@@ -280,7 +280,7 @@ test("the regular Liu Bei opening can still finish the coalition campaign with f
   t.diagnostic(`coalition ending at quarter ${result.turn}`);
 });
 
-test("the regular Jin opening still reaches all 42 cities against independent 1.2 rules rivals", (t) => {
+test("the regular Jin opening still reaches all 44 cities against independent 1.2 rules rivals", (t) => {
   let state = game(265, "jin");
   const era = eraByYear(world, 265);
   while (gameOutcome(state) === "ongoing" && state.turn < 70) {
@@ -306,7 +306,7 @@ test("the regular Jin opening still reaches all 42 cities against independent 1.
     state = restored(advanceQuarter(world, state));
   }
   assert.equal(gameOutcome(state), "victory");
-  assert.equal(forceTotals(state, "jin").cities, 42);
+  assert.equal(forceTotals(state, "jin").cities, 44);
   t.diagnostic(`unified in ${state.turn} quarters`);
 });
 

@@ -99,23 +99,33 @@ export function previewYear15(world, state, draft, options) {
   return { current: project(state), proposed: project(publishYear15(world, state, draft, options)) };
 }
 
-export function provinceAgreement15(world, state, region, mode) {
+export function provinceAgreement15(world, state, region, mode, options = {}) {
   const province = dynastyProvinces(world, state).find((row) => row.region === region);
-  if (!state.century?.plan || !province || gameOutcome(state) !== "ongoing" || !["compact", "renew"].includes(mode)) {
-    throw new Error("请先制定国策，再选本方州郡。");
+  if (!state.century || !province || gameOutcome(state) !== "ongoing" || !["compact", "renew"].includes(mode)) {
+    throw new Error("请先选定己方有效州郡。");
   }
-  const roster = regionCandidates10(world, state, region);
-  const seat = state.reign.seats[region];
-  const lead = roster.find(({ key }) => key === seat?.lead) ?? roster[0];
-  if (!lead) throw new Error("当地暂无可任命人员。");
+  let baseState = state;
+  if (!baseState.century.plan) {
+    const inferredPrimary = baseState.nationalPolicy?.front?.garrison >= 2400 ? "expansion"
+      : baseState.nationalPolicy?.front?.focus === "defense" ? "recovery" : "accord";
+    baseState = publishYear15(world, baseState, annualDraft15(inferredPrimary), { auto: true });
+  }
+  const roster = regionCandidates10(world, baseState, region);
+  const seat = baseState.reign.seats[region];
+  const requested = options.leadKey ? roster.find(({ key }) => key === options.leadKey) : null;
+  const lead = requested ?? roster.find(({ key }) => key === seat?.lead) ?? roster[0];
+  if (!lead) throw new Error("本方暂无可任命州牧的人员。");
   const deputy = roster.find(({ key }) => key === seat?.deputy && key !== lead.key) ?? roster.find(({ key }) => key !== lead.key);
   const compact = mode === "compact";
-  const next = giveProvinceCharter(world, state, region, { lead: lead.key, deputy: deputy?.key ?? null,
-    objective: compact ? "relief" : seat?.objective ?? "growth", money: compact ? 24 : seat?.money ?? 16,
-    grain: compact ? 18 : seat?.grain ?? 12, term: 12, people: true, dispatch: true });
+  const objective = ["growth", "defense", "relief"].includes(options.objective)
+    ? options.objective
+    : (compact ? "relief" : seat?.objective ?? "growth");
+  const next = giveProvinceCharter(world, baseState, region, { lead: lead.key, deputy: deputy?.key ?? null,
+    objective, money: compact ? 24 : seat?.money ?? 18,
+    grain: compact ? 18 : seat?.grain ?? 14, term: 12, people: true, dispatch: true });
   const prior = next.century.charters[region];
-  next.century.charters[region] = { retain: compact ? 40 : 27, through: state.turn + 12, served: prior?.served ?? 0,
-    arrears: 0, duty: compact ? "relief" : "recovery" };
+  next.century.charters[region] = { retain: compact ? 40 : 27, through: baseState.turn + 12, served: prior?.served ?? 0,
+    arrears: 0, duty: objective === "relief" ? "relief" : "recovery" };
   return next;
 }
 
@@ -494,13 +504,14 @@ export function validCentury(world, state, officers) {
   const citySymbols = (item, min, max) => typeof item === "string" && bounded(item.length, min, max)
     && [...item].every((symbol) => bounded(archiveSymbols.indexOf(symbol), 0, world.cities.length - 1));
   const track = (item) => typeof item === "string" && [".", "!"].includes(item[0]) && citySymbols(item.slice(1), 3, 44);
+  const cityCount = Math.max(44, world.cities.length);
   return state.reign && plain(data) && time(data.since) && time(data.chapterSince) && has(reignChapters15, data.chapter)
-    && bounded(data.started, 0, 42) && bounded(data.peak, data.started, 42) && bounded(data.stable, 0, 12)
+    && bounded(data.started, 0, cityCount) && bounded(data.peak, data.started, cityCount) && bounded(data.stable, 0, 12)
     && [data.trade, data.generation, data.serial].every(count) && (data.lastMigration === undefined || count(data.lastMigration))
     && (data.plan === null || validDraft(data.plan) && time(data.plan.signed) && bounded(data.plan.review, data.plan.signed + 4, state.turn + 4)
       && typeof data.plan.auto === "boolean")
     && (data.concluded === null || plain(data.concluded) && time(data.concluded.turn) && objectives.includes(data.concluded.kind))
-    && (data.restoration === null || plain(data.restoration) && time(data.restoration.turn) && bounded(data.restoration.floor, 0, 42)
+    && (data.restoration === null || plain(data.restoration) && time(data.restoration.turn) && bounded(data.restoration.floor, 0, cityCount)
       && (data.restoration.restored === null || time(data.restoration.restored)))
     && (data.regions === undefined || plain(data.regions) && Object.keys(data.regions).length === world.cities.length
       && world.cities.every(({ key, region: area }) => data.regions[key] === area))
@@ -519,7 +530,7 @@ export function validCentury(world, state, officers) {
       && typeof row.text === "string" && row.text.length <= 220 && typeof row.urgent === "boolean" && typeof row.done === "boolean")
     && list(data.frames, frameLimit, (row) => plain(row) && time(row.turn) && typeof row.map === "string" && row.map.length === world.cities.length
       && [...row.map].every((symbol) => bounded(archiveSymbols.indexOf(symbol), 0, Object.keys(state.factions).length - 1))
-      && has(reignChapters15, row.chapter) && bounded(row.cities, 0, 42)
+      && has(reignChapters15, row.chapter) && bounded(row.cities, 0, cityCount)
       && ["cash", "grain", "stable", "population", "migrated", "agreements", "authority"].every((field) => count(row[field]))
-      && list(row.moves, 9, track) && list(row.cargos, 6, track) && citySymbols(row.flags, 0, 42));
+      && list(row.moves, 9, track) && list(row.cargos, 6, track) && citySymbols(row.flags, 0, cityCount));
 }
