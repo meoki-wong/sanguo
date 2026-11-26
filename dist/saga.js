@@ -6,6 +6,8 @@ import { knownOfficer } from "./personnel.js";
 import { cleanLosses, recordAllegiance, retreatCity } from "./polity-handover.js";
 import { livingSide, plain } from "./polities-data.js";
 import { officerMeta } from "./traits.js";
+import { evaluateCoalition, settleSeasonalClimate } from "./coalition.js";
+import { quarterlyTechPoints, techEconomyModifiers, techStratagemModifiers } from "./tech.js";
 
 export const MAX_CAPTIVES = 6;
 export const MAX_WILD_PENDING = 3;
@@ -55,6 +57,16 @@ export function createSagaState(world, era, state, { historicalEvents = true } =
     rivals: [],
     rumors: {},
     plotsUsedTurn: -1,
+    plotsUsedCount: 0,
+    tech: { points: 40, unlocked: [] },
+    coalition: null,
+    coalitionCooldownUntil: 0,
+    coalitionBrokenCount: 0,
+    allyStrikes: [],
+    climate: null,
+    duelWins: 0,
+    rules: {},
+    custom: null,
     annals: [],
   };
 }
@@ -118,7 +130,8 @@ export function sagaCombatModifiers(state, faction, targetCityKey, tacticId = "a
   }
   const rumorActive = Boolean(targetCityKey && (saga.rumors?.[targetCityKey] ?? 0) > state.turn);
   if (rumorActive) {
-    defenseMult *= 0.86;
+    const { rumorDefenseMult } = techStratagemModifiers(state, state.player);
+    defenseMult *= rumorDefenseMult;
     if (tacticId === "rally") attackMult *= 1.12;
     labels.push("谣言动摇");
   }
@@ -132,7 +145,8 @@ export function sagaCombatModifiers(state, faction, targetCityKey, tacticId = "a
 
 export function effectiveWildFee(state, talent) {
   const loyalistDiscount = state?.imperialChoice === "loyalist" ? 0.5 : 1;
-  return Math.max(8, Math.round(talent.fee * loyalistDiscount));
+  const techDiscount = techEconomyModifiers(state, state?.player).wildFeeMult;
+  return Math.max(8, Math.round(talent.fee * loyalistDiscount * techDiscount));
 }
 
 export function spawnWildTalents(world, era, state) {
@@ -220,7 +234,7 @@ export function captiveRecruitChance(world, state, officerKey, fromFaction) {
   return clamp(chance, 15, 95);
 }
 
-export function maybeCaptureOfficer(world, era, state, { attackerFaction, defenderFaction, cityKey, defenderKey, tactic, ratio, wasLastCity }) {
+export function maybeCaptureOfficer(world, era, state, { attackerFaction, defenderFaction, cityKey, defenderKey, tactic, ratio, wasLastCity, bonusProb = 0 }) {
   if (!state?.century || !state.saga || attackerFaction !== state.player || !defenderKey) return null;
   if ((state.saga.captives?.length ?? 0) >= MAX_CAPTIVES || isOfficerUnavailable(state, defenderKey)) return null;
   if (armyByOfficer(state, defenderKey)) return null;
@@ -230,7 +244,7 @@ export function maybeCaptureOfficer(world, era, state, { attackerFaction, defend
     || era.factions.find((f) => f.key === defenderFaction)?.leader === defenderKey;
   if (isFactionHead && !wasLastCity) return null;
 
-  let prob = 30;
+  let prob = 30 + (bonusProb ?? 0);
   if (wasLastCity) prob += 55;
   if (ratio >= 1.4) prob += 20;
   if (tactic === "stratagem" || tactic === "rally") prob += 18;
@@ -396,10 +410,18 @@ export function settleSagaQuarter(world, era, state) {
     retainedCaptives.push(cap);
   }
   saga.captives = retainedCaptives.slice(-MAX_CAPTIVES);
+  saga.allyStrikes = (saga.allyStrikes ?? []).filter((s) => s.expires > state.turn && livingSide(state, s.ally)).slice(-4);
+  if (saga.climate?.pending && state.turn - saga.climate.turn >= 2) {
+    saga.climate.pending = false;
+  }
 
   if (gameOutcome(state) === "ongoing") {
+    saga.tech ??= { points: 0, unlocked: [] };
+    saga.tech.points = Math.min(9999, (saga.tech.points ?? 0) + quarterlyTechPoints(world, era, state));
     spawnWildTalents(world, era, state);
     evaluateHistoricalEvent(world, era, state);
+    evaluateCoalition(world, era, state);
+    settleSeasonalClimate(world, era, state);
   }
 }
 
@@ -432,6 +454,14 @@ export function validSaga(world, state, officers) {
   if (!Array.isArray(s.rivals) || s.rivals.length > MAX_RIVALS) return false;
   if (!plain(s.rumors)) return false;
   if (!Number.isSafeInteger(s.plotsUsedTurn) || s.plotsUsedTurn < -1 || s.plotsUsedTurn > state.turn) return false;
+  if (s.plotsUsedCount !== undefined && (!nonneg(s.plotsUsedCount) || s.plotsUsedCount > 4)) return false;
+  if (s.tech !== undefined && (!plain(s.tech) || !nonneg(s.tech.points) || !Array.isArray(s.tech.unlocked) || s.tech.unlocked.length > 16)) return false;
+  if (s.coalition !== undefined && s.coalition !== null && (!plain(s.coalition) || !Array.isArray(s.coalition.members) || !nonneg(s.coalition.ends))) return false;
+  if (s.allyStrikes !== undefined && (!Array.isArray(s.allyStrikes) || s.allyStrikes.length > 6)) return false;
+  if (s.climate !== undefined && s.climate !== null && (!plain(s.climate) || typeof s.climate.id !== "string")) return false;
+  if (s.duelWins !== undefined && !nonneg(s.duelWins)) return false;
+  if (s.rules !== undefined && !plain(s.rules)) return false;
+  if (s.custom !== undefined && s.custom !== null && (!plain(s.custom) || typeof s.custom.rulerName !== "string")) return false;
   if (!Array.isArray(s.annals) || s.annals.length > MAX_ANNALS) return false;
   return true;
 }

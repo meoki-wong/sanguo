@@ -3,7 +3,9 @@ import { isHostile, treatyWith } from "./diplomacy.js";
 import { encodeTerritory, plain, protectionBetween } from "./polities-data.js";
 import { handoverCities, reconcilePolities } from "./polity-handover.js";
 import { ensureSaga, isOfficerUnavailable, MAX_RIVALS, recordAnnal } from "./saga.js";
+import { leaveCoalition } from "./coalition.js";
 import { knownOfficer } from "./personnel.js";
+import { techStratagemModifiers } from "./tech.js";
 import { officerMeta } from "./traits.js";
 
 function clamp(v, lo, hi) {
@@ -28,6 +30,8 @@ export const FACTION_PERSONALITIES = {
   jin: { id: "jin", name: "一统定鼎", desc: "步步为营、破垒吞吴。", attackWeight: 1.12, aggression: 1.1, preferredTactics: ["siege", "assault"] },
   han: { id: "han", name: "大汉宗室", desc: "持重安集州郡。", attackWeight: 0.92, aggression: 0.86, preferredTactics: ["rally", "assault"] },
   yellow: { id: "yellow", name: "太平起义", desc: "蜂起席卷州郡、攻心煽动。", attackWeight: 1.08, aggression: 1.14, preferredTactics: ["rally", "assault"] },
+  lvbu: { id: "lvbu", name: "无双猛攻", desc: "飞将突骑、陷阵先登，锐不可当。", attackWeight: 1.18, aggression: 1.2, preferredTactics: ["assault"] },
+  sima: { id: "sima", name: "鹰视狼顾", desc: "老谋深算，善以围城与奇谋后发制人。", attackWeight: 1.08, aggression: 1.04, preferredTactics: ["siege", "stratagem"] },
 };
 
 export function factionPersonality(factionKey) {
@@ -62,9 +66,22 @@ function topAdvisorIntellect(era, state) {
 
 function checkPlotWindow(state, cost) {
   if (!state?.century || gameOutcome(state) !== "ongoing") return { ok: false, reason: "仅限经略大势模式进行中之战局使用谋略。" };
-  if (state.saga?.plotsUsedTurn === state.turn) return { ok: false, reason: "本季已行密谋一次，须待次季方可再谋。" };
+  const { plotsPerTurn } = techStratagemModifiers(state, state.player);
+  const used = state.saga?.plotsUsedTurn === state.turn ? (state.saga?.plotsUsedCount ?? 1) : 0;
+  if (used >= plotsPerTurn) {
+    return { ok: false, reason: plotsPerTurn > 1 ? `本季已行密谋 ${used}/${plotsPerTurn} 次，须待次季再谋。` : "本季已行密谋一次，须待次季方可再谋。" };
+  }
   if (state.factions[state.player].treasury < cost) return { ok: false, reason: `国库不足，需 ${cost} 钱。` };
   return { ok: true, reason: "" };
+}
+
+function consumePlotQuota(saga, turn) {
+  if (saga.plotsUsedTurn === turn) {
+    saga.plotsUsedCount = (saga.plotsUsedCount ?? 1) + 1;
+  } else {
+    saga.plotsUsedTurn = turn;
+    saga.plotsUsedCount = 1;
+  }
 }
 
 export function evaluateSowDiscord(world, state, factionA, factionB) {
@@ -81,7 +98,8 @@ export function evaluateSowDiscord(world, state, factionA, factionB) {
   const { officer, intellect } = topAdvisorIntellect(era, state);
   const rep = state.saga?.reputation ?? 50;
   const treaty = treatyWith(state, factionA, factionB);
-  const chance = clamp(62 + Math.round((intellect - 70) * 0.65) + Math.round((rep - 50) * 0.25) - (treaty?.kind === "alliance" ? 8 : 0), 35, 96);
+  const { chanceBonus } = techStratagemModifiers(state, state.player);
+  const chance = clamp(62 + Math.round((intellect - 70) * 0.65) + Math.round((rep - 50) * 0.25) + chanceBonus - (treaty?.kind === "alliance" ? 8 : 0), 35, 96);
   return { ok: true, chance, officer, treaty: treaty?.kind ?? null, cost: STRATAGEMS.sow_discord.cost };
 }
 
@@ -92,7 +110,7 @@ export function executeSowDiscord(world, state, factionA, factionB) {
   const saga = ensureSaga(next);
   const era = eraByYear(world, next);
   next.factions[next.player].treasury -= check.cost;
-  saga.plotsUsedTurn = next.turn;
+  consumePlotQuota(saga, next.turn);
   const hash = [...(factionA + factionB)].reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
   const roll = (next.turn * 31 + hash * 7 + (saga.reputation ?? 50)) % 100;
   const succeeded = check.chance >= 80 || roll < check.chance;
@@ -110,8 +128,10 @@ export function executeSowDiscord(world, state, factionA, factionB) {
   }
   saga.rivals = [...(saga.rivals ?? []).filter((r) => !(r.a === factionA && r.b === factionB || r.a === factionB && r.b === factionA)),
     { a: factionA, b: factionB, expires: next.turn + 6 }].slice(-MAX_RIVALS);
-  recordAnnal(next, "驱虎", `密行「驱虎吞狼」，令${nameA}与${nameB}反目相疑，旧约尽毁！`);
-  return { state: next, succeeded: true, chance: check.chance, message: `计成！${nameA}与${nameB}反目成仇，旧约废除且 6 季内难再修好！` };
+  const brokeCoalition = leaveCoalition(world, era, next, factionB, "中离间之计")
+    || leaveCoalition(world, era, next, factionA, "中离间之计");
+  recordAnnal(next, "驱虎", `密行「驱虎吞狼」，令${nameA}与${nameB}反目相疑，旧约尽毁${brokeCoalition ? "并动摇反霸合纵" : ""}！`);
+  return { state: next, succeeded: true, chance: check.chance, message: `计成！${nameA}与${nameB}反目成仇，旧约废除且 6 季内难再修好${brokeCoalition ? "（反霸联军同步瓦解！）" : "！"}` };
 }
 
 export function evaluateSpreadRumor(world, state, cityKey) {
@@ -131,16 +151,18 @@ export function executeSpreadRumor(world, state, cityKey) {
   const target = next.cities[cityKey];
   const owner = target.owner;
   next.factions[next.player].treasury -= check.cost;
-  saga.plotsUsedTurn = next.turn;
+  consumePlotQuota(saga, next.turn);
+  const { rumorDuration, rumorDefenseMult } = techStratagemModifiers(next, next.player);
+  const pct = Math.round((1 - rumorDefenseMult) * 100);
   if (next.realm?.cities?.[cityKey]) {
     next.realm.cities[cityKey].welfare = Math.max(20, (next.realm.cities[cityKey].welfare ?? 68) - 12);
   }
   if (next.factions[owner]) {
     next.factions[owner].morale = clamp((next.factions[owner].morale ?? 75) - 5, 15, 100);
   }
-  saga.rumors = { ...(saga.rumors ?? {}), [cityKey]: next.turn + 2 };
-  recordAnnal(next, "反间", `散流言于${cityName(world, cityKey)}，民心顿减、敌军士气 -5（守防 -14% 持续 2 季）。`);
-  return { state: next, message: `反间流言得逞！${cityName(world, cityKey)}守防 -14%、敌军士气 -5，极宜下令「攻心摇动」低损破城！` };
+  saga.rumors = { ...(saga.rumors ?? {}), [cityKey]: next.turn + rumorDuration };
+  recordAnnal(next, "反间", `散流言于${cityName(world, cityKey)}，民心顿减、敌军士气 -5（守防 -${pct}% 持续 ${rumorDuration} 季）。`);
+  return { state: next, message: `反间流言得逞！${cityName(world, cityKey)}守防 -${pct}%、敌军士气 -5，极宜下令「攻心摇动」低损破城！` };
 }
 
 export function evaluateDemandSurrender(world, state, targetFaction) {
@@ -165,7 +187,8 @@ export function evaluateDemandSurrender(world, state, targetFaction) {
   const rep = state.saga?.reputation ?? 50;
   const ratio = pStats.troops / Math.max(1, tStats.troops);
   const { intellect } = topAdvisorIntellect(era, state);
-  const chance = clamp(Math.round(45 + ratio * 10 + (rep - 50) * 0.45 + (intellect - 75) * 0.35 + (targetCities.length === 1 ? 15 : 0)), 30, 96);
+  const { chanceBonus } = techStratagemModifiers(state, state.player);
+  const chance = clamp(Math.round(45 + ratio * 10 + (rep - 50) * 0.45 + (intellect - 75) * 0.35 + chanceBonus + (targetCities.length === 1 ? 15 : 0)), 30, 96);
   return { ok: true, chance, targetCities, cost: STRATAGEMS.demand_surrender.cost };
 }
 
@@ -177,7 +200,7 @@ export function executeDemandSurrender(world, state, targetFaction) {
   const era = eraByYear(world, next);
   const targetName = factionName(era, targetFaction);
   next.factions[next.player].treasury -= check.cost;
-  saga.plotsUsedTurn = next.turn;
+  consumePlotQuota(saga, next.turn);
   const hash = [...targetFaction].reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
   const roll = (next.turn * 23 + hash * 19 + (saga.reputation ?? 50)) % 100;
   const succeeded = check.chance >= 75 || roll < check.chance;
@@ -203,6 +226,7 @@ export function executeDemandSurrender(world, state, targetFaction) {
   next.treatyOffers = (next.treatyOffers ?? []).filter((o) => o.target !== targetFaction);
   if (next.incomingTreaty?.from === targetFaction) next.incomingTreaty = null;
   saga.rivals = (saga.rivals ?? []).filter((r) => r.a !== targetFaction && r.b !== targetFaction);
+  leaveCoalition(world, era, next, targetFaction, "望风归降");
   const citySet = new Set(targetCities);
   next.orders = (next.orders ?? []).filter((order) => (
     !citySet.has(order.to) && !citySet.has(order.from) && !citySet.has(order.city)

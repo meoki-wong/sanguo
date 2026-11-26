@@ -18,6 +18,7 @@ const edicts = {
   208: { title: "重开江津", focus: "trade", treasury: 20, grain: 10, text: "修复商贸并扶持港埠，将商路收入转为长期恢复。" },
   219: { title: "清理江道", focus: "trade", treasury: 20, grain: 12, text: "组织郡县修整江边市集和渡口，恢复商贸与民生。" },
   234: { title: "督造屯堡", focus: "guard", treasury: 22, grain: 16, text: "增设前线屯堡，稳住边境驻防。" },
+  251: { title: "会盟安郡", focus: "guard", treasury: 20, grain: 16, text: "拨钱粮犒赏群英、整备州郡防务。" },
   262: { title: "安辑边屯", focus: "guard", treasury: 18, grain: 14, text: "拨钱粮安置边屯，稳定军心和地方驻防。" },
   265: { title: "安置新附", focus: "relief", treasury: 20, grain: 18, text: "优先赈济整顿中的州郡，并帮助恢复地方税粮。" },
 };

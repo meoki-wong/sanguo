@@ -1,5 +1,6 @@
 import { redCliffScenario } from "./scenario208.js";
 import { grandScenarios } from "./grand-scenarios.js";
+import { heroesAssemblyScenario } from "./scenario251.js";
 
 // The starting roster and ratings are gameplay data for each scenario.
 const early = {
@@ -82,7 +83,7 @@ const candidates = {
   lu: ["阎绥", "杨毅"], ce: ["陆修", "顾晏"], ma: ["程允", "梁丰"], gongsun: ["柳合", "田朔"],
   shi: ["桓邻", "程秉"],
   wei: ["陈珣", "辛捷"], shu: ["费钧", "赵骞"], wu: ["朱恭", "丁誉"], jin: ["卫珂", "杜安"],
-  liu: ["傅恭", "陈升"], han: ["胡靖", "周逊"],
+  liu: ["傅恭", "陈升"], han: ["胡靖", "周逊"], lvbu: ["侯成", "曹性"], sima: ["陈泰", "石苞"],
 };
 
 export function knownOfficer(state, person) {
@@ -94,6 +95,7 @@ export function enrichWorld(world) {
   const earlier = scenarios.find(({ year }) => year === 199);
   if (earlier && !scenarios.some(({ year }) => year === 208)) scenarios.push(redCliffScenario(world, earlier));
   if (earlier) scenarios.push(...grandScenarios(world, earlier).filter(({ year }) => !scenarios.some((era) => era.year === year)));
+  if (earlier && !scenarios.some(({ year }) => year === 251)) scenarios.push(heroesAssemblyScenario(world, earlier));
   return {
     ...world,
     scenarios: scenarios.map((era) => {

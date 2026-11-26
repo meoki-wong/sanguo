@@ -12,6 +12,7 @@ import { congressDuty, congressTarget } from "./landscape-treaty.js";
 import { officerMeta } from "./traits.js";
 import { BATTLE_TACTICS, isOpeningPrepTurn } from "./tactics.js";
 import { factionPersonality, rivalFriction } from "./stratagems.js";
+import { isCoalitionMember } from "./coalition.js";
 
 function goalDuration(goal) {
   return goal.since < 4 ? 3 : goal.type === "defend" ? 5 : 4;
@@ -224,7 +225,9 @@ function newGoals(world, era, state, faction, owned, allowDeployment) {
     const personality = state.century ? factionPersonality(faction) : null;
     const attackWeight = personality ? personality.attackWeight : 1;
     const grudge = rivalFriction(state, faction, enemyCity.owner) ? 1.28 : 1;
-    return [{ city, target, ratio: (battle.offense / Math.max(1, battle.defense)) * opportunistic * attackWeight * grudge * (preparing ? .88 : 1) }];
+    const coalitionBias = isCoalitionMember(state, faction) && enemyCity.owner === state.player ? 1.32 : 1;
+    const allyStrikeBias = (state.saga?.allyStrikes ?? []).some((s) => s.ally === faction && s.target === target && s.expires > state.turn) ? 1.65 : 1;
+    return [{ city, target, ratio: (battle.offense / Math.max(1, battle.defense)) * opportunistic * attackWeight * grudge * coalitionBias * allyStrikeBias * (preparing ? .88 : 1) }];
   }).sort((a, b) => b.ratio - a.ratio);
   const chance = opportunities[0];
   const defense = vulnerable?.gap > 0

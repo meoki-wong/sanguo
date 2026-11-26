@@ -14,12 +14,14 @@ import { paintUnit, troopCanvas } from "./troop-art.js";
 import { dynastyYield } from "./dynasty-economy.js";
 import { strategicFronts9, theaterRoles9 } from "./strategy-nine.js";
 import { marketRow } from "./reign-economy.js";
+import { chokepointBetween, isCoalitionActive } from "./coalition.js";
 
 const colors = {
   cao: "#416a91", wei: "#416a91", yuan: "#8c6a25", zhang: "#a55b42", shu: "#a1503a",
   biao: "#76588d", lu: "#984d67", ce: "#3d7965", wu: "#3d7965", ma: "#657743",
   gongsun: "#438089", shi: "#8d6446", jin: "#77548c", liu: "#a1503a", han: "#766191",
   dong: "#743f4c", jiu: "#937443", jian: "#386c56", yan: "#8f6346", yellow: "#a68b35", frontier: "#4e7a77",
+  lvbu: "#b03a48", sima: "#565a8f",
 };
 const seasonalPalette = {
   spring: ["#c3cbb6", "#aec6bb", "#8faeab", "#e7d7b2"],
@@ -319,13 +321,38 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
         }
         const point = cityTouch && event.timeStamp - cityTouch.time < 450 ? cityTouch : { x: event.clientX, y: event.clientY };
         cityTouch = undefined;
-        // The closest visible pin owns the click when two hit areas overlap.
-        const nearest = markers.filter(({ type, token }) => type === "city" && !token.hidden)
-          .reduce((match, marker) => {
+        // The closest visible pin owns the click when two hit areas overlap;
+        // on narrow mobile viewports at low zoom, show a quick cluster picker if >= 2 pins collide.
+        const candidates = markers
+          .filter(({ type, token }) => type === "city" && !token.hidden)
+          .map((marker) => {
             const box = marker.token.getBoundingClientRect();
             const distance = Math.hypot(point.x - box.left - box.width / 2, point.y - box.top - box.height / 2);
-            return distance < match.distance ? { key: marker.entry.key, distance } : match;
-          }, { key: city.key, distance: Infinity });
+            return { key: marker.entry.key, name: marker.entry.name, distance };
+          })
+          .sort((a, b) => a.distance - b.distance);
+        const clusterPicker = document.getElementById("map-cluster-picker");
+        const nearGroup = candidates.filter((c) => c.distance <= 28).slice(0, 4);
+        if (clusterPicker && nearGroup.length >= 2 && matchMedia("(max-width: 960px)").matches && camera.zoom < 1.85) {
+          clusterPicker.replaceChildren(...nearGroup.map((item) => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "quiet";
+            btn.textContent = item.name;
+            btn.addEventListener("click", () => {
+              clusterPicker.hidden = true;
+              onCity(item.key);
+            });
+            return btn;
+          }));
+          const sRect = stage.getBoundingClientRect();
+          clusterPicker.style.left = `${clamp(point.x - sRect.left, 72, Math.max(72, sRect.width - 72))}px`;
+          clusterPicker.style.top = `${clamp(point.y - sRect.top - 12, 48, Math.max(48, sRect.height - 48))}px`;
+          clusterPicker.hidden = false;
+          return;
+        }
+        if (clusterPicker) clusterPicker.hidden = true;
+        const nearest = candidates[0] ?? { key: city.key, distance: Infinity };
         onCity(nearest.distance > 6 && event.target.closest(".city-name-tag") ? city.key : nearest.key);
       });
       markers.push({ type: "city", entry: city, token, title, troopTag });
@@ -715,10 +742,14 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     const link = new Path2D();
     link.moveTo(...coords[0]);
     for (const point of coords.slice(1)) link.lineTo(...point);
-    if (dashed) ctx.setLineDash([5 / camera.zoom, 3.5 / camera.zoom]);
+    if (dashed) {
+      ctx.setLineDash([6 / camera.zoom, 4 / camera.zoom]);
+      ctx.lineDashOffset = -((performance.now() * 0.018) % 20) / camera.zoom;
+    }
     trace(link, "#fff1c7", 5.2, dashed ? .6 : .8);
     trace(link, color, 3.1, dashed ? .82 : .98);
     ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
     const chevrons = new Path2D();
     const arrowSize = 7 / camera.zoom;
     for (let i = 0; i < coords.length - 1; i++) {
@@ -807,6 +838,64 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
         inner.arc(pos[0], pos[1], (3 + t * 14) / camera.zoom, 0, Math.PI * 2);
         trace(inner, "#fff3cf", 1.8, (0.65 - t));
       }
+    }
+  }
+
+  function drawSagaOverlays() {
+    if (!mapState?.century || !mapState.saga) return;
+    const z = camera.zoom;
+    const rumors = mapState.saga.rumors ?? {};
+    for (const [cityKey, exp] of Object.entries(rumors)) {
+      if (exp <= mapState.turn) continue;
+      const pos = cityPositions.get(cityKey);
+      if (!pos) continue;
+      ctx.save();
+      ctx.setLineDash([3.5 / z, 2.5 / z]);
+      const ring = new Path2D();
+      ring.arc(pos[0], pos[1], 13 / z, 0, Math.PI * 2);
+      trace(ring, "#b580e8", 2.6, 0.92);
+      ctx.restore();
+    }
+
+    if (isCoalitionActive(mapState)) {
+      const co = mapState.saga.coalition;
+      const era = eraByYear(world, mapState);
+      const leaderCap = era.capitals?.[co.leader] ?? firstCity(world, mapState, co.leader);
+      const pos = leaderCap ? cityPositions.get(leaderCap) : null;
+      if (pos) {
+        ctx.save();
+        ctx.setLineDash([4 / z, 3 / z]);
+        const ring = new Path2D();
+        ring.arc(pos[0], pos[1], 16 / z, 0, Math.PI * 2);
+        trace(ring, "#e85442", 3.0, 0.9);
+        ctx.restore();
+      }
+    }
+
+    if (layer === "cities" && z >= 1.35) {
+      ctx.save();
+      ctx.font = `600 ${Math.max(6.2, 8.2 / z)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (const post of strategicPosts) {
+        const cp = chokepointBetween(post.seat, post.to);
+        if (!cp) continue;
+        const a = cityPositions.get(post.seat);
+        const b = cityPositions.get(post.to);
+        if (!a || !b) continue;
+        const mx = (a[0] + b[0]) * 0.5;
+        const my = (a[1] + b[1]) * 0.5 - 5.5 / z;
+        ctx.fillStyle = "rgba(18, 16, 13, 0.78)";
+        const w = cp.name.length * (7.2 / z) + 6 / z;
+        const h = 11 / z;
+        ctx.fillRect(mx - w / 2, my - h / 2, w, h);
+        ctx.strokeStyle = cp.tier === "pass" ? "rgba(235, 198, 118, 0.75)" : "rgba(116, 186, 214, 0.75)";
+        ctx.lineWidth = 0.8 / z;
+        ctx.strokeRect(mx - w / 2, my - h / 2, w, h);
+        ctx.fillStyle = cp.tier === "pass" ? "#f5dea2" : "#b8e4f5";
+        ctx.fillText(cp.name, mx, my + 0.5 / z);
+      }
+      ctx.restore();
     }
   }
 
@@ -1068,6 +1157,7 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
       if (mapState.frontline) drawGarrisons(fit);
       drawBattlePulses();
       drawEmperorSeal();
+      drawSagaOverlays();
     }
     if (dynastyLayer && mapState.dynasty) drawDynasty(fit);
     if (reignMode && mapState.reign && !historicalFrame) drawReign(fit);
@@ -1344,6 +1434,62 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
   relief.addEventListener("load", draw);
   relief.src = new URL("./assets/relief.webp", import.meta.url);
   new ResizeObserver(draw).observe(stage);
+
+  // Lightweight seasonal weather particle overlay (pauses when hidden or reduced-motion)
+  const weatherCanvas = document.createElement("canvas");
+  weatherCanvas.className = "weather-canvas";
+  weatherCanvas.setAttribute("aria-hidden", "true");
+  stage.append(weatherCanvas);
+  const wCtx = weatherCanvas.getContext("2d");
+  const particles = Array.from({ length: 24 }, (_, i) => ({
+    x: (i * 43) % 100,
+    y: (i * 29) % 100,
+    vx: 0.14 + (i % 4) * 0.05,
+    vy: 0.25 + (i % 5) * 0.08,
+    size: 1.8 + (i % 3) * 0.9,
+    phase: i * 0.7,
+  }));
+  let lastWeatherTick = 0;
+  function tickWeather(now) {
+    requestAnimationFrame(tickWeather);
+    if (document.hidden || !mapState?.century || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (now - lastWeatherTick < 42) return; // ~24fps low-power ambient
+    lastWeatherTick = now;
+    const rect = stage.getBoundingClientRect();
+    const w = Math.max(1, Math.round(rect.width));
+    const h = Math.max(1, Math.round(rect.height));
+    if (weatherCanvas.width !== w || weatherCanvas.height !== h) {
+      weatherCanvas.width = w;
+      weatherCanvas.height = h;
+    }
+    wCtx.clearRect(0, 0, w, h);
+    const seasonIdx = mapState.turn % 4; // 0 spring, 1 summer, 2 autumn, 3 winter
+    const style = seasonIdx === 0 ? "rgba(247, 206, 218, 0.55)"
+      : seasonIdx === 1 ? "rgba(164, 212, 232, 0.36)"
+        : seasonIdx === 2 ? "rgba(226, 152, 74, 0.52)"
+          : "rgba(238, 244, 250, 0.62)";
+    wCtx.fillStyle = style;
+    wCtx.strokeStyle = style;
+    for (const p of particles) {
+      const speed = seasonIdx === 1 ? 3.2 : seasonIdx === 3 ? 0.75 : 1;
+      p.x = (p.x + p.vx * (seasonIdx === 1 ? 0.45 : 1)) % 100;
+      p.y = (p.y + p.vy * speed) % 100;
+      const px = (p.x / 100) * w + Math.sin(now * 0.001 + p.phase) * (seasonIdx === 1 ? 1 : 6);
+      const py = (p.y / 100) * h;
+      if (seasonIdx === 1) {
+        wCtx.lineWidth = 1;
+        wCtx.beginPath();
+        wCtx.moveTo(px, py);
+        wCtx.lineTo(px + 2, py + 8);
+        wCtx.stroke();
+      } else {
+        wCtx.beginPath();
+        wCtx.arc(px, py, p.size, 0, Math.PI * 2);
+        wCtx.fill();
+      }
+    }
+  }
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(tickWeather);
 
   return {
     reset,

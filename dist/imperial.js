@@ -121,6 +121,19 @@ export const HISTORICAL_TITLES = {
     shu: { title: "汉后主 · 季汉朝廷", note: "继承汉统，丞相北伐" },
     wu: { title: "吴大帝 · 大吴朝廷", note: "孙权称帝，鼎足江南" },
   },
+  251: {
+    cao: { title: "魏武霸府", note: "雄踞中原，群英云集" },
+    liu: { title: "昭烈汉中王", note: "兴汉图存，卧龙五虎齐聚" },
+    wu: { title: "江东小霸王", note: "孙氏父子与四都督共治吴会" },
+    lvbu: { title: "飞将温侯", note: "无双猛将，陷阵狼骑威震徐淮" },
+    yuan: { title: "四世三公 · 河北盟主", note: "兼领冀并青，兵甲雄厚" },
+    sima: { title: "晋公霸府", note: "司马氏与灭吴名将并出宛洛" },
+    dong: { title: "西凉太师", note: "扼守洛阳长安双京天险" },
+    ma: { title: "征西将军 · 伏波后裔", note: "西凉铁骑纵横关陇" },
+    biao: { title: "镇南将军 · 荆州牧", note: "跨蹈荆襄七郡，水陆要冲" },
+    yellow: { title: "大贤良师 · 北疆义从", note: "太平道与幽州白马合流" },
+    shi: { title: "岭南侯 · 南中诸部", note: "交州通商与南中蛮骑相辅" },
+  },
   262: {
     wei: { title: "魏元帝 · 大魏朝廷", note: "大魏朝廷，司马执政" },
     shu: { title: "汉后主 · 季汉朝廷", note: "季汉朝廷，姜维北守" },
@@ -275,13 +288,13 @@ export function factionCourtProfile(world, state, factionKey = state?.player, op
   let tier = "warlord";
   if (state?.year === 184 && factionKey === "han") {
     tier = "imperial";
-  } else if (state?.year >= 234 && ["wei", "shu", "wu", "jin"].includes(factionKey)) {
+  } else if (state?.year >= 234 && state?.year !== 251 && ["wei", "shu", "wu", "jin"].includes(factionKey)) {
     tier = "imperial";
   } else if (factionKey === state?.player && choice === "emperor" && cities >= 18) {
     tier = "imperial";
   } else if (state?.year === 184 && factionKey === "yellow") {
     tier = "rebel";
-  } else if ((state?.year === 219 && ["cao", "liu"].includes(factionKey)) || (cities >= 14 && (state?.year ?? 0) <= 219)) {
+  } else if ((state?.year === 219 && ["cao", "liu"].includes(factionKey)) || (cities >= 14 && ((state?.year ?? 0) <= 219 || state?.year === 251))) {
     tier = "royal";
   } else if (holdsEmperor) {
     tier = "regent";
@@ -300,7 +313,7 @@ export function factionCourtProfile(world, state, factionKey = state?.player, op
     factionKey === state?.player
     && tier !== "imperial"
     && tier !== "rebel"
-    && (state?.year ?? 999) <= 219
+    && ((state?.year ?? 999) <= 219 || state?.year === 251)
     && cities >= 18
     && choice !== "loyalist",
   );

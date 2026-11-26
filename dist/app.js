@@ -74,6 +74,17 @@ import { captiveRecruitChance, resolveCaptive } from "./saga.js";
 import {
   executeDemandSurrender, executeSowDiscord, factionPersonality, listStratagemTargets,
 } from "./stratagems.js";
+import {
+  ACHIEVEMENTS, evaluateCampaignGrade, syncAchievements,
+} from "./achievements.js";
+import {
+  evaluateCaptivePeace, executeAllyStrike, executeCaptivePeace, isCoalitionActive, listAllyStrikeOptions,
+} from "./coalition.js";
+import { officerRankTitle, promotableOfficers } from "./duels.js";
+import { createCustomRulerGame, SANDBOX_HERO_POOL, sandboxHeroSummary } from "./sandbox.js";
+import {
+  canResearchTech, factionEliteUnit, getTechState, hasTech, researchTech, TECH_BRANCHES, TECH_TREE,
+} from "./tech.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -3781,6 +3792,224 @@ function renderDiplomacyStratagems() {
       return row;
     }));
   }
+
+  const allyList = find("stratagem-ally-list");
+  if (allyList) {
+    const allyOpts = listAllyStrikeOptions(world, state);
+    if (!allyOpts.length) {
+      allyList.replaceChildren(make("p", "暂无已缔结「同盟」且接壤共同敌城的盟友。", "muted"));
+    } else {
+      allyList.replaceChildren(...allyOpts.slice(0, 6).map((opt) => {
+        const row = make("div", undefined, "stratagem-row");
+        const meta = make("div", undefined, "stratagem-meta");
+        meta.append(
+          make("strong", `请${opt.allyName}夹击${opt.targetName}（${opt.targetOwnerName}）`),
+          make("span", opt.ok ? "次季盟友将优先发兵合围此城" : opt.reason, "muted"),
+        );
+        const btn = make("button", "邀盟夹击（18钱）", opt.ok ? "primary" : "quiet");
+        btn.type = "button";
+        btn.disabled = !opt.ok;
+        btn.addEventListener("click", () => {
+          try {
+            const res = executeAllyStrike(world, state, opt.ally, opt.target);
+            sound?.play("march");
+            mutate(() => res.state, res.message);
+            if (statusEl) { statusEl.textContent = res.message; statusEl.hidden = false; }
+            renderDiplomacyStratagems();
+          } catch (error) {
+            if (statusEl) { statusEl.textContent = error.message; statusEl.hidden = false; }
+          }
+        });
+        row.append(meta, btn);
+        return row;
+      }));
+    }
+  }
+
+  const capList = find("stratagem-captive-list");
+  if (capList) {
+    const caps = state.saga?.captives ?? [];
+    if (!caps.length) {
+      capList.replaceChildren(make("p", "当前暂无在押敌方俘将可作议和筹码。", "muted"));
+    } else {
+      capList.replaceChildren(...caps.map((cap) => {
+        const off = era().officers.find((o) => o.key === cap.officer);
+        const check = evaluateCaptivePeace(world, state, cap.officer);
+        const row = make("div", undefined, "stratagem-row");
+        const meta = make("div", undefined, "stratagem-meta");
+        meta.append(
+          make("strong", `以「${off?.name ?? "敌将"}」与${factionName(era(), cap.from)}议和`),
+          make("span", check.ok ? `换取 ${check.seasons} 季休战 + ${check.indemnity} 钱赔款` : check.reason, "muted"),
+        );
+        const btn = make("button", "以俘议和", check.ok ? "primary" : "quiet");
+        btn.type = "button";
+        btn.disabled = !check.ok;
+        btn.addEventListener("click", () => {
+          try {
+            const res = executeCaptivePeace(world, state, cap.officer);
+            sound?.play("event");
+            mutate(() => res.state, res.message);
+            if (statusEl) { statusEl.textContent = res.message; statusEl.hidden = false; }
+            renderDiplomacyStratagems();
+          } catch (error) {
+            if (statusEl) { statusEl.textContent = error.message; statusEl.hidden = false; }
+          }
+        });
+        row.append(meta, btn);
+        return row;
+      }));
+    }
+  }
+}
+
+function renderTechDialog() {
+  const grid = find("tech-tree-grid");
+  const promoList = find("tech-promo-list");
+  const tpLabel = find("tech-points-label");
+  const eliteBadge = find("tech-elite-badge");
+  const statusEl = find("tech-status");
+  if (!grid || !state?.century) return;
+  const tech = getTechState(state);
+  const elite = factionEliteUnit(state.player);
+  const eliteUnlocked = hasTech(state, "m3_elite");
+  if (tpLabel) tpLabel.textContent = `当前技巧点：${tech.points ?? 0} TP · 国库：${state.factions[state.player]?.treasury ?? 0} 钱`;
+  if (eliteBadge) {
+    eliteBadge.textContent = eliteUnlocked ? `精锐已成：${elite.name}` : `终极精锐：${elite.name}（未解锁）`;
+    eliteBadge.title = elite.desc;
+  }
+  grid.replaceChildren(...TECH_BRANCHES.map((branch) => {
+    const col = make("section", undefined, "tech-branch");
+    col.append(make("h3", branch.name), make("p", branch.desc, "muted"));
+    const items = TECH_TREE.filter((t) => t.branch === branch.id);
+    for (const item of items) {
+      const done = hasTech(state, item.id);
+      const check = canResearchTech(state, item.id);
+      const card = make("div", undefined, "tech-card");
+      card.dataset.state = done ? "done" : check.ok ? "ready" : "locked";
+      const head = make("div", undefined, "tech-card-head");
+      head.append(make("strong", `${item.tier}阶 · ${item.name}`), make("span", done ? "已研习" : `${item.tp}TP · ${item.cost}钱`, "memorial-tag"));
+      const desc = make("p", item.id === "m3_elite" ? `${item.desc}（${elite.name}：${elite.desc}）` : item.desc, "muted");
+      const btn = make("button", done ? "已掌握" : check.ok ? "研习此技" : check.reason, check.ok ? "primary" : "quiet");
+      btn.type = "button";
+      btn.disabled = !check.ok;
+      btn.addEventListener("click", () => {
+        try {
+          const res = researchTech(world, state, item.id);
+          sound?.play("tech");
+          mutate(() => res.state, res.message);
+          if (statusEl) { statusEl.textContent = res.message; statusEl.hidden = false; }
+          renderTechDialog();
+        } catch (error) {
+          if (statusEl) { statusEl.textContent = error.message; statusEl.hidden = false; }
+        }
+      });
+      card.append(head, desc, btn);
+      col.append(card);
+    }
+    return col;
+  }));
+
+  if (promoList) {
+    const promos = promotableOfficers(era(), state);
+    if (!promos.length) {
+      promoList.replaceChildren(make("p", "暂无满资历可晋爵的文武（出征、守边、理政均可积累功勋）。", "muted"));
+    } else {
+      promoList.replaceChildren(...promos.map((p) => {
+        const row = make("div", undefined, "stratagem-row");
+        const meta = make("div", undefined, "stratagem-meta");
+        meta.append(
+          make("strong", `${p.officer.name} · ${p.currentTitle}`),
+          make("span", `${p.skillLabel}功勋已满，晋爵永久 +5 ${p.skillLabel}`, "muted"),
+        );
+        const btn = make("button", `晋爵（${p.skillLabel}+5）`, "primary");
+        btn.type = "button";
+        btn.addEventListener("click", () => {
+          try {
+            const next = promoteOfficer(world, state, p.officer.key, p.skill);
+            sound?.play("victory");
+            mutate(() => next, `已晋封「${p.officer.name}」为${officerRankTitle(next, p.officer)}，${p.skillLabel}永久 +5！`);
+            renderTechDialog();
+          } catch (error) {
+            if (statusEl) { statusEl.textContent = error.message; statusEl.hidden = false; }
+          }
+        });
+        row.append(meta, btn);
+        return row;
+      }));
+    }
+  }
+}
+
+function openTechDialog() {
+  const dlg = find("tech-dialog");
+  if (!dlg || !state?.century) return;
+  const statusEl = find("tech-status");
+  if (statusEl) statusEl.hidden = true;
+  renderTechDialog();
+  if (!dlg.open) dlg.showModal();
+}
+
+function openAchievementsDialog() {
+  const dlg = find("achievements-dialog");
+  if (!dlg || !state) return;
+  const { unlocked } = syncAchievements(world, state);
+  const gradeInfo = evaluateCampaignGrade(world, state);
+  find("ach-grade-letter").textContent = gradeInfo.grade;
+  find("ach-grade-letter").dataset.grade = gradeInfo.grade;
+  find("ach-grade-verdict").textContent = `${gradeInfo.grade} 级 · ${gradeInfo.verdict}（评分 ${gradeInfo.score}）`;
+  find("ach-grade-share").textContent = gradeInfo.shareText;
+  const unlockedCount = Object.keys(unlocked).length;
+  find("ach-progress-note").textContent = `跨存档累计已达成 ${unlockedCount} / ${ACHIEVEMENTS.length} 项天下勋鉴：`;
+  const grid = find("ach-grid");
+  grid.replaceChildren(...ACHIEVEMENTS.map((item) => {
+    const date = unlocked[item.id];
+    const card = make("div", undefined, "ach-card");
+    card.dataset.unlocked = String(Boolean(date));
+    const head = make("div", undefined, "ach-card-head");
+    head.append(make("span", item.category, "memorial-tag"), make("strong", item.name));
+    card.append(head, make("p", item.desc, "muted"), make("small", date ? `✓ 已达成 (${date})` : "未解锁", "muted"));
+    return card;
+  }));
+  if (!dlg.open) dlg.showModal();
+}
+
+let sandboxSelectedHeroes = new Set(["sb_zhuge", "sb_lvbu", "sb_zhouyu"]);
+
+function fillSandboxFactions() {
+  const year = Number(find("sb-era")?.value || 251);
+  const scenario = eraByYear(world, year);
+  const sel = find("sb-faction");
+  if (!scenario || !sel) return;
+  sel.replaceChildren(...playableFactions(scenario).map(({ key, name }) => new Option(name, key)));
+}
+
+function renderSandboxHeroes() {
+  const grid = find("sb-heroes-grid");
+  if (!grid) return;
+  grid.replaceChildren(...SANDBOX_HERO_POOL.map((hero) => {
+    const active = sandboxSelectedHeroes.has(hero.id);
+    const btn = make("button", sandboxHeroSummary(hero), active ? "primary sb-hero-chip" : "quiet sb-hero-chip");
+    btn.type = "button";
+    btn.setAttribute("aria-pressed", String(active));
+    btn.addEventListener("click", () => {
+      if (sandboxSelectedHeroes.has(hero.id)) sandboxSelectedHeroes.delete(hero.id);
+      else if (sandboxSelectedHeroes.size < 5) sandboxSelectedHeroes.add(hero.id);
+      renderSandboxHeroes();
+    });
+    return btn;
+  }));
+}
+
+function openSandboxDialog() {
+  const dlg = find("sandbox-dialog");
+  const eraSel = find("sb-era");
+  if (!dlg || !eraSel) return;
+  eraSel.replaceChildren(...[...world.scenarios].sort((a, b) => a.year - b.year)
+    .map(({ year, title }) => new Option(`${title} · ${year} 年`, year)));
+  eraSel.value = world.scenarios.some((s) => s.year === 251) ? "251" : String(state.year);
+  fillSandboxFactions();
+  renderSandboxHeroes();
+  if (!dlg.open) dlg.showModal();
 }
 
 function openHistoricalEvent() {
@@ -4701,6 +4930,11 @@ function settleTurn(operation, status) {
       || state.incomingTreaty?.answer === null;
     sound?.play(hasUrgent ? "alert" : "turn");
     uxHud?.showSeasonRecap(state);
+    sound?.setBgmMood?.(isCoalitionActive(state) ? "war" : "peace");
+    const { newlyUnlocked } = syncAchievements(world, state);
+    if (newlyUnlocked.length) {
+      notify("🏆 解锁勋鉴：" + newlyUnlocked.map((a) => a.name).join("、"));
+    }
     const afterBattles = () => {
       if (state.saga?.pendingEvent?.turn === state.turn) openHistoricalEvent();
       else {
@@ -4907,6 +5141,60 @@ function wireControls() {
   find("century-pending").addEventListener("click", () => centuryDesk.open("pending"));
   find("open-century-menu").addEventListener("click", () => { find("menu-dialog").close(); centuryDesk.open(); });
   find("open-saga-chronicle")?.addEventListener("click", () => chronicleReplay?.open());
+  find("open-tech-dialog")?.addEventListener("click", () => openTechDialog());
+  find("open-achievements-dialog")?.addEventListener("click", () => openAchievementsDialog());
+  find("ach-copy-btn")?.addEventListener("click", async () => {
+    const text = evaluateCampaignGrade(world, state).shareText;
+    try {
+      await navigator.clipboard?.writeText(text);
+      notify("已复制史官战报评定至剪贴板！");
+    } catch {
+      notify(text);
+    }
+  });
+  const bgmBtn = find("toggle-bgm");
+  if (bgmBtn) {
+    const syncBgmBtn = () => {
+      const on = Boolean(sound?.isBgmEnabled?.());
+      bgmBtn.setAttribute("aria-pressed", String(on));
+      bgmBtn.textContent = on ? "雅乐·开" : "雅乐";
+    };
+    syncBgmBtn();
+    bgmBtn.addEventListener("click", () => {
+      sound?.toggleBgm?.();
+      syncBgmBtn();
+    });
+  }
+  find("open-sandbox-dialog")?.addEventListener("click", () => {
+    if (find("campaign-dialog").open) find("campaign-dialog").close();
+    openSandboxDialog();
+  });
+  find("sb-era")?.addEventListener("change", fillSandboxFactions);
+  find("sandbox-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    try {
+      const opening = createCustomRulerGame(world, {
+        year: Number(find("sb-era").value),
+        baseFaction: find("sb-faction").value,
+        rulerName: find("sb-ruler-name").value,
+        stateName: find("sb-state-name").value,
+        heroIds: [...sandboxSelectedHeroes],
+        difficulty: find("difficulty-select")?.value || "hard",
+        rules: {
+          noPrepTurn: Boolean(find("sb-no-prep")?.checked),
+          doubleTech: Boolean(find("sb-double-tech")?.checked),
+          fierceCoalition: Boolean(find("sb-fierce-coalition")?.checked),
+          bonusResources: Boolean(find("sb-bonus-res")?.checked),
+        },
+      });
+      replaceGame(opening);
+      find("sandbox-dialog").close();
+      sound?.play("victory");
+      notify(`已建号开局 · ${opening.saga?.custom?.stateName || factionName(era(), state.player)}！`);
+    } catch (error) {
+      notify(error.message, true);
+    }
+  });
   find("menu-open-saga-chronicle")?.addEventListener("click", () => {
     find("menu-dialog").close();
     chronicleReplay?.open();
@@ -6031,6 +6319,8 @@ async function start() {
     openBattleEntry: (entry, turn) => openBattleReport(entry, turn, "chronicle"),
     openHistoricalEvent: () => openHistoricalEvent(),
     openCaptiveDialog: (officerKey) => openCaptiveDialog(officerKey),
+    openTechDialog: () => openTechDialog(),
+    openStratagemTab: () => openDiplomacyDialog("stratagem"),
   });
   wireControls();
   wirePanels();

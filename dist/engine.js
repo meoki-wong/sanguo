@@ -41,6 +41,9 @@ import {
   createSagaState, isOfficerUnavailable, maybeCaptureOfficer, sagaCombatModifiers, sagaOfficers,
   settleSagaQuarter, validSaga,
 } from "./saga.js";
+import { chokepointModifiers, isCoalitionMember, leaveCoalition } from "./coalition.js";
+import { resolveBattleDuel } from "./duels.js";
+import { techCombatModifiers, techEconomyModifiers } from "./tech.js";
 import {
   BATTLE_TACTICS, DEFAULT_TACTIC, difficultyConfig, estimateCasualties, evaluateTactic, isOpeningPrepTurn,
   moraleModifier, normalizeTactic, tacticCost, validDifficulty, validTactic,
@@ -122,7 +125,7 @@ export function cityRevenues(state, key) {
   const taxRate = dynastyTaxRate(state, key) * levyRate9(state, key);
   const gross = {
     treasury: Math.floor((income.treasury * yieldRate.money + yieldRate.extra) * taxRate),
-    grain: Math.floor((income.grain * yieldRate.grain + yieldRate.extra * 2) * workforceYield(state, key) * taxRate),
+    grain: Math.floor((income.grain * yieldRate.grain + yieldRate.extra * 2) * workforceYield(state, key) * taxRate * techEconomyModifiers(state, city.owner).grainYieldMult),
   };
   return taxSplit10(state, key, adjustedHarvest15(state, key, gross));
 }
@@ -951,7 +954,9 @@ export function defensiveStrength(era, target, state, key, wallFactor = 1) {
   const aiMult = target.owner !== state.player ? difficultyConfig(state).aiCombatMult : 1;
   const defBond = activeBondsForOfficer(era, state, target.owner, defender);
   const defSaga = sagaCombatModifiers(state, target.owner, key);
-  return Math.round(base * morale * aiMult * defBond.defenseMult * defSaga.defenseMult);
+  const defTech = techCombatModifiers(state, target.owner, "assault", "land");
+  const coalitionDefMult = isCoalitionMember(state, target.owner) ? 1.06 : 1;
+  return Math.round(base * morale * aiMult * defBond.defenseMult * defSaga.defenseMult * defTech.defenseMult * coalitionDefMult);
 }
 
 export function forecastAttack(era, state, order, faction = state.player, conditions = {}) {
@@ -972,21 +977,24 @@ export function forecastAttack(era, state, order, faction = state.player, condit
     state,
   });
   const attSaga = sagaCombatModifiers(state, faction, tacticFx.id === "rally" ? order.to : null, tacticFx.id);
+  const attTech = techCombatModifiers(state, faction, tacticFx.id, weather.terrain);
+  const cpFx = chokepointModifiers(state, order.from, order.to, tacticFx.id, leader);
+  const coalitionAtkMult = isCoalitionMember(state, faction) && targetHolding?.owner === state.player ? 1.06 : 1;
   const rawTravel = conditions.travel === "water" && weather.terrain === "river" ? 1.12 : 1 - Math.min(.15, weather.cost * .035);
   const travel = traitFx.ignoreWeather && rawTravel < 1 ? 1 : rawTravel;
   const offenseMorale = state?.century ? moraleModifier(state.factions?.[faction]?.morale ?? 75) : 1;
   const offenseAiMult = state?.century && faction !== state.player ? difficultyConfig(state).aiCombatMult : 1;
   const offense = Math.round(order.troops * (1 + officerSkill(state, leader, "command") / 120 + gear)
-    * travel * (conditions.readiness ?? 1) * traitFx.attackMult * tacticFx.attackMult * offenseMorale * offenseAiMult * attBond.attackMult * attSaga.attackMult);
+    * travel * (conditions.readiness ?? 1) * traitFx.attackMult * tacticFx.attackMult * offenseMorale * offenseAiMult * coalitionAtkMult * attBond.attackMult * attSaga.attackMult * attTech.attackMult);
   const terrain = state.war && weather.terrain;
   const rawGround = state?.century
     ? (terrain === "pass" ? 1.24 : terrain === "river" ? (hasTrait(leader, "navy") || conditions.travel === "water" ? 1.04 : 1.16) : 1)
     : (terrain === "pass" ? 1.12 : terrain === "river" ? 1.08 : 1);
   const ground = rawGround > 1 ? 1 + (rawGround - 1) * (1 - tacticFx.terrainReduction) : rawGround;
-  const combinedWallFactor = traitFx.wallFactor * tacticFx.wallFactor;
+  const combinedWallFactor = traitFx.wallFactor * tacticFx.wallFactor * attTech.wallFactor;
   const defense = conditions.surrender ? Math.max(0, offense - 1)
     : Math.round((defensiveStrength(era, targetHolding, state, order.to, combinedWallFactor) + (conditions.relief ?? 0))
-      * ground * (1 - (conditions.breach ?? 0) / 330) * traitFx.defenseMult * tacticFx.defenseMult);
+      * ground * cpFx.defenseMult * (1 - (conditions.breach ?? 0) / 330) * traitFx.defenseMult * tacticFx.defenseMult);
   const wins = offense > defense;
   const defenders = (targetHolding?.troops ?? 0) + (targetHolding ? holdingArmies(state, targetHolding.owner, order.to)
     .reduce((total, guard) => total + guard.troops, 0) : 0);
@@ -1000,10 +1008,12 @@ export function forecastAttack(era, state, order, faction = state.player, condit
     surrender: conditions.surrender,
     century: Boolean(state?.century),
   });
+  const marchGrainMult = techEconomyModifiers(state, faction).marchGrainMult;
+  const baseGrain = Math.max(1, Math.round((expeditionGrain(order.troops) + tacticFx.extraGrain + cpFx.extraGrain) * marchGrainMult));
   return {
     offense,
     defense,
-    grain: expeditionGrain(order.troops) + tacticFx.extraGrain,
+    grain: state?.century ? baseGrain : expeditionGrain(order.troops) + tacticFx.extraGrain,
     treasury: tacticFx.extraTreasury,
     wins,
     tactic: tacticFx.id,
@@ -1013,10 +1023,13 @@ export function forecastAttack(era, state, order, faction = state.player, condit
     postCaptureOccupationDelta: tacticFx.postCaptureOccupationDelta,
     estimatedAttackerLoss: est.attackerLoss,
     estimatedDefenderLoss: est.defenderLoss,
-    terrainLabel: terrain === "pass" ? "关隘险要" : terrain === "river" ? "大江渡口" : "",
+    terrainLabel: cpFx.label || (terrain === "pass" ? "关隘险要" : terrain === "river" ? "大江渡口" : ""),
+    chokepoint: cpFx.post ? cpFx.post.name : "",
+    eliteName: attTech.eliteName,
     traitNotes: { attacker: traitFx.attackerTraits, defender: traitFx.defenderTraits },
     bonds: { attacker: attBond.bonds.map((b) => b.name), defender: defBond.bonds.map((b) => b.name) },
-    attBondLossMult: attBond.lossMult,
+    attBondLossMult: attBond.lossMult * attTech.lossMult,
+    captureBonus: attTech.captureBonus,
     rumorActive: Boolean(state?.century && (state?.saga?.rumors?.[order.to] ?? 0) > state.turn),
     tacticFx,
   };
@@ -1057,10 +1070,24 @@ function resolveAttack(world, era, state, faction, order, army, conditions = {})
     surrender: conditions.surrender,
     century: Boolean(state.century),
   });
-  const attackerLoss = state.century && odds.attBondLossMult && odds.attBondLossMult < 1
-    ? Math.min(order.troops - 1, Math.max(1, Math.round(rawAttackerLoss * odds.attBondLossMult)))
+  const attOfficerObj = era.officers.find(({ key }) => key === order.officer) ?? null;
+  const duel = state.century ? resolveBattleDuel(era, state, {
+    attacker: attOfficerObj,
+    defender: defOfficerObj,
+    tacticId: odds.tactic,
+    cityKey: order.to,
+    attFaction: faction,
+    defFaction: oldOwner,
+  }) : null;
+  const duelAttLossMult = duel ? (duel.winner === "attacker" ? 0.84 : duel.winner === "defender" ? 1.14 : 1) : 1;
+  const duelDefLossMult = duel ? (duel.winner === "attacker" ? 1.16 : duel.winner === "defender" ? 0.86 : 1) : 1;
+  const attackerLoss = state.century && ((odds.attBondLossMult && odds.attBondLossMult < 1) || duelAttLossMult !== 1)
+    ? Math.min(order.troops - 1, Math.max(1, Math.round(rawAttackerLoss * (odds.attBondLossMult ?? 1) * duelAttLossMult)))
     : rawAttackerLoss;
-  const lossUpTo = (troops) => defenders ? Math.floor(defensiveLoss * troops / defenders) : 0;
+  const adjustedDefLoss = duel && duelDefLossMult !== 1
+    ? Math.min(defenders, Math.max(0, Math.round(defensiveLoss * duelDefLossMult)))
+    : defensiveLoss;
+  const lossUpTo = (troops) => defenders ? Math.floor(adjustedDefLoss * troops / defenders) : 0;
   let counted = target.troops;
   const garrisonLoss = lossUpTo(counted);
   for (const guard of fieldGuard) {
@@ -1075,15 +1102,23 @@ function resolveAttack(world, era, state, faction, order, army, conditions = {})
   const battle = {
     from: order.from,
     attacker: { faction, troops: order.troops, strength: odds.offense, casualties: attackerLoss },
-    defender: { faction: oldOwner, troops: defenders, strength: odds.defense, casualties: defensiveLoss },
+    defender: { faction: oldOwner, troops: defenders, strength: odds.defense, casualties: adjustedDefLoss },
     personnel: { attacker: order.officer, defender: oldCommanderKey },
     ...(army?.stance ? { tactic: conditions.surrender ? "surrender" : army.stance }
       : state.century && odds.tactic ? { tactic: odds.tactic } : {}),
     ...(state.century && weatherTerrain && weatherTerrain !== "land" ? { terrain: weatherTerrain } : {}),
+    ...(state.century && odds.chokepoint ? { chokepoint: odds.chokepoint } : {}),
+    ...(state.century && odds.eliteName ? { elite: odds.eliteName } : {}),
     ...(attBonds.length || defBonds.length ? { bonds: { attacker: attBonds, defender: defBonds } } : {}),
+    ...(duel ? { duel: { kind: duel.kind, label: duel.label, attackerName: duel.attackerName, defenderName: duel.defenderName, attHp: duel.attHp, defHp: duel.defHp, winner: duel.winner, headline: duel.headline, rounds: duel.rounds } } : {}),
   };
+  if (duel && state.saga) {
+    if ((duel.winner === "attacker" && faction === state.player) || (duel.winner === "defender" && oldOwner === state.player)) {
+      state.saga.duelWins = (state.saga.duelWins ?? 0) + 1;
+    }
+  }
   if (!army) {
-    state.factions[faction].grain -= odds.grain;
+    state.factions[faction].grain = Math.max(0, state.factions[faction].grain - odds.grain);
     if (odds.treasury) state.factions[faction].treasury = Math.max(0, state.factions[faction].treasury - odds.treasury);
   }
   if (state.century) {
@@ -1091,11 +1126,11 @@ function resolveAttack(world, era, state, faction, order, army, conditions = {})
     const defMorale = state.factions[oldOwner];
     const clampMorale = (m) => Math.max(15, Math.min(100, m));
     if (odds.wins) {
-      if (attMorale) attMorale.morale = clampMorale(attMorale.morale + 3);
-      if (defMorale) defMorale.morale = clampMorale(defMorale.morale - 4);
+      if (attMorale) attMorale.morale = clampMorale(attMorale.morale + 3 + (duel?.attMoraleDelta ?? 0));
+      if (defMorale) defMorale.morale = clampMorale(defMorale.morale - 4 + (duel?.defMoraleDelta ?? 0));
     } else {
-      if (attMorale) attMorale.morale = clampMorale(attMorale.morale - 4);
-      if (defMorale) defMorale.morale = clampMorale(defMorale.morale + 3);
+      if (attMorale) attMorale.morale = clampMorale(attMorale.morale - 4 + (duel?.attMoraleDelta ?? 0));
+      if (defMorale) defMorale.morale = clampMorale(defMorale.morale + 3 + (duel?.defMoraleDelta ?? 0));
     }
   }
   const tacticSuffix = !army && state.century && odds.tacticSummary
@@ -1157,8 +1192,13 @@ function resolveAttack(world, era, state, faction, order, army, conditions = {})
     tactic: odds.tactic,
     ratio: odds.offense / Math.max(1, odds.defense),
     wasLastCity,
+    bonusProb: (odds.captureBonus ?? 0) + (duel?.captureBonus ?? 0),
   });
   if (capturedOfficer) battle.captured = capturedOfficer;
+  if (state.century && faction === state.player && state.saga?.coalition?.leader === oldOwner
+      && (wasLastCity || era.capitals?.[oldOwner] === order.to)) {
+    leaveCoalition(world, era, state, oldOwner, "中枢失守");
+  }
   return {
     type: "capture", faction, city: order.to, participants: [faction, oldOwner],
     ...(grainReturned ? { grainReturned } : {}),
@@ -1950,6 +1990,8 @@ function validBattle(world, state, officers, entry) {
   if (battle.bonds !== undefined && (!battle.bonds || typeof battle.bonds !== "object" || Array.isArray(battle.bonds)
       || (battle.bonds.attacker !== undefined && !Array.isArray(battle.bonds.attacker))
       || (battle.bonds.defender !== undefined && !Array.isArray(battle.bonds.defender)))) return false;
+  if (battle.duel !== undefined && (!battle.duel || typeof battle.duel !== "object" || Array.isArray(battle.duel)
+      || typeof battle.duel.kind !== "string" || typeof battle.duel.winner !== "string")) return false;
   if (type === "battle") return occupation === undefined && attacker.strength <= defender.strength;
   return occupation && attacker.strength > defender.strength
     && (occupation.inArmy === undefined || (Number.isSafeInteger(occupation.inArmy) && occupation.inArmy >= minimumMarch))

@@ -179,6 +179,15 @@ export const FAMOUS_OFFICERS = {
   "张绣": { title: "—", might: 84, intellect: 68, traits: ["cavalry", "ambush"] },
   "蔡文姬": { title: "昭姬", might: 18, intellect: 90, traits: ["charisma", "farming"] },
   "马良": { title: "季常", might: 30, intellect: 88, traits: ["charisma", "logistics"] },
+  "李儒": { title: "文优", might: 32, intellect: 93, traits: ["fire", "ambush"] },
+  "华雄": { title: "—", might: 92, intellect: 46, traits: ["cavalry"] },
+  "司马昭": { title: "子上", might: 68, intellect: 92, traits: ["charisma", "logistics"] },
+  "羊祜": { title: "叔子", might: 72, intellect: 91, traits: ["charisma", "fortress"] },
+  "杜预": { title: "元凯", might: 74, intellect: 93, traits: ["logistics", "ambush"] },
+  "王濬": { title: "士治", might: 78, intellect: 84, traits: ["navy", "cavalry"] },
+  "文鸯": { title: "次骞", might: 96, intellect: 64, traits: ["cavalry", "ambush"] },
+  "孟获": { title: "—", might: 90, intellect: 48, traits: ["fortress", "charisma"] },
+  "祝融": { title: "—", might: 88, intellect: 56, traits: ["fire", "ambush"] },
 };
 
 export const OFFICER_BONDS = [
@@ -193,6 +202,8 @@ export const OFFICER_BONDS = [
   { id: "xiliang", name: "西凉铁骑", members: ["马腾", "韩遂", "马超", "庞德", "阎行"], attackBonus: 0.08, defenseBonus: 0.05, lossReduction: 0.05, desc: "凉州铁骑驰突，攻 +8%。" },
   { id: "shu_pillars", name: "蜀汉栋梁", members: ["诸葛亮", "姜维", "蒋琬", "费祎"], attackBonus: 0.06, defenseBonus: 0.08, lossReduction: 0.08, desc: "兴复汉室，守备 +8%、减损 8%。" },
   { id: "jin_conquest", name: "灭吴双璧", members: ["羊祜", "杜预", "王濬"], attackBonus: 0.08, defenseBonus: 0.06, lossReduction: 0.08, desc: "水陆南征，攻 +8%、减损 8%。" },
+  { id: "lvbu_xianzhen", name: "飞将陷阵", members: ["吕布", "高顺", "陈宫", "张绣"], attackBonus: 0.09, defenseBonus: 0.05, lossReduction: 0.06, desc: "陷阵死士配飞将突骑，攻势 +9%。" },
+  { id: "sima_clan", name: "晋室英杰", members: ["司马懿", "司马师", "司马昭", "邓艾", "钟会"], attackBonus: 0.07, defenseBonus: 0.08, lossReduction: 0.08, desc: "鹰视狼顾，守备 +8%、减损 8%。" },
 ];
 
 const metaCache = new Map();

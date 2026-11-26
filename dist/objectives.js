@@ -50,6 +50,11 @@ export function scenarioObjective(world, era, state) {
     });
     return objective("整备边军", `让 2 座前线辖城各有至少 ${frontierGarrisonTarget.toLocaleString("en-US")} 驻军，且城防达到 ${defenseTarget} 级。`, 2, rows);
   }
+  if (era.year === 251) {
+    const rows = owned.filter(({ city }) => era.ownership[city.key] !== state.player)
+      .map((row) => ({ ...row, met: row.holding.occupation === 0 }));
+    return objective("群雄逐鹿", "在跨时代群雄乱战中攻克并整顿 2 座开局疆域之外的城池。", 2, rows);
+  }
   if (era.year !== 265) return null;
   const rows = owned.filter(({ city }) => era.ownership[city.key] !== state.player)
     .map((row) => ({ ...row, met: row.holding.occupation === 0 }));

@@ -99,6 +99,7 @@ export function tacticCost(tacticId, state) {
 }
 
 export function isOpeningPrepTurn(state) {
+  if (state?.saga?.rules?.noPrepTurn) return false;
   return Boolean(state?.century && state.turn === 0);
 }
 
@@ -187,9 +188,11 @@ export function evaluateTactic({ tacticId, attacker, defender, targetHolding, de
       tag = "奇正相合";
       summary = `智略小胜 +${Math.round(mild * 100)}%`;
     } else {
-      const penalty = Math.max(-0.24, gap * 0.009);
+      const hasFireChain = Boolean(state?.saga?.tech?.unlocked?.includes("s2_firechain"));
+      const rawPenalty = Math.max(-0.24, gap * 0.009);
+      const penalty = hasFireChain ? rawPenalty * 0.5 : rawPenalty;
       attackMult = 1 + penalty;
-      attackerLossMult = 1.22;
+      attackerLossMult = hasFireChain ? 1.11 : 1.22;
       defenderLossMult = 0.9;
       tag = "计略识破";
       summary = `敌智更高 ${Math.round(penalty * 100)}%`;

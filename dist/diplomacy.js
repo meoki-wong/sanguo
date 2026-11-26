@@ -6,6 +6,7 @@ import { limitedPeace } from "./sandtable-war.js";
 import { dynastyTreaty } from "./dynasty-treaties.js";
 import { leagueAccord, reignGuarantee, reignRecognition } from "./reign-leagues.js";
 import { rivalFriction } from "./stratagems.js";
+import { coalitionProtects } from "./coalition.js";
 
 export const treatyTerms = {
   truce: { name: "停战", seasons: 2, treasury: 12 },
@@ -32,7 +33,7 @@ export function treatyWith(state, first, second) {
 }
 
 export function isHostile(state, first, second) {
-  return first !== second && !treatyWith(state, first, second);
+  return first !== second && !treatyWith(state, first, second) && !coalitionProtects(state, first, second);
 }
 
 export function allianceTrade(state, faction) {

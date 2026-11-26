@@ -22,10 +22,10 @@ export function campaignRoute(world, era, state) {
     : { label: "新城整顿", value: recovered, target: Math.min(2, enemyHoldings) };
   const milestones = [
     { title: first.title, description: first.description, checks: [{ label: "达标城", value: first.progress, target: first.required }] },
-    { title: { 184: "储粮赈乡", 190: "充实联军粮仓", 199: "充实仓廪", 208: "储粮守江", 219: "积粮保荆汉", 234: "筹措前线冬粮", 262: "稳住防线", 265: "复通税粮" }[era.year],
+    { title: { 184: "储粮赈乡", 190: "充实联军粮仓", 199: "充实仓廪", 208: "储粮守江", 219: "积粮保荆汉", 234: "筹措前线冬粮", 251: "厚积群英粮饷", 262: "稳住防线", 265: "复通税粮" }[era.year],
       description: defensive ? "守住开局辖城的核心，并充实储粮。" : "巩固新占城，并充实国库。",
       checks: [middle, { label: stockName, value: reserves, target: reserveTarget }] },
-    { title: { 184: "平定郡县", 190: "平定关东", 199: "开疆稳政", 208: "立足荆江", 219: "固守江汉", 234: "巩固进军走廊", 262: "推进战线", 265: "立足州郡" }[era.year],
+    { title: { 184: "平定郡县", 190: "平定关东", 199: "开疆稳政", 208: "立足荆江", 219: "固守江汉", 234: "巩固进军走廊", 251: "问鼎中原", 262: "推进战线", 265: "立足州郡" }[era.year],
       description: "控制开局疆域之外的城池并完成整顿，同时保有开局辖城的核心。",
       checks: [{ label: "新城整顿", value: recovered, target: expansionTarget }, { label: "开局辖城", value: held, target: coreTarget }] },
   ];
@@ -51,6 +51,7 @@ const historicalEvents = {
   208: { title: "修缮江埠", description: "拨钱 28 修整渡口与仓行，商贸提升一级。", cost: { treasury: 28 }, project: "commerce" },
   219: { title: "汉水修圩", description: "拨粮 26 安顿河畔屯户，屯田提升一级。", cost: { grain: 26 }, project: "farming" },
   234: { title: "渭水屯兵", description: "拨钱 30 修筑前线工事，城防提升一级。", cost: { treasury: 30 }, project: "defense" },
+  251: { title: "群英会盟", description: "拨粮 30 犒赏四方义士，屯田提升一级。", cost: { grain: 30 }, project: "farming" },
   262: { title: "修缮粮道", description: "稳固边城的转运道路，拨钱 32，城防提升一级。", cost: { treasury: 32 }, project: "defense" },
   265: { title: "州郡归心", description: "安置新附州郡，拨钱 36，商贸提升一级，民心增加 5。", cost: { treasury: 36 }, project: "commerce" },
 };

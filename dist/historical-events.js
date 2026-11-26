@@ -571,6 +571,47 @@ export const HISTORICAL_EVENTS = [
       };
     },
   },
+  {
+    id: "ev_251_assembly",
+    tag: "英雄集结",
+    title: "群英会盟 · 乱世群星齐耀中原",
+    trigger(world, era, state) {
+      return state.year === 251 && state.turn >= 2 && state.turn <= 10;
+    },
+    build(world, era, state) {
+      return {
+        tag: "英雄集结",
+        title: "群英会盟 · 选定霸业先手",
+        body: "古今豪杰同世争锋，中原十一雄各拥精兵良将。此刻可大阅三军抢占兵制先机，或广设太学广积技巧与钱粮。",
+        choices: [
+          {
+            id: "martial",
+            label: "大阅三军 · 锐意先登（技巧点+80 · 全军攻势+10%）",
+            tone: "primary",
+            apply(w, e, next) {
+              next.saga.tech ??= { points: 0, unlocked: [] };
+              next.saga.tech.points += 80;
+              next.factions[next.player].morale = clamp(next.factions[next.player].morale + 5, 15, 100);
+              addSagaBuff(next, { kind: "attack", faction: next.player, value: 0.1, duration: 5, label: "群英锐气" });
+              return "三军士气如虹！技巧点 +80、全军攻势 +10% 持续 5 季。";
+            },
+          },
+          {
+            id: "scholar",
+            label: "礼贤兴农 · 厚积薄发（技巧点+120 · 国库+30 · 储粮+30）",
+            tone: "quiet",
+            apply(w, e, next) {
+              next.saga.tech ??= { points: 0, unlocked: [] };
+              next.saga.tech.points += 120;
+              next.factions[next.player].treasury += 30;
+              next.factions[next.player].grain += 30;
+              return "厚积技巧与国帑（技巧点 +120、国库 +30、储粮 +30）。";
+            },
+          },
+        ],
+      };
+    },
+  },
 ];
 
 export function evaluateHistoricalEvent(world, era, state) {

@@ -25,6 +25,9 @@ import {
   executeGrandManeuver, executeSovereignAttack, executeSovereignReinforce, listSovereignProvinces, quickReinforcePlan,
 } from "./sovereign.js";
 import { recruitWildTalent } from "./saga.js";
+import { promoteOfficer } from "./campaign.js";
+import { resolveClimateChoice } from "./coalition.js";
+import { getTechState, researchTech } from "./tech.js";
 import {
   STRATAGEMS, evaluateDemandSurrender, evaluateSpreadRumor, executeDemandSurrender, executeSpreadRumor,
 } from "./stratagems.js";
@@ -289,7 +292,9 @@ export function createUxHud(world, api) {
     const rankBadge = $("hud-rank-badge");
     if (rankBadge) {
       const rep = state.saga?.reputation;
-      rankBadge.textContent = rep !== undefined ? `${profile.badge} · 望${rep}` : profile.badge;
+      const custom = state.saga?.custom;
+      const titleText = custom?.stateName ? `${custom.stateName} · ${custom.rulerName}` : profile.badge;
+      rankBadge.textContent = rep !== undefined ? `${titleText} · 望${rep}` : titleText;
       rankBadge.dataset.tier = profile.tier;
       rankBadge.dataset.emperor = String(profile.holdsEmperor);
       rankBadge.title = rep !== undefined ? `${profile.tooltip} · 海内声望 ${rep}/100` : profile.tooltip;
@@ -297,6 +302,16 @@ export function createUxHud(world, api) {
     }
     const sagaBtn = $("open-saga-chronicle");
     if (sagaBtn) sagaBtn.hidden = !state.century;
+    const techBtn = $("open-tech-dialog");
+    if (techBtn) {
+      techBtn.hidden = !state.century;
+      if (state.century) {
+        const tp = getTechState(state).points ?? 0;
+        techBtn.textContent = `兵技 ${tp}`;
+      }
+    }
+    const achBtn = $("open-achievements-dialog");
+    if (achBtn) achBtn.hidden = !state.century;
     syncModeToggleLabel();
     const tDelta = $("treasury-delta");
     const gDelta = $("grain-delta");
@@ -1004,6 +1019,24 @@ export function createUxHud(world, api) {
             btn.addEventListener("click", () => {
               if (act.op === "open-historical-event") {
                 api.openHistoricalEvent?.();
+              } else if (act.op === "climate-relief" || act.op === "climate-hold") {
+                api.sound?.play("event");
+                const action = act.op === "climate-relief" ? "relief" : "tax";
+                const res = resolveClimateChoice(world, api.snapshot().state, action);
+                api.commitState(() => res.state, res.message);
+              } else if (act.op === "open-stratagem") {
+                toggleSovereignMemorials(false);
+                api.openStratagemTab?.();
+              } else if (act.op === "promote-officer") {
+                api.sound?.play("victory");
+                api.commitState(() => promoteOfficer(world, api.snapshot().state, act.target, act.skill), "战功卓著，已晋爵提拔 +5 能力！");
+              } else if (act.op === "research-tech") {
+                api.sound?.play("tech");
+                const res = researchTech(world, api.snapshot().state, act.target);
+                api.commitState(() => res.state, res.message);
+              } else if (act.op === "open-tech") {
+                toggleSovereignMemorials(false);
+                api.openTechDialog?.();
               } else if (act.op === "open-captive") {
                 api.openCaptiveDialog?.(act.target);
               } else if (act.op === "recruit-wild") {

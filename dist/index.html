@@ -47,8 +47,11 @@
       <button type="button" class="quiet" id="open-advice">议事</button>
       <button type="button" class="quiet" id="century-pending" aria-haspopup="dialog" hidden>待决</button>
       <button type="button" class="quiet" id="open-chronicle">奏报</button>
+      <button type="button" class="quiet" id="open-tech-dialog" hidden>兵技</button>
       <button type="button" class="quiet" id="open-saga-chronicle" hidden>本纪</button>
+      <button type="button" class="quiet" id="open-achievements-dialog" hidden>勋鉴</button>
       <button type="button" class="quiet hud-mode-toggle" id="toggle-hud-mode" aria-pressed="false" title="切换君主大势模式 / 幕府详图微操模式">幕府详图</button>
+      <button type="button" class="quiet" id="toggle-bgm" aria-pressed="false" title="开关古风五声音阶背景雅乐">雅乐</button>
       <button type="button" class="quiet" id="toggle-sound" aria-label="切换音效" title="切换古风音效">🔊</button>
       <button type="button" class="quiet" id="open-menu">菜单</button>
       <button type="button" class="turn-orders" id="turn-orders" aria-haspopup="true">政令 <span id="turn-order-count">0</span></button>
@@ -1655,6 +1658,14 @@
           <strong>传檄劝降（20钱） · 威服孤弱</strong>
           <div id="stratagem-surrender-list" class="stratagem-target-list"></div>
         </div>
+        <div class="stratagem-block">
+          <strong>邀盟夹击（18钱） · 同盟协同出兵</strong>
+          <div id="stratagem-ally-list" class="stratagem-target-list"></div>
+        </div>
+        <div class="stratagem-block">
+          <strong>以俘议和 · 交还敌将换停战与赔款</strong>
+          <div id="stratagem-captive-list" class="stratagem-target-list"></div>
+        </div>
         <p id="stratagem-status" role="status" hidden></p>
       </section>
     </div>
@@ -1741,6 +1752,7 @@
       <p class="muted">开局会替换当前的自动存档。</p>
       <div class="dialog-actions">
         <button type="button" class="quiet" data-close="campaign-dialog">取消</button>
+        <button type="button" class="quiet" id="open-sandbox-dialog">自创君主</button>
         <button type="button" class="quiet" id="open-custom-opening">自定义</button>
         <button class="primary" type="submit" id="start-game">开局</button>
       </div>
@@ -2421,6 +2433,7 @@
         </div>
       </div>
       <div id="br-effects" class="br-effects"></div>
+      <div id="br-duel-box" class="br-duel-box" hidden></div>
       <p id="br-log" class="br-log"></p>
       <div class="br-foot">
         <label class="br-auto-pref">
@@ -2466,6 +2479,84 @@
         </section>
       </div>
     </div>
+  </dialog>
+
+  <div id="map-cluster-picker" class="map-cluster-picker" hidden></div>
+
+  <dialog id="tech-dialog" aria-labelledby="tech-dialog-title">
+    <div class="dialog-content tech-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag">兵制技巧 · 功勋晋爵</span>
+          <h2 id="tech-dialog-title">三系技巧研习与名将晋爵</h2>
+        </div>
+        <button type="button" class="quiet" data-close="tech-dialog">关闭</button>
+      </div>
+      <div class="tech-header-bar">
+        <strong id="tech-points-label">当前技巧点：0 TP</strong>
+        <span id="tech-elite-badge" class="bond-badge">专属精锐：待解锁</span>
+      </div>
+      <p id="tech-status" class="cap-status" role="status" hidden></p>
+      <div id="tech-tree-grid" class="tech-tree-grid"></div>
+      <section class="tech-promo-section">
+        <h3>战功晋爵（满资历一键提拔 +5 统/政）</h3>
+        <div id="tech-promo-list" class="stratagem-target-list"></div>
+      </section>
+    </div>
+  </dialog>
+
+  <dialog id="achievements-dialog" aria-labelledby="ach-dialog-title">
+    <div class="dialog-content ach-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag">天下勋鉴</span>
+          <h2 id="ach-dialog-title">史官总评与成就殿堂</h2>
+        </div>
+        <button type="button" class="quiet" data-close="achievements-dialog">关闭</button>
+      </div>
+      <div class="ach-grade-card">
+        <div class="ach-grade-badge" id="ach-grade-letter">B</div>
+        <div class="ach-grade-meta">
+          <strong id="ach-grade-verdict">战局评定</strong>
+          <p id="ach-grade-share" class="muted"></p>
+        </div>
+        <button type="button" class="primary" id="ach-copy-btn">复制战报</button>
+      </div>
+      <p id="ach-progress-note" class="muted"></p>
+      <div id="ach-grid" class="ach-grid"></div>
+    </div>
+  </dialog>
+
+  <dialog id="sandbox-dialog" aria-labelledby="sb-dialog-title">
+    <form class="dialog-content sb-dialog-content" id="sandbox-form">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag">自创君主 · 沙盒规则</span>
+          <h2 id="sb-dialog-title">建号起兵 · 梦幻班底开局</h2>
+        </div>
+        <button type="button" class="quiet" data-close="sandbox-dialog">返回</button>
+      </div>
+      <div class="sb-fields">
+        <label>剧本年份<select id="sb-era"></select></label>
+        <label>起兵势力版图<select id="sb-faction"></select></label>
+        <label>自拟君主名<input id="sb-ruler-name" type="text" maxlength="12" value="新君" required></label>
+        <label>自拟国号/军号<input id="sb-state-name" type="text" maxlength="12" value="大汉义师" required></label>
+      </div>
+      <div class="sb-section">
+        <strong>挑选跨时代梦幻名将（最多选 5 位随行入幕）</strong>
+        <div id="sb-heroes-grid" class="sb-heroes-grid"></div>
+      </div>
+      <div class="sb-rules">
+        <label><input type="checkbox" id="sb-no-prep"> <span>取消开局整军备战期（第 0 季即可出兵）</span></label>
+        <label><input type="checkbox" id="sb-double-tech"> <span>双倍技巧点积累（快速解锁三阶精锐）</span></label>
+        <label><input type="checkbox" id="sb-fierce-coalition"> <span>强硬反霸联军（14 城即触发合纵讨伐）</span></label>
+        <label><input type="checkbox" id="sb-bonus-res"> <span>充盈开局军资（国库+80 · 储粮+80 · 技巧点+120）</span></label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="quiet" data-close="sandbox-dialog">取消</button>
+        <button type="submit" class="primary" id="sb-launch-btn">建号开局</button>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">

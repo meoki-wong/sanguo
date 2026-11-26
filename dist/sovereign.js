@@ -15,8 +15,11 @@ import { factionCourtProfile } from "./imperial.js";
 import { knownOfficer } from "./personnel.js";
 import { regionCandidates10 } from "./reign.js";
 import { effectiveWildFee, isOfficerUnavailable } from "./saga.js";
+import { isCoalitionActive } from "./coalition.js";
+import { promotableOfficers } from "./duels.js";
 import { advisorStrategicBrief } from "./stratagems.js";
 import { BATTLE_TACTICS, isOpeningPrepTurn, normalizeTactic } from "./tactics.js";
+import { canResearchTech, TECH_TREE } from "./tech.js";
 import { activeBondsForOfficer, hasTrait, officerMeta } from "./traits.js";
 
 export const SOVEREIGN_DOCTRINES = [
@@ -762,6 +765,47 @@ export function buildImperialMemorials(world, state, plannedInput, options = {})
     });
   }
 
+  // 0a2. Pending seasonal climate/harvest decision
+  const climate = state.century && state.saga?.climate?.pending ? state.saga.climate : null;
+  if (climate && memorials.length < 4) {
+    const isHarvest = climate.id === "harvest";
+    memorials.push({
+      id: `climate-${climate.turn}`,
+      kind: "climate",
+      tag: isHarvest ? "天时岁稔" : "灾异急报",
+      tone: climate.tone || "info",
+      title: `${climate.region} · ${climate.name}`,
+      detail: climate.desc,
+      actions: isHarvest
+        ? [
+          { label: "与民同乐（声望+5·士气+4）", kind: "primary", op: "climate-relief" },
+          { label: "征储实边（国库丰增）", kind: "quiet", op: "climate-hold" },
+        ]
+        : [
+          { label: "开仓赈济（18钱·声望+6）", kind: "primary", op: "climate-relief" },
+          { label: "暂缓赈抚（保国库）", kind: "quiet", op: "climate-hold" },
+        ],
+    });
+  }
+
+  // 0a3. Active anti-hegemon coalition alert
+  if (isCoalitionActive(state) && memorials.length < 4) {
+    const co = state.saga.coalition;
+    const leaderName = factionName(era, co.leader);
+    const memberNames = co.members.map((k) => factionName(era, k)).join("、");
+    memorials.push({
+      id: `coalition-${co.since}`,
+      kind: "coalition",
+      tag: "反霸合纵",
+      tone: "warn",
+      title: `${leaderName}纠合反霸联合军（尚余 ${Math.max(1, co.ends - state.turn)} 季）`,
+      detail: `盟员：${memberNames}。联军互不攻伐且合力压境；可施「驱虎吞狼」瓦解退盟，或直捣${leaderName}主城击溃合纵！`,
+      actions: [
+        { label: "谋略离间", kind: "primary", op: "open-stratagem" },
+      ],
+    });
+  }
+
   // 0b. Captive officers awaiting Sovereign judgement
   if (captives.length && memorials.length < 4) {
     const first = captives[0];
@@ -958,6 +1002,40 @@ export function buildImperialMemorials(world, state, plannedInput, options = {})
         title: `治下尚有 ${vacantGovs} 座城池缺任太守`,
         detail: `${lex.org}尚有待任文武，按材授官可加速整顿并触发名将特技减耗。`,
         actions: [{ label: lex.autoStaffBtn, kind: "primary", op: "auto-staff" }],
+      });
+    }
+  }
+
+  // 4b. Ready tech research or promotable officer
+  if (state.century && memorials.length < 4) {
+    const readyTech = TECH_TREE.find((t) => canResearchTech(state, t.id).ok);
+    const promos = promotableOfficers(era, state);
+    if (promos.length) {
+      const p = promos[0];
+      memorials.push({
+        id: `promote-${p.officer.key}-${p.skill}`,
+        kind: "promotion",
+        tag: "战功晋爵",
+        tone: "good",
+        title: `「${p.officer.name}」功勋已满，可提拔${p.skillLabel} +5`,
+        detail: `现阶「${p.currentTitle}」，一键晋爵即永久提升${p.skillLabel}并进阶军号。`,
+        actions: [
+          { label: `晋爵${p.skillLabel}+5`, kind: "primary", op: "promote-officer", target: p.officer.key, skill: p.skill },
+          { label: "兵技殿堂", kind: "quiet", op: "open-tech" },
+        ],
+      });
+    } else if (readyTech) {
+      memorials.push({
+        id: `tech-${readyTech.id}`,
+        kind: "tech",
+        tag: "技巧可研",
+        tone: "info",
+        title: `可研习技巧「${readyTech.name}」（${readyTech.tp}点·${readyTech.cost}钱）`,
+        detail: readyTech.desc,
+        actions: [
+          { label: "一键研习", kind: "primary", op: "research-tech", target: readyTech.id },
+          { label: "查看三系技巧", kind: "quiet", op: "open-tech" },
+        ],
       });
     }
   }

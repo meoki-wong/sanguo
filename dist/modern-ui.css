@@ -3395,3 +3395,347 @@ body[data-hud-mode="sovereign"] #feedback {
     flex-wrap: wrap;
   }
 }
+
+/* ==========================================================================
+   v17.0「铁骑雄略 · 英雄集结」Styles
+   ========================================================================== */
+
+.weather-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.map-cluster-picker {
+  position: absolute;
+  z-index: 35;
+  transform: translate(-50%, -100%);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  max-width: 240px;
+  padding: 0.4rem 0.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-gold);
+  background: var(--glass-strong);
+  box-shadow: var(--shadow-hud);
+}
+
+.map-cluster-picker button {
+  padding: 0.25rem 0.55rem;
+  font-size: 0.8rem;
+}
+
+/* ---------- Duel / Debate Act 2 Box ---------- */
+.br-duel-box {
+  margin: 0.5rem 0 0.6rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(236, 199, 128, 0.55);
+  background: linear-gradient(135deg, rgba(184, 72, 57, 0.16), rgba(31, 27, 21, 0.92));
+}
+
+.br-duel-head {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+.br-duel-bars {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.br-duel-headline {
+  margin: 0 0 0.35rem;
+  font-weight: 600;
+  color: var(--gold-bright);
+  font-size: 0.86rem;
+}
+
+.br-duel-rounds {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+/* ---------- Tech Tree & Promotion Dialog ---------- */
+#tech-dialog {
+  width: min(56rem, calc(100dvw - 1.2rem));
+}
+
+.tech-dialog-content,
+.ach-dialog-content,
+.sb-dialog-content {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
+}
+
+#tech-dialog .dialog-heading > div,
+#achievements-dialog .dialog-heading > div,
+#sandbox-dialog .dialog-heading > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.tech-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-gold);
+  background: var(--glass-soft);
+}
+
+.tech-tree-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.tech-branch {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.65rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: rgba(14, 14, 12, 0.45);
+}
+
+.tech-branch h3 {
+  margin: 0;
+  font-family: var(--serif);
+  color: var(--gold-bright);
+  font-size: 0.96rem;
+}
+
+.tech-branch > p {
+  margin: 0;
+  font-size: 0.76rem;
+}
+
+.tech-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.38rem;
+  padding: 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--glass-soft);
+}
+
+.tech-card[data-state="done"] {
+  border-color: rgba(116, 184, 145, 0.55);
+  background: rgba(116, 184, 145, 0.1);
+}
+
+.tech-card[data-state="ready"] {
+  border-color: var(--border-gold);
+}
+
+.tech-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.tech-card p {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.tech-promo-section {
+  margin-top: 0.4rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tech-promo-section h3 {
+  margin: 0 0 0.45rem;
+  font-family: var(--serif);
+  font-size: 0.92rem;
+  color: var(--gold-bright);
+}
+
+/* ---------- Achievements & Grade Dialog ---------- */
+#achievements-dialog {
+  width: min(54rem, calc(100dvw - 1.2rem));
+}
+
+.ach-grade-card {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-gold);
+  background: radial-gradient(circle at left, rgba(228, 190, 116, 0.14), rgba(21, 19, 15, 0.92));
+}
+
+.ach-grade-badge {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--serif);
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--gold-bright);
+  border: 2px solid var(--gold);
+  background: var(--gold-dark);
+  flex-shrink: 0;
+}
+
+.ach-grade-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ach-grade-meta p {
+  margin: 0.25rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.ach-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.ach-card {
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: rgba(14, 14, 12, 0.48);
+  opacity: 0.68;
+}
+
+.ach-card[data-unlocked="true"] {
+  opacity: 1;
+  border-color: var(--border-gold);
+  background: rgba(228, 190, 116, 0.09);
+}
+
+.ach-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.25rem;
+}
+
+.ach-card p {
+  margin: 0 0 0.2rem;
+  font-size: 0.76rem;
+}
+
+/* ---------- Sandbox Custom Ruler Dialog ---------- */
+#sandbox-dialog {
+  width: min(46rem, calc(100dvw - 1.2rem));
+}
+
+.sb-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.sb-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.sb-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.sb-heroes-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.sb-hero-chip {
+  font-size: 0.76rem;
+  text-align: left;
+  justify-content: flex-start;
+  padding: 0.38rem 0.55rem;
+}
+
+.sb-rules {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--glass-soft);
+}
+
+.sb-rules label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.sb-rules input[type="checkbox"] {
+  accent-color: var(--gold);
+}
+
+@media (max-width: 960px) {
+  .turn-tools {
+    flex-wrap: wrap !important;
+    justify-content: flex-start;
+    row-gap: 0.24rem;
+  }
+  .turn-tools #advance {
+    margin-left: auto;
+  }
+  .tech-tree-grid,
+  .ach-grid,
+  .sb-fields,
+  .sb-heroes-grid,
+  .sb-rules,
+  .br-duel-bars {
+    grid-template-columns: 1fr;
+  }
+  .ach-grade-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

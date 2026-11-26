@@ -11,6 +11,7 @@ const endings = {
   208: { name: "定江保境", stock: "grain", wealth: "储粮", margin: 90 },
   219: { name: "荆汉定局", stock: "grain", wealth: "储粮", margin: 110 },
   234: { name: "持重定策", stock: "grain", wealth: "储粮", margin: 125 },
+  251: { name: "英雄定鼎", stock: "grain", wealth: "储粮", margin: 120 },
   262: { name: "山河相持", stock: "grain", wealth: "储粮", margin: 110 },
   265: { name: "安定州郡", stock: "treasury", wealth: "国库", margin: 95 },
 };

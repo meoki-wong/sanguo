@@ -146,6 +146,8 @@ export function createBattleReplayController({ world, sound, forceColor, getStat
 
     const traitsWrap = document.getElementById("br-effects");
     const chips = [];
+    if (battle.elite) chips.push(el("span", `精锐：${battle.elite}`, "bond-badge"));
+    if (battle.chokepoint) chips.push(el("span", `天险：${battle.chokepoint}`, "trait-pill"));
     for (const bName of battle.bonds?.attacker ?? []) chips.push(el("span", `攻方羁绊：${bName}`, "bond-badge"));
     for (const bName of battle.bonds?.defender ?? []) chips.push(el("span", `守方羁绊：${bName}`, "bond-badge"));
     for (const t of officerMeta(attOfficer).traits) chips.push(el("span", `攻将 · ${t.name}`, "trait-pill"));
@@ -155,6 +157,37 @@ export function createBattleReplayController({ world, sound, forceColor, getStat
       chips.unshift(cap);
     }
     traitsWrap.replaceChildren(...chips);
+
+    const duelBox = document.getElementById("br-duel-box");
+    if (duelBox) {
+      const duel = battle.duel;
+      if (duel && step >= 1) {
+        const head = el("div", undefined, "br-duel-head");
+        head.append(
+          el("span", duel.label || "阵前单挑", "memorial-tag"),
+          el("strong", `${duel.attackerName} (${duel.attHp}%) VS ${duel.defenderName} (${duel.defHp}%)`),
+        );
+        const bars = el("div", undefined, "br-duel-bars");
+        const attTrack = el("div", undefined, "br-bar-track");
+        const attFill = el("div", undefined, "br-bar-fill");
+        attFill.style.width = `${Math.max(4, duel.attHp)}%`;
+        attFill.style.setProperty("--force", forceColor(battle.attacker.faction));
+        attTrack.append(attFill);
+        const defTrack = el("div", undefined, "br-bar-track");
+        const defFill = el("div", undefined, "br-bar-fill");
+        defFill.style.width = `${Math.max(4, duel.defHp)}%`;
+        defFill.style.setProperty("--force", forceColor(battle.defender.faction));
+        defTrack.append(defFill);
+        bars.append(attTrack, defTrack);
+        const list = el("ul", undefined, "br-duel-rounds");
+        for (const r of duel.rounds ?? []) list.append(el("li", r.text));
+        duelBox.replaceChildren(head, bars, el("p", duel.headline, "br-duel-headline"), list);
+        duelBox.hidden = false;
+        if (step === 1) sound?.play("duel");
+      } else {
+        duelBox.hidden = true;
+      }
+    }
 
     document.getElementById("br-log").textContent = step === 0
       ? `${attFactionName}${attOfficer ? attOfficer.name : ""}自${fromName}起兵 ${battle.attacker.troops.toLocaleString("zh-CN")} 人，直指${toName}！`
