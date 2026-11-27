@@ -2,18 +2,19 @@
 
 import {
   AWAKENED_TITLES, CITY_POLICIES, CITY_SPECIALTIES, DEFENSE_TRAPS, DIFFICULTY_MODES,
-  FORT_CATALOG, SIEGE_DEFENSE_MODES, SIEGE_STANCES, STRATAGEM_CATALOG, TERRAIN_LABELS,
-  TROOP_TYPES, edgeDisplayName, edgeKey, factionColor, formatCalendar, roadTerrain,
+  FORMATIONS_V2, FORT_CATALOG, NATIONAL_DECREES_V2, SIEGE_DEFENSE_MODES, SIEGE_STANCES,
+  STRATAGEM_CATALOG, TERRAIN_LABELS, TROOP_TYPES, edgeDisplayName, edgeKey, factionColor,
+  formatCalendar, roadTerrain,
 } from "./constants.js";
 import {
   MIN_DISPATCH_TROOPS, MIN_GARRISON_LEAVE, activeTreaty, appointOfficer, armyEtaDekads,
   availableOfficersInCity, bribeDefection, buildFort, canBuildFort, castStratagem,
   checkSupplyLine, cityBonds, cityByKey, cityNameV2, computeThreats, demolishFort,
-  dispatchArmy, dispatchEmergencyReinforce, eraByYearV2, evaluateDeal, executeDiplomacy,
-  factionNameV2, factionSummary, forecastDispatch, isHostileV2, layCityTrap, proposeDeal,
-  redirectArmy, repairFort, resolveCaptive, rewardOfficer, serializeStateV2,
-  deserializeStateV2, setCityPolicy, setCitySiegeDefense, setCityTroopType, sowDiscord,
-  stratagemCooldownLeft, createGameV2,
+  dispatchArmy, dispatchEmergencyReinforce, enactDecree, eraByYearV2, evaluateDeal,
+  executeDiplomacy, factionNameV2, factionSummary, forecastDispatch, hasDecree, isHostileV2,
+  layCityTrap, proposeDeal, rankProgressForFaction, redirectArmy, repairFort, resolveCaptive,
+  rewardOfficer, serializeStateV2, deserializeStateV2, setCityPolicy, setCitySiegeDefense,
+  setCityTroopType, sowDiscord, stratagemCooldownLeft, createGameV2,
 } from "./engine.js";
 
 const $ = (id) => document.getElementById(id);
@@ -34,6 +35,8 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
     from: null,
     to: null,
     officer: null,
+    deputy: null,
+    formation: "heyi",
     troopType: null,
     troops: 800,
     siegeStance: "storm",
@@ -65,7 +68,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
     if (handleToggle) handleToggle.textContent = collapsed ? "展开 ▴" : "收起 ▾";
     // Re-frame map smoothly if bottom drawer toggled on H5
     if (window.innerWidth <= 900) {
-      requestAnimationFrame(() => mapApi.render(getState(), { city: selectedCity, armyId: selectedArmyId, overlay: overlayMode }));
+      requestAnimationFrame(() => mapApi.invalidateLayout?.());
     }
   }
 
@@ -103,12 +106,13 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
     const cal = formatCalendar(state.year, state.turn);
     const era = eraByYearV2(world, state.year);
     const sum = factionSummary(state, state.player);
+    const rp = rankProgressForFaction(state, state.player);
     const fName = factionNameV2(world, state, state.player);
 
     const isCompact = typeof window !== "undefined" && window.innerWidth <= 900;
     $("v2-date").textContent = isCompact
-      ? `${cal.year}年${cal.month}月${cal.dekadName} ${state.weather?.icon || ""}`.trim()
-      : `${era.title} · ${cal.label}（${fName}）`;
+      ? `${cal.year}年${cal.month}月${cal.dekadName} · ${rp.current.title} ${state.weather?.icon || ""}`.trim()
+      : `${era.title} · ${cal.label}（${fName} · ${rp.current.title}）`;
     const wPill = $("v2-weather");
     if (wPill && state.weather) {
       wPill.textContent = `${state.weather.icon} ${state.weather.name}`;
@@ -131,7 +135,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
       const nArmies = sum.armyCount;
       const nCap = state.captives?.length || 0;
       courtBtn.textContent = isCompact
-        ? (nCap ? `朝堂(${nCap})` : nArmies ? `朝堂(${nArmies})` : "朝堂")
+        ? (nCap ? "朝堂(俘)" : "朝堂")
         : (nCap ? `朝堂 (${nCap}俘)` : nArmies ? `朝堂 (${nArmies}军)` : "朝堂");
     }
   }
@@ -178,12 +182,19 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
     if (dispatchDraft.from !== fromKey) {
       dispatchDraft.from = fromKey;
       dispatchDraft.to = enemyAdj[0] || friendlyAdj[0] || allReachable[0]?.key || null;
+      dispatchDraft.deputy = null;
       dispatchDraft.troopType = fromCity.troopType;
       dispatchDraft.troops = Math.min(fromCity.troops - MIN_GARRISON_LEAVE, Math.max(MIN_DISPATCH_TROOPS, Math.round((fromCity.troops - MIN_GARRISON_LEAVE) * 0.65)));
     }
     const avail = availableOfficersInCity(state, fromKey, state.player);
     if (!avail.some((o) => o.key === dispatchDraft.officer)) {
       dispatchDraft.officer = avail[0]?.key || null;
+    }
+    if (dispatchDraft.deputy && (dispatchDraft.deputy === dispatchDraft.officer || !avail.some((o) => o.key === dispatchDraft.deputy))) {
+      dispatchDraft.deputy = null;
+    }
+    if (!dispatchDraft.formation || !FORMATIONS_V2[dispatchDraft.formation]) {
+      dispatchDraft.formation = "heyi";
     }
     if (!dispatchDraft.troopType || !TROOP_TYPES[dispatchDraft.troopType]) {
       dispatchDraft.troopType = fromCity.troopType;
@@ -195,6 +206,8 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
 
   function renderArmyInspector(state, army) {
     const off = state.officers[army.officer];
+    const dep = army.deputy ? state.officers[army.deputy] : null;
+    const form = FORMATIONS_V2[army.formation || "heyi"] || FORMATIONS_V2.heyi;
     const spec = TROOP_TYPES[army.troopType] || TROOP_TYPES.infantry;
     const isOwn = army.faction === state.player;
     const supplyOk = checkSupplyLine(world, state, army);
@@ -207,17 +220,19 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
     }
 
     const stanceLabel = army.stance === "besiege" ? `🔥 围攻${destName}中`
-      : army.stance === "reinforce" ? `🛡️ 驰援${destName}（约${eta}旬）`
-        : army.stance === "retreat" ? `🏳️ 回撤${destName}（约${eta}旬）`
-          : `⚔️ 进军${destName}（约${eta}旬）`;
+      : army.stance === "engaged" ? `⚔️ 阵前绞杀交锋中（第${army.engageRounds || 1}合）`
+        : army.stance === "reinforce" ? `🛡️ 驰援${destName}（约${eta}旬）`
+          : army.stance === "retreat" ? `🏳️ 回撤${destName}（约${eta}旬）`
+            : `⚔️ 进军${destName}（约${eta}旬）`;
 
     let html = `
-      <div class="v2-card">
+      <div class="v2-card ${army.stance === "engaged" ? "siege-alert" : ""}">
         <div class="v2-card-head">
           <h2>${esc(off?.name || "野战军团")}所部</h2>
           <span class="v2-badge" style="background:${factionColor(army.faction)}">${esc(fName)}</span>
         </div>
-        <p class="v2-muted">${esc(stanceLabel)} · 主将统 ${off?.command ?? 70} / 武 ${off?.might ?? 70}</p>
+        <p class="v2-muted">${esc(stanceLabel)} · ${form.icon}${esc(form.name)}${dep ? ` · 副将${esc(dep.name)}` : ""} · 统 ${off?.command ?? 70} / 武 ${off?.might ?? 70}</p>
+        ${army.stance === "engaged" ? `<p class="v2-muted" style="color:var(--gold)">⚡ 两军正于官道白刃相持！调遣友好军团进抵同道可获 +18% 夹击加成，或下令班师脱战。</p>` : ""}
         <div class="v2-stat-grid">
           <div class="v2-stat-box"><small>兵种与兵力</small><strong>${spec.icon} ${esc(spec.name)} ${army.troops.toLocaleString()}</strong></div>
           <div class="v2-stat-box"><small>随军士气</small><strong>${army.morale} / 100</strong></div>
@@ -486,7 +501,10 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
         troops: dispatchDraft.troops,
         troopType: dispatchDraft.troopType,
         officer: dispatchDraft.officer,
+        formation: dispatchDraft.formation,
       }) : null;
+      const depChoices = draftInfo.avail.filter((o) => o.key !== dispatchDraft.officer);
+      const selectedForm = FORMATIONS_V2[dispatchDraft.formation] || FORMATIONS_V2.heyi;
 
       html += `
         <div class="v2-card">
@@ -513,6 +531,13 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
             </select>
           </div>
           <div class="v2-field">
+            <label>随军副将（激活名将羁绊与作战加成）</label>
+            <select class="v2-select" id="dispatch-deputy">
+              <option value="">-- 无副将 --</option>
+              ${depChoices.map((o) => `<option value="${esc(o.key)}" ${dispatchDraft.deputy === o.key ? "selected" : ""}>${esc(o.name)}（统${o.command} 武${o.might}）</option>`).join("")}
+            </select>
+          </div>
+          <div class="v2-field">
             <label>出征主力兵种</label>
             <div class="v2-chip-grid">
               ${Object.values(TROOP_TYPES).map((t) => `
@@ -522,6 +547,14 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
           <div class="v2-field">
             <label><span>出动兵力</span><strong id="dispatch-troops-val">${dispatchDraft.troops.toLocaleString()} 人</strong></label>
             <input type="range" id="dispatch-troops" min="${MIN_DISPATCH_TROOPS}" max="${Math.max(MIN_DISPATCH_TROOPS, draftInfo.maxSend)}" step="50" value="${dispatchDraft.troops}" ${draftInfo.maxSend < MIN_DISPATCH_TROOPS ? "disabled" : ""}>
+          </div>
+          <div class="v2-field">
+            <label>行军战阵</label>
+            <div class="v2-chip-grid">
+              ${Object.values(FORMATIONS_V2).map((fm) => `
+                <button type="button" class="v2-chip ${dispatchDraft.formation === fm.id ? "active" : ""}" data-draft-form="${fm.id}" title="${esc(fm.summary)}">${fm.icon} ${esc(fm.name)}</button>`).join("")}
+            </div>
+            <p class="v2-muted">${esc(selectedForm.summary)}</p>
           </div>
           <div class="v2-field">
             <label>临城默认围攻方略</label>
@@ -694,11 +727,22 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
     });
     $("dispatch-officer")?.addEventListener("change", (ev) => {
       dispatchDraft.officer = ev.target.value;
+      if (dispatchDraft.deputy === dispatchDraft.officer) dispatchDraft.deputy = null;
+      renderInspector(getState());
+    });
+    $("dispatch-deputy")?.addEventListener("change", (ev) => {
+      dispatchDraft.deputy = ev.target.value || null;
       renderInspector(getState());
     });
     inspectorBody.querySelectorAll("[data-draft-troop]").forEach((btn) => {
       btn.addEventListener("click", () => {
         dispatchDraft.troopType = btn.dataset.draftTroop;
+        renderInspector(getState());
+      });
+    });
+    inspectorBody.querySelectorAll("[data-draft-form]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        dispatchDraft.formation = btn.dataset.draftForm;
         renderInspector(getState());
       });
     });
@@ -720,6 +764,8 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
         from: cityKey,
         to: dispatchDraft.to,
         officer: dispatchDraft.officer,
+        deputy: dispatchDraft.deputy || null,
+        formation: dispatchDraft.formation || "heyi",
         troops: dispatchDraft.troops,
         troopType: dispatchDraft.troopType,
         siegeStance: dispatchDraft.siegeStance,
@@ -825,13 +871,17 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
       const myArmies = (state.armies || []).filter((a) => a.faction === state.player && a.troops > 0);
       body.innerHTML = myArmies.length ? myArmies.map((a) => {
         const o = state.officers[a.officer];
+        const dep = a.deputy ? state.officers[a.deputy] : null;
+        const form = FORMATIONS_V2[a.formation || "heyi"] || FORMATIONS_V2.heyi;
         const sp = TROOP_TYPES[a.troopType] || TROOP_TYPES.infantry;
         const eta = armyEtaDekads(world, state, a);
-        const stName = a.stance === "besiege" ? `围攻「${cityNameV2(world, a.targetCity)}」中` : `行军趋「${cityNameV2(world, a.targetCity)}」（约 ${eta} 旬）`;
+        const stName = a.stance === "besiege" ? `围攻「${cityNameV2(world, a.targetCity)}」中`
+          : a.stance === "engaged" ? `⚔️ 阵前绞杀中（第${a.engageRounds || 1}合）`
+            : `行军趋「${cityNameV2(world, a.targetCity)}」（约 ${eta} 旬）`;
         return `
           <div class="v2-row-card">
             <div class="v2-row-top">
-              <strong>${esc(o?.name || "大军")} · ${sp.icon}${esc(sp.name)} ${a.troops.toLocaleString()} 人</strong>
+              <strong>${esc(o?.name || "大军")}${dep ? `·${esc(dep.name)}` : ""} · ${form.icon}${esc(form.name)} · ${sp.icon}${esc(sp.name)} ${a.troops.toLocaleString()} 人</strong>
               <span class="v2-badge">${a.supplyCut ? "⚡ 断粮" : "✅ 畅通"}</span>
             </div>
             <div class="v2-muted">${esc(stName)} · 士气 ${a.morale} · 余粮 ${a.grain} 石</div>
@@ -1010,6 +1060,46 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
         btn.addEventListener("click", () => {
           const [offKey, action] = btn.dataset.cap.split(":");
           const ok = applyCommand((s) => resolveCaptive(s, offKey, action), "已处置在押敌将！");
+          if (ok) renderCourtDialog();
+        });
+      });
+    } else if (courtTab === "decrees") {
+      const rp = rankProgressForFaction(state, state.player);
+      const treasury = state.factions[state.player]?.treasury ?? 0;
+      const enactedList = state.decrees?.[state.player] || [];
+      const rankPct = rp.nextRank
+        ? Math.min(100, Math.round((rp.cityCount / rp.nextRank.minCities) * 100))
+        : 100;
+      body.innerHTML = `
+        <div class="v2-card">
+          <div class="v2-card-head">
+            <h3>👑 当前爵位：${esc(rp.current.title)}（领 ${rp.cityCount} / 44 城）</h3>
+            <span class="v2-badge">已行国策 ${enactedList.length} / ${Object.keys(NATIONAL_DECREES_V2).length}</span>
+          </div>
+          <div class="v2-bar wall"><i style="width:${rankPct}%"></i></div>
+          <p class="v2-muted">${rp.nextRank ? `距下一爵位「${esc(rp.nextRank.title)}」还需掌控 ${Math.max(0, rp.nextRank.minCities - rp.cityCount)} 城（共需 ${rp.nextRank.minCities} 城）。` : "已登天子大位，四海清平在望！"}</p>
+        </div>
+        <div class="v2-list-grid">${Object.values(NATIONAL_DECREES_V2).map((d) => {
+          const done = hasDecree(state, state.player, d.id);
+          const lockedCity = rp.cityCount < d.minCities;
+          const lowGold = treasury < d.cost;
+          return `
+            <div class="v2-row-card">
+              <div class="v2-row-top">
+                <strong>${d.icon} ${esc(d.name)}</strong>
+                <span class="v2-badge">${done ? "✅ 已颁行" : `需 ${d.minCities} 城 · ${d.cost} 钱`}</span>
+              </div>
+              <div class="v2-muted">${esc(d.summary)}</div>
+              <button type="button" class="v2-btn ${done ? "quiet" : "primary"}" data-enact-decree="${esc(d.id)}" ${(done || lockedCity || lowGold) ? "disabled" : ""}>
+                ${done ? "✅ 政令已传四方" : lockedCity ? `尚需占领至 ${d.minCities} 城` : lowGold ? `国库银两不足 (${d.cost}钱)` : `📜 颁布国策 (${d.cost}钱)`}
+              </button>
+            </div>`;
+        }).join("")}</div>`;
+
+      body.querySelectorAll("[data-enact-decree]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.enactDecree;
+          const ok = applyCommand((s) => enactDecree(world, s, id), `已颁布国家方略「${NATIONAL_DECREES_V2[id].name}」！`);
           if (ok) renderCourtDialog();
         });
       });

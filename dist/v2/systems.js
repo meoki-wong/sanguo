@@ -1,8 +1,9 @@
 // 经略三国 2.0 二期扩展系统：官道工事 / 天时实战奇计 / 名将羁绊与策反 / 筹码谈判台 / 二期智能 AI
 
 import {
-  CITY_SPECIALTIES, FORT_CATALOG, OFFICER_BONDS_V2, OFFICER_RIVALS_V2,
-  STRATAGEM_CATALOG, TROOP_TYPES, citySpecialtyV2, edgeDisplayName, edgeKey, roadTerrain,
+  CITY_SPECIALTIES, FORMATIONS_V2, FORT_CATALOG, NATIONAL_DECREES_V2, OFFICER_BONDS_V2,
+  OFFICER_RIVALS_V2, STRATAGEM_CATALOG, TROOP_TYPES, citySpecialtyV2, edgeDisplayName,
+  edgeKey, roadTerrain,
 } from "./constants.js";
 import {
   activeTreaty, armyWorldPosition, availableOfficersInCity, cityByKey,
@@ -26,6 +27,7 @@ export function ensurePhase2State(state) {
   if (!state) return state;
   state.forts ??= {};
   state.stratagemCooldowns ??= {};
+  state.decrees ??= {};
   if (state.cities) {
     for (const c of Object.values(state.cities)) {
       if (!c.specialty || !CITY_SPECIALTIES[c.specialty]) {
@@ -33,7 +35,49 @@ export function ensurePhase2State(state) {
       }
     }
   }
+  if (Array.isArray(state.armies)) {
+    for (const a of state.armies) {
+      a.formation ??= "heyi";
+      a.deputy ??= null;
+      a.engagedWith ??= null;
+      a.engageRounds ??= 0;
+    }
+  }
   return state;
+}
+
+export function hasDecree(state, faction, decreeId) {
+  return Boolean(state?.decrees?.[faction]?.includes(decreeId));
+}
+
+export function enactDecree(world, state, decreeId) {
+  const spec = NATIONAL_DECREES_V2[decreeId];
+  if (!spec) throw new Error("未知国家方略国策。");
+  const next = ensurePhase2State(structuredClone(state));
+  const actor = next.player;
+  const list = (next.decrees[actor] ??= []);
+  if (list.includes(decreeId)) throw new Error(`已颁布国策「${spec.name}」。`);
+  const cityCount = Object.values(next.cities).filter((c) => c.owner === actor).length;
+  if (cityCount < spec.minCities) {
+    throw new Error(`颁布「${spec.name}」至少需统领 ${spec.minCities} 座城池（当前 ${cityCount} 城）。`);
+  }
+  if ((next.factions[actor]?.treasury ?? 0) < spec.cost) {
+    throw new Error(`颁布「${spec.name}」需国库 ${spec.cost} 钱。`);
+  }
+  next.factions[actor].treasury -= spec.cost;
+  list.push(decreeId);
+  if (decreeId === "imperial_edict") {
+    next.factions[actor].morale = Math.max(next.factions[actor].morale, spec.moraleFloor || 75);
+  }
+  const ev = {
+    turn: next.turn,
+    kind: "system",
+    faction: actor,
+    text: `👑 颁布天下大政「${spec.icon} ${spec.name}」— ${spec.summary}`,
+  };
+  next.events = [...next.events, ev].slice(-80);
+  next.lastTurnEvents = [ev];
+  return next;
 }
 
 export function edgeMidpoint(world, aKey, bKey) {
@@ -155,7 +199,8 @@ export function resolveFortsOnMove(world, next, army, events) {
   if (!isHostileV2(next, fort.faction, army.faction)) return;
 
   if (fort.kind === "tower" && army.stance !== "besiege") {
-    const dmg = Math.max(40, Math.round(army.troops * FORT_CATALOG.tower.arrowDmgPct));
+    const xbBonus = hasDecree(next, fort.faction, "repeating_crossbow") ? 1.18 : 1;
+    const dmg = Math.max(40, Math.round(army.troops * FORT_CATALOG.tower.arrowDmgPct * xbBonus));
     army.troops = Math.max(0, army.troops - dmg);
     army.morale = Math.max(10, army.morale - 6);
     events.push({
@@ -189,7 +234,9 @@ export function resolveFortsOnMove(world, next, army, events) {
     army.progress = 0.48;
     army.blockedByFort = eKey;
     const tSpec = TROOP_TYPES[army.troopType] || TROOP_TYPES.infantry;
-    const fortDmg = Math.max(42, Math.round((army.troops / 18) * tSpec.siegeMult));
+    const fSpec = FORMATIONS_V2[army.formation || "heyi"] || FORMATIONS_V2.heyi;
+    const thBonus = hasDecree(next, army.faction, "thunder_siege") ? 1.22 : 1;
+    const fortDmg = Math.max(42, Math.round((army.troops / 18) * tSpec.siegeMult * fSpec.siegeMult * thBonus));
     const counterLoss = Math.max(35, Math.round(army.troops * 0.055));
     fort.hp = Math.max(0, fort.hp - fortDmg);
     army.troops = Math.max(0, army.troops - counterLoss);
@@ -565,6 +612,11 @@ export function evaluateDeal(world, state, targetFaction, deal = {}) {
   } else if (treaty?.kind === "truce") {
     score += 8;
     reasons.push("旧约尚存 (+8)");
+  }
+
+  if (hasDecree(state, state.player, "imperial_edict")) {
+    score += 18;
+    reasons.push("挟天子令威望 (+18)");
   }
 
   if (gold > 0) {

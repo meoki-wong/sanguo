@@ -441,3 +441,162 @@ export const OFFICER_RIVALS_V2 = [
   ["张辽", "孙权"],
 ];
 
+// ===== 三期扩展常量：古战五大阵型 / 官爵阶梯 / 国家方略国策 =====
+
+export const FORMATIONS_V2 = {
+  heyi: {
+    id: "heyi",
+    name: "鹤翼阵",
+    icon: "🦅",
+    atkMult: 1.08,
+    defMult: 1.06,
+    speedMult: 1.0,
+    siegeMult: 1.0,
+    lossMult: 0.88,
+    summary: "两翼张开合围：攻守均衡且显著降低己方战损(-12%)。",
+  },
+  fengshi: {
+    id: "fengshi",
+    name: "锋矢阵",
+    icon: "⚡",
+    atkMult: 1.15,
+    defMult: 0.92,
+    speedMult: 1.1,
+    siegeMult: 1.0,
+    lossMult: 1.06,
+    summary: "尖锋突击直插敌阵：野战爆发 +15%、行军略快(+10%)。",
+  },
+  fangyuan: {
+    id: "fangyuan",
+    name: "方圆阵",
+    icon: "🛡️",
+    atkMult: 0.94,
+    defMult: 1.18,
+    speedMult: 0.88,
+    siegeMult: 0.9,
+    lossMult: 0.82,
+    summary: "四面重盾结阵死守：守势 +18% 且战损极低(-18%)。",
+  },
+  changshe: {
+    id: "changshe",
+    name: "长蛇阵",
+    icon: "🐍",
+    atkMult: 0.98,
+    defMult: 0.96,
+    speedMult: 1.34,
+    siegeMult: 0.86,
+    lossMult: 1.0,
+    summary: "轻装纵队昼夜疾行：行军提速 +34%，专抢关隘与星夜解围。",
+  },
+  chongche: {
+    id: "chongche",
+    name: "冲车阵",
+    icon: "🪵",
+    atkMult: 0.92,
+    defMult: 0.96,
+    speedMult: 0.84,
+    siegeMult: 1.45,
+    lossMult: 0.95,
+    summary: "掩护云梯冲车抵近：破城墙与拔关隘威力暴涨 +45%。",
+  },
+};
+
+export const IMPERIAL_RANKS_V2 = [
+  { id: "prefect", minCities: 1, title: "郡守" },
+  { id: "governor", minCities: 5, title: "州牧" },
+  { id: "general", minCities: 10, title: "大将军" },
+  { id: "chancellor", minCities: 16, title: "汉丞相" },
+  { id: "king", minCities: 24, title: "封王建国" },
+  { id: "emperor", minCities: 34, title: "天子御极" },
+];
+
+export function imperialRankForCities(count = 1) {
+  let current = IMPERIAL_RANKS_V2[0];
+  let nextRank = IMPERIAL_RANKS_V2[1] || null;
+  for (let i = 0; i < IMPERIAL_RANKS_V2.length; i += 1) {
+    if (count >= IMPERIAL_RANKS_V2[i].minCities) {
+      current = IMPERIAL_RANKS_V2[i];
+      nextRank = IMPERIAL_RANKS_V2[i + 1] || null;
+    }
+  }
+  return { current, nextRank };
+}
+
+export const NATIONAL_DECREES_V2 = {
+  tuntian: {
+    id: "tuntian",
+    name: "许都屯田",
+    icon: "🌾",
+    cost: 60,
+    minCities: 4,
+    grainMult: 0.25,
+    summary: "全国军粮月产永久 +25%，稳固大军后勤。",
+  },
+  standing_army: {
+    id: "standing_army",
+    name: "募兵常备",
+    icon: "⚔️",
+    cost: 70,
+    minCities: 6,
+    recruitMult: 0.3,
+    summary: "全国各城月度兵员补充永久 +30%。",
+  },
+  repeating_crossbow: {
+    id: "repeating_crossbow",
+    name: "诸葛连弩",
+    icon: "🏹",
+    cost: 85,
+    minCities: 8,
+    archerTowerMult: 0.18,
+    summary: "全国「强弩」兵种战力与官道「连弩箭楼」齐射伤害 +18%。",
+  },
+  grand_fleet: {
+    id: "grand_fleet",
+    name: "楼船造舰",
+    icon: "⛵",
+    cost: 85,
+    minCities: 8,
+    navyMult: 0.2,
+    summary: "全国「水师」战力与江渡作战威力永久 +20%。",
+  },
+  thunder_siege: {
+    id: "thunder_siege",
+    name: "霹雳军工",
+    icon: "🪨",
+    cost: 95,
+    minCities: 10,
+    siegeMult: 0.22,
+    summary: "围城破墙效率及「攻城械」摧毁关隘寨堡威力 +22%。",
+  },
+  iron_walls: {
+    id: "iron_walls",
+    name: "坚壁清野",
+    icon: "🧱",
+    cost: 90,
+    minCities: 10,
+    wallRepairMult: 0.35,
+    wallMitigation: 0.88,
+    summary: "城防月修 +35%，且遭敌军围城时城防耐久掉血减免 12%。",
+  },
+  nine_ranks: {
+    id: "nine_ranks",
+    name: "九品招贤",
+    icon: "📜",
+    cost: 100,
+    minCities: 12,
+    monthlyLoyalty: 2,
+    summary: "每月自动提升全军将领忠义 +2，稳固海内名士。",
+  },
+  imperial_edict: {
+    id: "imperial_edict",
+    name: "挟天子令",
+    icon: "👑",
+    cost: 130,
+    minCities: 16,
+    dealBonus: 18,
+    moraleFloor: 75,
+    summary: "外交筹码谈判初始威望 +18，全军城池与国力士气保底不低于 75。",
+  },
+};
+
+

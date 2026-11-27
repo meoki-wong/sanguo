@@ -2,14 +2,18 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { enrichWorld } from "../dist/personnel.js";
-import { CITY_SPECIALTIES, TROOP_TYPES, edgeKey, formatCalendar, roadTerrain, troopCounterEffect } from "../dist/v2/constants.js";
+import {
+  CITY_SPECIALTIES, FORMATIONS_V2, NATIONAL_DECREES_V2, TROOP_TYPES,
+  edgeKey, formatCalendar, imperialRankForCities, roadTerrain, troopCounterEffect,
+} from "../dist/v2/constants.js";
 import {
   advanceDekad, availableOfficersInCity, bribeDefection, buildFort, canBuildFort,
   castStratagem, checkSupplyLine, computeThreats, createGameV2, demolishFort,
-  deserializeStateV2, dispatchArmy, dispatchEmergencyReinforce, evaluateDeal,
-  executeDiplomacy, isHostileV2, layCityTrap, proposeDeal, redirectArmy, repairFort,
-  resolveCaptive, rewardOfficer, serializeStateV2, setCityPolicy, setCitySiegeDefense,
-  setCityTroopType, sowDiscord, stratagemCooldownLeft,
+  deserializeStateV2, dispatchArmy, dispatchEmergencyReinforce, enactDecree, evaluateDeal,
+  executeDiplomacy, hasDecree, isHostileV2, layCityTrap, proposeDeal,
+  rankProgressForFaction, redirectArmy, repairFort, resolveCaptive, rewardOfficer,
+  serializeStateV2, setCityPolicy, setCitySiegeDefense, setCityTroopType, sowDiscord,
+  stratagemCooldownLeft,
 } from "../dist/v2/engine.js";
 import { evaluateBondBonus } from "../dist/v2/systems.js";
 
@@ -420,4 +424,211 @@ test("二期 44 城地域特产、名将羁绊、细作离间策反、筹码驱�
   assert.deepEqual(upgraded.forts, {});
   assert.deepEqual(upgraded.stratagemCooldowns, {});
   assert.equal(upgraded.cities.xu.specialty, "granary");
+});
+
+test("多回合流动活战（阵前绞杀、撤军脱离与增援夹击）运行正常", () => {
+  let st = createGameV2(world, 199, "cao");
+  st.cities.runan.owner = "biao";
+  st.cities.xu.troops = 3200;
+  st.cities.runan.troops = 2800;
+  const caoOff = availableOfficersInCity(st, "xu", "cao")[0];
+  let biaoOff = availableOfficersInCity(st, "runan", "biao")[0];
+  if (!biaoOff) {
+    const anyBiao = Object.values(st.officers).find((o) => o.faction === "biao" && !o.armyId);
+    anyBiao.city = "runan";
+    biaoOff = anyBiao;
+  }
+  // Equalize officer baselines for deterministic close clash (< 2.2 ratio)
+  caoOff.command = 75;
+  caoOff.might = 75;
+  biaoOff.command = 75;
+  biaoOff.might = 75;
+
+  st = dispatchArmy(world, st, {
+    from: "xu",
+    to: "runan",
+    officer: caoOff.key,
+    troops: 1400,
+    troopType: "infantry",
+    formation: "heyi",
+  });
+  const caoArmyId = st.armies[0].id;
+  st.armies.push({
+    id: "army-biao-clash",
+    faction: "biao",
+    officer: biaoOff.key,
+    deputy: null,
+    formation: "heyi",
+    troops: 1400,
+    maxTroops: 1400,
+    troopType: "infantry",
+    morale: 85,
+    grain: 20,
+    route: ["runan", "xu"],
+    step: 0,
+    from: "runan",
+    to: "xu",
+    targetCity: "xu",
+    depot: "runan",
+    progress: 0.52,
+    edgeDekads: 2,
+    stance: "attack",
+    siegeStance: "storm",
+    engagedWith: null,
+    engageRounds: 0,
+    supplyCut: false,
+    reorgDekads: 0,
+  });
+  biaoOff.armyId = "army-biao-clash";
+
+  let locked = false;
+  for (let i = 0; i < 3; i += 1) {
+    st = advanceDekad(world, st, { skipAi: true });
+    if (st.lastTurnEvents.some((e) => e.kind === "field_battle" && e.engaged)) {
+      locked = true;
+      break;
+    }
+  }
+  assert.equal(locked, true, "势均力敌的大军在官道交锋首回合锁定为阵前绞杀状态");
+  const a1 = st.armies.find((a) => a.id === caoArmyId);
+  const b1 = st.armies.find((a) => a.id === "army-biao-clash");
+  assert.equal(a1.stance, "engaged");
+  assert.equal(b1.stance, "engaged");
+  assert.equal(a1.engagedWith, b1.id);
+  assert.equal(a1.engageRounds, 1);
+
+  // Branch A: retreat disengages cleanly and unlocks enemy on next dekad
+  const retreated = redirectArmy(world, st, caoArmyId, { stance: "retreat" });
+  const rCao = retreated.armies.find((a) => a.id === caoArmyId);
+  assert.equal(rCao.stance, "retreat");
+  assert.equal(rCao.engagedWith, null);
+  const afterRetreat = advanceDekad(world, retreated, { skipAi: true });
+  const unlockedEnemy = afterRetreat.armies.find((a) => a.id === "army-biao-clash");
+  if (unlockedEnemy) {
+    assert.notEqual(unlockedEnemy.stance, "engaged");
+  }
+
+  // Branch B: advance up to 3 rounds resolves the engaged clash cleanly
+  let resolved = st;
+  for (let i = 0; i < 4; i += 1) {
+    resolved = advanceDekad(world, resolved, { skipAi: true });
+  }
+  assert.equal(resolved.armies.some((a) => a.stance === "engaged"), false, "绞杀超过 3 合后分出胜负并脱离锁定");
+});
+
+test("副将出征、五大阵型速度与破城差异及双将归建正确", () => {
+  let st = createGameV2(world, 208, "liu");
+  const liubei = Object.values(st.officers).find((o) => o.faction === "liu" && o.name === "刘备");
+  const guanyu = Object.values(st.officers).find((o) => o.faction === "liu" && o.name === "关羽");
+  const baseCity = Object.values(st.cities).find((c) => c.owner === "liu").key;
+  const links = world.cities.find((c) => c.key === baseCity).links;
+  const allyDest = links[0];
+  st.cities[allyDest].owner = "liu";
+  st.cities[baseCity].troops = 5000;
+  liubei.city = baseCity;
+  liubei.armyId = null;
+  guanyu.city = baseCity;
+  guanyu.armyId = null;
+
+  assert.ok(FORMATIONS_V2.changshe.speedMult > FORMATIONS_V2.heyi.speedMult);
+  assert.ok(FORMATIONS_V2.chongche.siegeMult > FORMATIONS_V2.heyi.siegeMult);
+
+  st = dispatchArmy(world, st, {
+    from: baseCity,
+    to: allyDest,
+    officer: liubei.key,
+    deputy: guanyu.key,
+    troops: 1200,
+    troopType: "siege",
+    formation: "changshe",
+  });
+  const army = st.armies[0];
+  assert.equal(army.deputy, guanyu.key);
+  assert.equal(army.formation, "changshe");
+  assert.equal(st.officers[liubei.key].armyId, army.id);
+  assert.equal(st.officers[guanyu.key].armyId, army.id);
+  const fastDekads = army.edgeDekads;
+
+  let cmp = createGameV2(world, 208, "liu");
+  cmp.cities[allyDest].owner = "liu";
+  cmp.cities[baseCity].troops = 5000;
+  const oCmp = availableOfficersInCity(cmp, baseCity, "liu")[0];
+  cmp = dispatchArmy(world, cmp, {
+    from: baseCity,
+    to: allyDest,
+    officer: oCmp.key,
+    troops: 1200,
+    troopType: "siege",
+    formation: "chongche",
+  });
+  assert.ok(fastDekads < cmp.armies[0].edgeDekads, "长蛇阵行军耗时严格短于冲车阵");
+
+  for (let i = 0; i < 6 && st.armies.length > 0; i += 1) {
+    st = advanceDekad(world, st, { skipAi: true });
+  }
+  assert.equal(st.officers[liubei.key].armyId, null);
+  assert.equal(st.officers[guanyu.key].armyId, null);
+  assert.equal(st.officers[liubei.key].city, allyDest);
+  assert.equal(st.officers[guanyu.key].city, allyDest);
+
+  // Siege wall damage check: chongche vs heyi
+  function oneSiegeTickWall(formId) {
+    let s = createGameV2(world, 199, "cao");
+    s.cities.runan.owner = "biao";
+    s.cities.runan.troops = 1400;
+    s.cities.runan.wall = 500;
+    s.cities.xu.troops = 3000;
+    const o = availableOfficersInCity(s, "xu", "cao")[0];
+    o.command = 80;
+    s = dispatchArmy(world, s, { from: "xu", to: "runan", officer: o.key, troops: 1500, troopType: "siege", formation: formId });
+    for (let i = 0; i < 6; i += 1) {
+      s = advanceDekad(world, s, { skipAi: true });
+      if (s.lastTurnEvents.some((e) => e.kind === "siege_tick")) break;
+    }
+    return 500 - s.cities.runan.wall;
+  }
+  assert.ok(oneSiegeTickWall("chongche") > oneSiegeTickWall("heyi"), "冲车阵单旬破墙伤害显著高于鹤翼阵");
+});
+
+test("汉室官爵晋升、国家国策颁行加成及旧档平滑升级有效", () => {
+  assert.equal(imperialRankForCities(1).current.title, "郡守");
+  assert.equal(imperialRankForCities(16).current.title, "汉丞相");
+  assert.equal(imperialRankForCities(34).current.title, "天子御极");
+  assert.equal(Object.keys(NATIONAL_DECREES_V2).length, 8);
+
+  let st = createGameV2(world, 199, "cao");
+  const keys = Object.keys(st.cities);
+  for (let i = 0; i < 16; i += 1) st.cities[keys[i]].owner = "cao";
+  st.factions.cao.treasury = 400;
+  st.factions.cao.morale = 60;
+
+  assert.equal(rankProgressForFaction(st, "cao").current.title, "汉丞相");
+
+  st = enactDecree(world, st, "tuntian");
+  st = enactDecree(world, st, "repeating_crossbow");
+  st = enactDecree(world, st, "imperial_edict");
+  assert.equal(hasDecree(st, "cao", "tuntian"), true);
+  assert.equal(hasDecree(st, "cao", "imperial_edict"), true);
+  assert.ok(st.factions.cao.morale >= 75, "挟天子令使国力士气保底不低于 75");
+
+  const rivalCity = Object.values(st.cities).find((c) => c.owner && c.owner !== "cao");
+  assert.ok(rivalCity);
+  const dealEval = evaluateDeal(world, st, rivalCity.owner, { type: "truce", gold: 0, grain: 0 });
+  assert.ok(dealEval.reasons.some((r) => r.includes("挟天子令")));
+
+  // Grain bonus check at monthly turn 3
+  let plain = createGameV2(world, 199, "cao");
+  for (let i = 0; i < 16; i += 1) plain.cities[keys[i]].owner = "cao";
+  const gBase0 = plain.factions.cao.grain;
+  for (let i = 0; i < 3; i += 1) plain = advanceDekad(world, plain, { skipAi: true });
+  const gTuntian0 = st.factions.cao.grain;
+  let decSt = st;
+  for (let i = 0; i < 3; i += 1) decSt = advanceDekad(world, decSt, { skipAi: true });
+  assert.ok((decSt.factions.cao.grain - gTuntian0) > (plain.factions.cao.grain - gBase0), "许都屯田国策显着提升月度军粮产额");
+
+  // Legacy upgrade clears missing decrees & army fields
+  const raw = JSON.parse(serializeStateV2(st));
+  delete raw.decrees;
+  const restored = deserializeStateV2(world, JSON.stringify(raw));
+  assert.deepEqual(restored.decrees, {});
 });

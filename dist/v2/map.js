@@ -1,4 +1,4 @@
-// 经略三国 2.0 — 九州实时战略沙盘舆图与动态战局演播引擎
+// 经略三国 2.0 — 九州高性能离屏缓存沙盘与 GPU 流畅演播引擎
 
 import {
   DEFENSE_TRAPS, FORT_CATALOG, HISTORICAL_PASSES, SIEGE_STANCES,
@@ -30,7 +30,7 @@ export function createMapV2(world, stage, callbacks = {}) {
   } = callbacks;
 
   const canvas = stage.querySelector("canvas");
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { alpha: false });
   const markerLayer = stage.querySelector(".v2-marker-layer");
   const [width, height] = world.view;
   const center = [width / 2, height / 2];
@@ -38,7 +38,6 @@ export function createMapV2(world, stage, callbacks = {}) {
   const cityPositions = new Map(world.cities.map((c) => [c.key, c.position]));
   const cityByKey = new Map(world.cities.map((c) => [c.key, c]));
 
-  // Compute tight map bounding span for auto framing
   const field = [0, 1].map((axis) => {
     const coords = world.cities.map((c) => c.position[axis]);
     const min = Math.min(...coords);
@@ -46,14 +45,13 @@ export function createMapV2(world, stage, callbacks = {}) {
     return { center: (min + max) / 2, span: max - min + (axis === 0 ? 116 : 86) };
   });
 
-  // Static terrain geometry
+  // Static terrain geometry (parsed once)
   const landPath = new Path2D(world.land);
   const coastPath = new Path2D(world.coast);
   const gridPath = new Path2D(world.graticule);
   const majorRivers = new Path2D(world.rivers.major);
   const minorRivers = new Path2D(world.rivers.minor);
 
-  // Per-scenario city territory polygons
   const sceneZones = new Map(
     world.scenarios.map((era) => [
       era.year,
@@ -61,7 +59,6 @@ export function createMapV2(world, stage, callbacks = {}) {
     ]),
   );
 
-  // Deduplicated undirected road edges
   const roadEdges = [];
   for (const c of world.cities) {
     for (const nb of c.links) {
@@ -69,35 +66,56 @@ export function createMapV2(world, stage, callbacks = {}) {
     }
   }
 
-  // Load relief map texture
+  // Offscreen static map canvas (2x resolution for crisp retina scaling; rebuilt ONLY on territory/weather/relief changes)
+  const BASE_SCALE = 2;
+  const baseCanvas = document.createElement("canvas");
+  baseCanvas.width = width * BASE_SCALE;
+  baseCanvas.height = height * BASE_SCALE;
+  const baseCtx = baseCanvas.getContext("2d");
+  let baseSig = "";
+
   const relief = new Image();
-  relief.addEventListener("load", () => draw());
+  relief.addEventListener("load", () => {
+    baseSig = "";
+    scheduleDraw(true);
+  });
   relief.src = "./assets/relief.webp";
 
   const camera = { zoom: 1, x: field[0].center, y: field[1].center };
   let cameraFrame = 0;
   let state = null;
+  let threatsRefState = null;
+  let cachedThreats = [];
   let selectedCity = null;
   let selectedArmyId = null;
   let selectedEdgeKey = null;
-  let overlayMode = "standard"; // "standard" | "supply" | "troops" | "forts"
+  let overlayMode = "standard";
 
-  // Live animations during/after advanceDekad
-  let armyAnim = null; // { start, duration, fromMap: Map<id,[x,y]> }
-  let fxList = []; // { kind, pos, color, text, start, duration }
-  let fxFrame = 0;
+  // Cached layout & fit (zero getBoundingClientRect inside rAF/draw)
+  let cachedRect = null;
+  let cachedFit = null;
+
+  // Frame scheduling & animations (ONLY runs when actively animating!)
+  let scheduledDrawId = 0;
+  let staticPinsDirty = true;
+  let armyAnim = null;
+  let fxList = [];
   let pulseFrame = 0;
 
   // Pointer drag / pan / pinch / direct dispatch arrow
   const pointers = new Map();
   let panState = null;
-  let dragOrder = null; // { pointerId, fromKey, startX, startY, active, snapKey, worldPt, preview }
+  let dragOrder = null;
   let suppressClickUntil = 0;
 
-  // Reusable DOM pins inside markerLayer
+  // Reusable DOM pins
   const cityPins = new Map();
   const armyPins = new Map();
   const fortPins = new Map();
+
+  // Performance instrumentation
+  const perfStats = { lastDrawMs: 0, drawCount: 0, baseRebuilds: 0, idleRafActive: false };
+  if (typeof window !== "undefined") window.__v2PerfStats = perfStats;
 
   for (const c of world.cities) {
     const btn = document.createElement("button");
@@ -148,37 +166,64 @@ export function createMapV2(world, stage, callbacks = {}) {
       wallWrap: btn.querySelector(".v2-city-wall"),
       wallBar: btn.querySelector(".v2-city-wall i"),
       label: btn.querySelector(".v2-city-label"),
+      lastTransform: "",
+      lastHidden: null,
     });
   }
 
-  function fittedMap(rect) {
+  function computeLayoutCache() {
+    const r = stage.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    cachedRect = { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+
     let topInset = 0;
     let bottomInset = 0;
-    if (typeof document !== "undefined" && rect.width <= 900) {
+    if (typeof document !== "undefined" && r.width <= 900) {
       const topbar = document.querySelector(".v2-topbar");
       if (topbar) {
         const tb = topbar.getBoundingClientRect();
-        if (tb.height > 0 && tb.bottom > rect.top) {
-          topInset = Math.min(rect.height * 0.28, Math.max(0, tb.bottom - rect.top) + 8);
+        if (tb.height > 0 && tb.bottom > r.top) {
+          topInset = Math.min(r.height * 0.28, Math.max(0, tb.bottom - r.top) + 8);
         }
       }
       const insp = document.querySelector(".v2-inspector");
       if (insp) {
         const ib = insp.getBoundingClientRect();
-        const visibleBottomCover = Math.max(0, rect.bottom - ib.top);
-        bottomInset = clamp(visibleBottomCover + 10, 48, rect.height * 0.44);
+        const visibleBottomCover = Math.max(0, r.bottom - ib.top);
+        bottomInset = clamp(visibleBottomCover + 10, 48, r.height * 0.44);
       } else {
         bottomInset = 64;
       }
     }
-    const availH = Math.max(180, rect.height - topInset - bottomInset);
-    const scale = Math.min(rect.width / field[0].span, availH / field[1].span);
-    if (rect.width <= 900) {
+    const availH = Math.max(180, r.height - topInset - bottomInset);
+    const scale = Math.min(r.width / field[0].span, availH / field[1].span);
+    if (r.width <= 900) {
       const safeCenterY = topInset + availH * 0.49;
-      return { scale, left: (rect.width - width * scale) / 2, top: safeCenterY - (height / 2) * scale };
+      cachedFit = { scale, left: (r.width - width * scale) / 2, top: safeCenterY - (height / 2) * scale };
+    } else {
+      const spaceBelow = Math.max(0, r.height - field[1].span * scale) * 0.22;
+      cachedFit = { scale, left: (r.width - width * scale) / 2, top: (r.height - height * scale) / 2 - spaceBelow };
     }
-    const spaceBelow = Math.max(0, rect.height - field[1].span * scale) * 0.22;
-    return { scale, left: (rect.width - width * scale) / 2, top: (rect.height - height * scale) / 2 - spaceBelow };
+    return { rect: cachedRect, fit: cachedFit };
+  }
+
+  function getLayout() {
+    if (cachedRect && cachedFit) return { rect: cachedRect, fit: cachedFit };
+    return computeLayoutCache();
+  }
+
+  function invalidateLayout() {
+    cachedRect = null;
+    cachedFit = null;
+    staticPinsDirty = true;
+  }
+
+  if (typeof ResizeObserver !== "undefined") {
+    const ro = new ResizeObserver(() => {
+      invalidateLayout();
+      scheduleDraw(true);
+    });
+    ro.observe(stage);
   }
 
   function toView([x, y]) {
@@ -218,6 +263,7 @@ export function createMapV2(world, stage, callbacks = {}) {
       camera.zoom = z;
       camera.x = tx;
       camera.y = ty;
+      staticPinsDirty = true;
       draw();
       return;
     }
@@ -232,11 +278,113 @@ export function createMapV2(world, stage, callbacks = {}) {
       camera.x = fx + (tx - fx) * e;
       camera.y = fy + (ty - fy) * e;
       restrictCamera();
+      staticPinsDirty = true;
       draw();
-      if (p < 1) cameraFrame = requestAnimationFrame(step);
-      else cameraFrame = 0;
+      if (p < 1) {
+        cameraFrame = requestAnimationFrame(step);
+      } else {
+        cameraFrame = 0;
+      }
     };
     cameraFrame = requestAnimationFrame(step);
+  }
+
+  function seasonKeyFor(s) {
+    if (s.weather?.key === "snow") return "winter";
+    if (["rain", "flood", "wind"].includes(s.weather?.key)) {
+      const idx = Math.floor((s.turn % 36) / 9);
+      return idx === 1 ? "summer" : idx === 2 ? "autumn" : "spring";
+    }
+    return ["spring", "summer", "autumn", "winter"][Math.floor((s.turn % 36) / 9)];
+  }
+
+  function ensureBaseCanvas(s, seasonKey) {
+    let ownerSig = "";
+    for (let i = 0; i < world.cities.length; i += 1) {
+      ownerSig += s.cities[world.cities[i].key]?.owner || "";
+      ownerSig += ",";
+    }
+    const sig = `${s.year}|${seasonKey}|${s.weather?.key || ""}|${relief.naturalWidth > 0 ? 1 : 0}|${ownerSig}`;
+    if (sig === baseSig) return;
+    baseSig = sig;
+    perfStats.baseRebuilds += 1;
+
+    const pal = SEASON_BG[seasonKey] || SEASON_BG.spring;
+    baseCtx.save();
+    baseCtx.setTransform(BASE_SCALE, 0, 0, BASE_SCALE, 0, 0);
+    baseCtx.clearRect(0, 0, width, height);
+    baseCtx.lineJoin = "round";
+    baseCtx.lineCap = "round";
+
+    // Land & Graticule
+    baseCtx.fillStyle = pal[3];
+    baseCtx.fill(landPath, "evenodd");
+    baseCtx.strokeStyle = "rgba(110, 128, 112, 0.28)";
+    baseCtx.lineWidth = 0.65;
+    baseCtx.stroke(gridPath);
+
+    // 44 territories
+    const zones = sceneZones.get(s.year) || {};
+    for (const c of world.cities) {
+      const zPath = zones[c.key];
+      const owner = s.cities[c.key]?.owner;
+      if (!zPath || !owner) continue;
+      baseCtx.save();
+      baseCtx.globalAlpha = owner === s.player ? 0.56 : 0.39;
+      baseCtx.fillStyle = factionColor(owner);
+      baseCtx.fill(zPath, "evenodd");
+      baseCtx.globalAlpha = owner === s.player ? 0.72 : 0.42;
+      baseCtx.strokeStyle = factionColor(owner);
+      baseCtx.lineWidth = owner === s.player ? 1.15 : 0.65;
+      baseCtx.stroke(zPath);
+      baseCtx.restore();
+    }
+
+    // Terrain relief image
+    if (relief.naturalWidth) {
+      baseCtx.save();
+      baseCtx.clip(landPath, "evenodd");
+      baseCtx.globalAlpha = 0.76;
+      baseCtx.drawImage(relief, 0, 0, width, height);
+      baseCtx.restore();
+    }
+
+    // Coastline & rivers
+    baseCtx.strokeStyle = "rgba(92, 102, 82, 0.85)";
+    baseCtx.lineWidth = 0.9;
+    baseCtx.stroke(coastPath);
+    baseCtx.strokeStyle = "rgba(74, 116, 114, 0.55)";
+    baseCtx.lineWidth = 0.75;
+    baseCtx.stroke(minorRivers);
+    baseCtx.strokeStyle = s.weather?.key === "flood" ? "rgba(56, 120, 146, 0.88)" : "rgba(70, 114, 112, 0.78)";
+    baseCtx.lineWidth = s.weather?.key === "flood" ? 1.65 : 1.2;
+    baseCtx.stroke(majorRivers);
+
+    // All 87 road edges baked cleanly into static buffer
+    for (const [a, b, ter] of roadEdges) {
+      const pa = cityPositions.get(a);
+      const pb = cityPositions.get(b);
+      if (!pa || !pb) continue;
+      baseCtx.save();
+      baseCtx.beginPath();
+      baseCtx.moveTo(pa[0], pa[1]);
+      baseCtx.lineTo(pb[0], pb[1]);
+      if (ter === "river") {
+        baseCtx.setLineDash([3.2, 2.5]);
+        baseCtx.strokeStyle = s.weather?.key === "flood" ? "rgba(62, 145, 198, 0.85)" : "rgba(62, 126, 152, 0.62)";
+        baseCtx.lineWidth = 1.35;
+      } else if (ter === "pass") {
+        baseCtx.strokeStyle = "rgba(154, 96, 44, 0.65)";
+        baseCtx.lineWidth = 1.5;
+      } else {
+        baseCtx.strokeStyle = "rgba(112, 92, 62, 0.34)";
+        baseCtx.lineWidth = 0.9;
+      }
+      baseCtx.stroke();
+      baseCtx.restore();
+    }
+
+    baseCtx.restore();
   }
 
   function drawCurvedArrow(fromPos, toPos, color, { dashed = false, lineWidth = 2.4, alpha = 0.9 } = {}) {
@@ -305,6 +453,8 @@ export function createMapV2(world, stage, callbacks = {}) {
           icon: btn.querySelector(".v2-army-icon"),
           text: btn.querySelector(".v2-army-text"),
           supply: btn.querySelector(".v2-army-supply"),
+          lastTransform: "",
+          lastHidden: null,
         };
         armyPins.set(army.id, pin);
       }
@@ -323,20 +473,25 @@ export function createMapV2(world, stage, callbacks = {}) {
 
       const [wx, wy] = interpolatedArmyPos(army);
       const [vx, vy] = toView([wx, wy]);
-      let px = fit.left + vx * fit.scale;
+      const px = fit.left + vx * fit.scale;
       let py = fit.top + vy * fit.scale;
-      // Nudge vertically if overlapping an already-placed army pin
       for (const [ox, oy] of placedBoxes) {
         if (Math.abs(px - ox) < 46 && Math.abs(py - oy) < 20) {
           py = oy + (py >= oy ? 21 : -21);
         }
       }
       const hidden = px < -20 || px > rect.width + 20 || py < -20 || py > rect.height + 20;
-      pin.btn.hidden = hidden;
+      if (pin.lastHidden !== hidden) {
+        pin.btn.hidden = hidden;
+        pin.lastHidden = hidden;
+      }
       if (!hidden) {
         placedBoxes.push([px, py]);
-        pin.btn.style.left = `${px}px`;
-        pin.btn.style.top = `${py}px`;
+        const tf = `translate3d(${px.toFixed(1)}px,${py.toFixed(1)}px,0) translate(-50%,-50%)`;
+        if (pin.lastTransform !== tf) {
+          pin.btn.style.transform = tf;
+          pin.lastTransform = tf;
+        }
       }
     }
 
@@ -380,22 +535,29 @@ export function createMapV2(world, stage, callbacks = {}) {
           name: btn.querySelector(".v2-fort-name"),
           hpWrap: btn.querySelector(".v2-fort-hp"),
           hpBar: btn.querySelector(".v2-fort-hp i"),
+          lastTransform: "",
+          lastHidden: null,
         };
         fortPins.set(eKey, pin);
       }
 
       const pa = cityPositions.get(a);
       const pb = cityPositions.get(b);
-      const midWorld = [(pa[0] + pb[0]) * 0.5, (pa[1] + pb[1]) * 0.5];
-      const [vx, vy] = toView(midWorld);
+      const [vx, vy] = toView([(pa[0] + pb[0]) * 0.5, (pa[1] + pb[1]) * 0.5]);
       const px = fit.left + vx * fit.scale;
       const py = fit.top + vy * fit.scale;
       const out = px < 10 || px > rect.width - 10 || py < 10 || py > rect.height - 10;
-      pin.btn.hidden = out;
+      if (pin.lastHidden !== out) {
+        pin.btn.hidden = out;
+        pin.lastHidden = out;
+      }
       if (out) continue;
 
-      pin.btn.style.left = `${px}px`;
-      pin.btn.style.top = `${py}px`;
+      const tf = `translate3d(${px.toFixed(1)}px,${py.toFixed(1)}px,0) translate(-50%,-50%)`;
+      if (pin.lastTransform !== tf) {
+        pin.btn.style.transform = tf;
+        pin.lastTransform = tf;
+      }
       pin.btn.dataset.selected = String(selectedEdgeKey === eKey);
       pin.btn.dataset.built = String(Boolean(fort));
 
@@ -429,9 +591,8 @@ export function createMapV2(world, stage, callbacks = {}) {
     const isH5 = rect.width <= 900;
     const placedLabels = [];
     const occupied = [];
-
-    // First pass: position dots
     const entries = [];
+
     for (const c of world.cities) {
       const city = state.cities[c.key];
       const pin = cityPins.get(c.key);
@@ -441,11 +602,17 @@ export function createMapV2(world, stage, callbacks = {}) {
       const px = fit.left + vx * fit.scale;
       const py = fit.top + vy * fit.scale;
       const outOfView = px < 6 || px > rect.width - 6 || py < 6 || py > rect.height - 6;
-      pin.btn.hidden = outOfView;
+      if (pin.lastHidden !== outOfView) {
+        pin.btn.hidden = outOfView;
+        pin.lastHidden = outOfView;
+      }
       if (outOfView) continue;
 
-      pin.btn.style.left = `${px}px`;
-      pin.btn.style.top = `${py}px`;
+      const tf = `translate3d(${px.toFixed(1)}px,${py.toFixed(1)}px,0) translate(-50%,-50%)`;
+      if (pin.lastTransform !== tf) {
+        pin.btn.style.transform = tf;
+        pin.lastTransform = tf;
+      }
       pin.dot.style.background = factionColor(city.owner);
       pin.btn.dataset.own = String(city.owner === state.player);
       pin.btn.dataset.active = String(selectedCity === c.key);
@@ -462,7 +629,6 @@ export function createMapV2(world, stage, callbacks = {}) {
         pin.wallWrap.hidden = true;
       }
 
-      // Meta pill: troop type + troop number + trap badge
       const tSpec = TROOP_TYPES[city.troopType] || TROOP_TYPES.infantry;
       const trapIcon = city.trap && DEFENSE_TRAPS[city.trap.id] ? DEFENSE_TRAPS[city.trap.id].icon : "";
       const kText = city.troops >= 1000 ? `${(city.troops / 1000).toFixed(1)}k` : String(city.troops);
@@ -476,7 +642,6 @@ export function createMapV2(world, stage, callbacks = {}) {
       entries.push({ c, city, pin, px, py, besieged });
     }
 
-    // Label placement priority: selected > besieged > player border > player > rival
     entries.sort((a, b) => {
       const p = (it) => (it.c.key === selectedCity ? 10 : it.besieged ? 8 : it.city.owner === state.player ? 5 : 1);
       return p(b) - p(a);
@@ -502,7 +667,6 @@ export function createMapV2(world, stage, callbacks = {}) {
         pin.btn.dataset.side = chosen[0];
         placedLabels.push(chosen[1]);
       } else {
-        // Always keep selected or besieged city label visible
         pin.label.hidden = !(c.key === selectedCity || item.besieged);
         pin.btn.dataset.side = "right";
       }
@@ -511,21 +675,22 @@ export function createMapV2(world, stage, callbacks = {}) {
 
   function draw() {
     if (!state) return;
-    const rect = stage.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
+    const layout = getLayout();
+    if (!layout) return;
+    const { rect, fit } = layout;
+    const tStart = performance.now();
+
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     const pw = Math.round(rect.width * ratio);
     const ph = Math.round(rect.height * ratio);
     if (canvas.width !== pw) canvas.width = pw;
     if (canvas.height !== ph) canvas.height = ph;
 
-    const fit = fittedMap(rect);
-    const seasonKey = state.weather?.key === "snow" ? "winter"
-      : ["rain", "flood", "wind"].includes(state.weather?.key)
-        ? (Math.floor((state.turn % 36) / 9) === 1 ? "summer" : Math.floor((state.turn % 36) / 9) === 2 ? "autumn" : "spring")
-        : ["spring", "summer", "autumn", "winter"][Math.floor((state.turn % 36) / 9)];
+    const seasonKey = seasonKeyFor(state);
+    ensureBaseCanvas(state, seasonKey);
     const pal = SEASON_BG[seasonKey] || SEASON_BG.spring;
 
+    // Ocean gradient fill
     ctx.resetTransform();
     const bgGrad = ctx.createLinearGradient(0, 0, pw, ph);
     bgGrad.addColorStop(0, pal[0]);
@@ -542,74 +707,10 @@ export function createMapV2(world, stage, callbacks = {}) {
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
 
-    // Land & Graticule
-    ctx.fillStyle = pal[3];
-    ctx.fill(landPath, "evenodd");
-    ctx.strokeStyle = "rgba(110, 128, 112, 0.28)";
-    ctx.lineWidth = 0.65;
-    ctx.stroke(gridPath);
+    // Blit pre-rendered static map buffer in ONE single GPU call (<0.5ms!)
+    ctx.drawImage(baseCanvas, 0, 0, width, height);
 
-    // Live per-city territory ownership shading
-    const zones = sceneZones.get(state.year) || {};
-    for (const c of world.cities) {
-      const zPath = zones[c.key];
-      const owner = state.cities[c.key]?.owner;
-      if (!zPath || !owner) continue;
-      ctx.save();
-      ctx.globalAlpha = owner === state.player ? 0.56 : 0.39;
-      ctx.fillStyle = factionColor(owner);
-      ctx.fill(zPath, "evenodd");
-      ctx.globalAlpha = owner === state.player ? 0.72 : 0.42;
-      ctx.strokeStyle = factionColor(owner);
-      ctx.lineWidth = owner === state.player ? 1.15 : 0.65;
-      ctx.stroke(zPath);
-      ctx.restore();
-    }
-
-    // Terrain relief overlay
-    if (relief.naturalWidth) {
-      ctx.save();
-      ctx.clip(landPath, "evenodd");
-      ctx.globalAlpha = 0.76;
-      ctx.drawImage(relief, 0, 0, width, height);
-      ctx.restore();
-    }
-
-    // Coastline & rivers
-    ctx.strokeStyle = "rgba(92, 102, 82, 0.85)";
-    ctx.lineWidth = 0.9;
-    ctx.stroke(coastPath);
-    ctx.strokeStyle = "rgba(74, 116, 114, 0.55)";
-    ctx.lineWidth = 0.75;
-    ctx.stroke(minorRivers);
-    ctx.strokeStyle = state.weather?.key === "flood" ? "rgba(56, 120, 146, 0.88)" : "rgba(70, 114, 112, 0.78)";
-    ctx.lineWidth = state.weather?.key === "flood" ? 1.65 : 1.2;
-    ctx.stroke(majorRivers);
-
-    // Road network with terrain coloring
     const z = camera.zoom;
-    for (const [a, b, ter] of roadEdges) {
-      const pa = cityPositions.get(a);
-      const pb = cityPositions.get(b);
-      if (!pa || !pb) continue;
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(pa[0], pa[1]);
-      ctx.lineTo(pb[0], pb[1]);
-      if (ter === "river") {
-        ctx.setLineDash([3.2 / z, 2.5 / z]);
-        ctx.strokeStyle = state.weather?.key === "flood" ? "rgba(62, 145, 198, 0.85)" : "rgba(62, 126, 152, 0.62)";
-        ctx.lineWidth = 1.4 / z;
-      } else if (ter === "pass") {
-        ctx.strokeStyle = "rgba(154, 96, 44, 0.65)";
-        ctx.lineWidth = 1.55 / z;
-      } else {
-        ctx.strokeStyle = "rgba(112, 92, 62, 0.34)";
-        ctx.lineWidth = 0.9 / z;
-      }
-      ctx.stroke();
-      ctx.restore();
-    }
 
     // Selected city neighbor links highlight
     if (selectedCity && cityByKey.has(selectedCity)) {
@@ -629,7 +730,7 @@ export function createMapV2(world, stage, callbacks = {}) {
       }
     }
 
-    // Supply lines overlay (when supply mode is active OR selected army)
+    // Dynamic army supply & movement arrows
     for (const army of state.armies || []) {
       if (army.troops <= 0) continue;
       const showSupply = overlayMode === "supply" || selectedArmyId === army.id;
@@ -649,49 +750,37 @@ export function createMapV2(world, stage, callbacks = {}) {
         }
       }
 
-      // Draw army route arrow to targetCity
       if (army.stance !== "besiege") {
         const curPos = interpolatedArmyPos(army);
         const toPos = cityPositions.get(army.to);
-        const col = army.stance === "reinforce" ? "#4ea8de"
-          : army.stance === "retreat" ? "#a69c88"
-            : army.faction === state.player ? "#f0a942" : "#e35b49";
+        const col = army.stance === "engaged" ? "#ff5240"
+          : army.stance === "reinforce" ? "#4ea8de"
+            : army.stance === "retreat" ? "#a69c88"
+              : army.faction === state.player ? "#f0a942" : "#e35b49";
         drawCurvedArrow(curPos, toPos, col, { dashed: army.stance === "retreat", lineWidth: 2.0, alpha: 0.84 });
       }
     }
 
-    // Threat radar arrows (marching incoming enemies & exposed border imbalances)
-    const threats = computeThreats(world, state);
-    const tPulse = 0.55 + 0.45 * Math.sin(performance.now() * 0.005);
-    for (const th of threats.slice(0, 6)) {
-      if (th.kind === "marching") continue; // marching army already draws curved arrow
+    // Threat radar arrows (cached per state object!)
+    if (threatsRefState !== state) {
+      threatsRefState = state;
+      cachedThreats = computeThreats(world, state);
+    }
+    for (const th of cachedThreats.slice(0, 6)) {
+      if (th.kind === "marching") continue;
       const pa = cityPositions.get(th.from);
       const pb = cityPositions.get(th.to);
       if (pa && pb) {
         drawCurvedArrow(pa, pb, th.kind === "siege" ? "#ff5240" : "#e05344", {
           dashed: true,
           lineWidth: th.kind === "siege" ? 2.5 : 1.7,
-          alpha: 0.38 + tPulse * 0.34,
+          alpha: 0.62,
         });
       }
     }
 
-    // Siege rings around actively besieged cities
-    const now = performance.now();
-    for (const [ck] of Object.entries(state.sieges || {})) {
-      const p = cityPositions.get(ck);
-      if (!p) continue;
-      const rPulse = 11 / z + ((now % 1400) / 1400) * (7 / z);
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(p[0], p[1], rPulse, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(226, 76, 52, 0.78)";
-      ctx.lineWidth = 2.0 / z;
-      ctx.stroke();
-      ctx.restore();
-    }
-
     // Combat floating particles & battle popups
+    const now = performance.now();
     fxList = fxList.filter((fx) => now - fx.start < fx.duration);
     for (const fx of fxList) {
       if (!fx.pos) continue;
@@ -743,41 +832,64 @@ export function createMapV2(world, stage, callbacks = {}) {
 
     ctx.restore();
 
-    syncCityPins(rect, fit);
+    if (staticPinsDirty) {
+      syncCityPins(rect, fit);
+      syncFortPins(rect, fit);
+      staticPinsDirty = false;
+    }
     syncArmyPins(rect, fit);
-    syncFortPins(rect, fit);
+
+    perfStats.lastDrawMs = Number((performance.now() - tStart).toFixed(2));
+    perfStats.drawCount += 1;
   }
 
-  function ensurePulseLoop() {
+  function scheduleDraw(dirtyStatic = false) {
+    if (dirtyStatic) staticPinsDirty = true;
+    if (scheduledDrawId) return;
+    scheduledDrawId = requestAnimationFrame(() => {
+      scheduledDrawId = 0;
+      draw();
+    });
+  }
+
+  function ensureAnimLoop() {
     if (pulseFrame) return;
     const loop = () => {
       if (!state) {
         pulseFrame = 0;
+        perfStats.idleRafActive = false;
         return;
       }
-      const hasSieges = Object.keys(state.sieges || {}).length > 0;
-      const hasThreats = computeThreats(world, state).length > 0;
-      const hasAnim = Boolean(armyAnim) || fxList.length > 0;
       if (armyAnim && performance.now() - armyAnim.start >= armyAnim.duration) {
         armyAnim = null;
       }
+      const active = Boolean(armyAnim) || fxList.length > 0;
+      perfStats.idleRafActive = active;
       draw();
-      if (hasSieges || hasThreats || hasAnim) {
+      if (active) {
         pulseFrame = requestAnimationFrame(loop);
       } else {
         pulseFrame = 0;
+        perfStats.idleRafActive = false;
       }
     };
+    const hasWork = Boolean(armyAnim) || fxList.length > 0;
+    if (!hasWork) {
+      perfStats.idleRafActive = false;
+      return;
+    }
+    perfStats.idleRafActive = true;
     pulseFrame = requestAnimationFrame(loop);
   }
 
-  // Stage pointer interactions (pan & zoom)
+  // Stage pointer interactions (coalesced at monitor refresh rate)
   stage.addEventListener("wheel", (ev) => {
     ev.preventDefault();
     cancelCameraAnim();
     onHover?.(null);
-    const rect = stage.getBoundingClientRect();
-    const fit = fittedMap(rect);
+    const layout = getLayout();
+    if (!layout) return;
+    const { rect, fit } = layout;
     const anchorView = clientToView(ev.clientX, ev.clientY, rect, fit);
     const anchorWorld = viewToWorld(anchorView);
     const nextZoom = clamp(camera.zoom * Math.exp(-ev.deltaY * (ev.deltaMode === 0 ? 0.0015 : 0.022)), 1, 4.5);
@@ -785,11 +897,11 @@ export function createMapV2(world, stage, callbacks = {}) {
     camera.x = anchorWorld[0] - (anchorView[0] - center[0]) / nextZoom;
     camera.y = anchorWorld[1] - (anchorView[1] - center[1]) / nextZoom;
     restrictCamera();
-    draw();
+    scheduleDraw(true);
   }, { passive: false });
 
   stage.addEventListener("pointerdown", (ev) => {
-    if (ev.target.closest(".v2-city-pin, .v2-army-pin, button")) return;
+    if (ev.target.closest(".v2-city-pin, .v2-army-pin, .v2-fort-pin, button")) return;
     pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);
     if (pointers.size === 1) {
       cancelCameraAnim();
@@ -805,7 +917,6 @@ export function createMapV2(world, stage, callbacks = {}) {
   });
 
   window.addEventListener("pointermove", (ev) => {
-    // Direct drag-to-march from player city
     if (dragOrder && ev.pointerId === dragOrder.pointerId) {
       const dPx = Math.hypot(ev.clientX - dragOrder.startX, ev.clientY - dragOrder.startY);
       if (!dragOrder.active) {
@@ -814,8 +925,9 @@ export function createMapV2(world, stage, callbacks = {}) {
         onHover?.(null);
       }
       if (ev.cancelable) ev.preventDefault();
-      const rect = stage.getBoundingClientRect();
-      const fit = fittedMap(rect);
+      const layout = getLayout();
+      if (!layout) return;
+      const { rect, fit } = layout;
       const vp = clientToView(ev.clientX, ev.clientY, rect, fit);
       const wp = viewToWorld(vp);
 
@@ -835,21 +947,22 @@ export function createMapV2(world, stage, callbacks = {}) {
         dragOrder.preview = bestKey ? onPreviewDispatch?.(dragOrder.fromKey, bestKey) || null : null;
       }
       dragOrder.worldPt = bestKey ? cityPositions.get(bestKey) : wp;
-      draw();
+      scheduleDraw(false);
       return;
     }
 
     if (pointers.has(ev.pointerId)) {
       pointers.set(ev.pointerId, [ev.clientX, ev.clientY]);
-      const rect = stage.getBoundingClientRect();
-      const fit = fittedMap(rect);
+      const layout = getLayout();
+      if (!layout) return;
+      const { fit } = layout;
       if (pointers.size === 2 && panState?.pinch) {
         const [p1, p2] = [...pointers.values()];
         const dist = Math.hypot(p1[0] - p2[0], p1[1] - p2[1]);
         if (panState.dist > 5) {
           camera.zoom = clamp(panState.zoom * (dist / panState.dist), 1, 4.5);
           restrictCamera();
-          draw();
+          scheduleDraw(true);
         }
       } else if (panState && !panState.pinch && ev.pointerId === panState.id) {
         const dx = ev.clientX - panState.x;
@@ -859,7 +972,7 @@ export function createMapV2(world, stage, callbacks = {}) {
         camera.x = panState.cx - dx / scalePx;
         camera.y = panState.cy - dy / scalePx;
         restrictCamera();
-        draw();
+        scheduleDraw(true);
       }
     }
   }, { passive: false });
@@ -873,7 +986,7 @@ export function createMapV2(world, stage, callbacks = {}) {
         if (fin.snapKey && fin.preview?.ok) {
           onDragDispatch?.(fin.fromKey, fin.snapKey);
         }
-        draw();
+        scheduleDraw(false);
       }
     }
     pointers.delete(ev.pointerId);
@@ -881,7 +994,10 @@ export function createMapV2(world, stage, callbacks = {}) {
   };
   window.addEventListener("pointerup", endPointer);
   window.addEventListener("pointercancel", endPointer);
-  window.addEventListener("resize", () => draw());
+  window.addEventListener("resize", () => {
+    invalidateLayout();
+    scheduleDraw(true);
+  });
 
   return {
     render(nextState, { city, armyId, edgeKey: eKey, overlay } = {}) {
@@ -890,8 +1006,13 @@ export function createMapV2(world, stage, callbacks = {}) {
       if (armyId !== undefined) selectedArmyId = armyId;
       if (eKey !== undefined) selectedEdgeKey = eKey;
       if (overlay !== undefined) overlayMode = overlay;
-      ensurePulseLoop();
+      staticPinsDirty = true;
       draw();
+      ensureAnimLoop();
+    },
+    invalidateLayout() {
+      invalidateLayout();
+      scheduleDraw(true);
     },
     flashEvents(events = []) {
       const now = performance.now();
@@ -902,7 +1023,7 @@ export function createMapV2(world, stage, callbacks = {}) {
         else if (ev.kind === "stratagem_raid") fxList.push({ pos: ev.pos, color: "#ffd252", text: "⚡ 奇袭劫粮!", start: now, duration: 1700 });
         else if (ev.kind === "defection") fxList.push({ pos: ev.pos, color: "#76f2a2", text: "🏳️ 阵前倒戈!", start: now, duration: 1850 });
       }
-      ensurePulseLoop();
+      ensureAnimLoop();
       draw();
     },
     playTurnAnimation(prevState, nextState, events = []) {
@@ -912,58 +1033,54 @@ export function createMapV2(world, stage, callbacks = {}) {
         fromMap.set(a.id, armyWorldPosition(world, a));
       }
       if (!matchMedia("(prefers-reduced-motion: reduce)").matches && nextState.armies.length) {
-        armyAnim = { start: performance.now(), duration: 680, fromMap };
+        armyAnim = { start: performance.now(), duration: 520, fromMap };
       }
 
       const now = performance.now();
       for (const ev of events) {
         if (!ev.pos) continue;
         if (ev.kind === "field_battle") {
-          fxList.push({ pos: ev.pos, color: "#ffd166", text: `野战 -${ev.loserLoss}`, start: now, duration: 1550 });
+          fxList.push({ pos: ev.pos, color: "#ffd166", text: `野战 -${ev.loserLoss}`, start: now, duration: 1450 });
         } else if (ev.kind === "capture") {
-          fxList.push({ pos: ev.pos, color: "#76f2a2", text: "🚩 破城易帜!", start: now, duration: 1900 });
+          fxList.push({ pos: ev.pos, color: "#76f2a2", text: "🚩 破城易帜!", start: now, duration: 1750 });
         } else if (ev.kind === "trap") {
-          fxList.push({ pos: ev.pos, color: "#ff7847", text: "🔥 伏兵陷阱!", start: now, duration: 1650 });
+          fxList.push({ pos: ev.pos, color: "#ff7847", text: "🔥 伏兵陷阱!", start: now, duration: 1550 });
         } else if (ev.kind === "siege_tick") {
-          fxList.push({ pos: ev.pos, color: "#ff9b54", text: `城防 -${ev.wallDmg}`, start: now, duration: 1350 });
+          fxList.push({ pos: ev.pos, color: "#ff9b54", text: `城防 -${ev.wallDmg}`, start: now, duration: 1250 });
         } else if (ev.kind === "supply_cut") {
-          fxList.push({ pos: ev.pos, color: "#ff5c5c", text: "⚡ 断粮危机!", start: now, duration: 1600 });
+          fxList.push({ pos: ev.pos, color: "#ff5c5c", text: "⚡ 断粮危机!", start: now, duration: 1500 });
         } else if (ev.kind === "fort_fire") {
-          fxList.push({ pos: ev.pos, color: "#f6c968", text: "🏹 箭楼截杀!", start: now, duration: 1450 });
+          fxList.push({ pos: ev.pos, color: "#f6c968", text: "🏹 箭楼截杀!", start: now, duration: 1350 });
         } else if (ev.kind === "fort_blocked") {
-          fxList.push({ pos: ev.pos, color: "#ffb878", text: "🧱 关隘受阻!", start: now, duration: 1500 });
+          fxList.push({ pos: ev.pos, color: "#ffb878", text: "🧱 关隘受阻!", start: now, duration: 1400 });
         } else if (ev.kind === "fort_destroyed") {
-          fxList.push({ pos: ev.pos, color: "#ff6648", text: "💥 寨堡拔除!", start: now, duration: 1650 });
+          fxList.push({ pos: ev.pos, color: "#ff6648", text: "💥 寨堡拔除!", start: now, duration: 1550 });
         }
       }
 
-      // Gently pan toward highest-priority player event if zoomed in
-      const focusEv = events.find((e) => e.pos && ["capture", "field_battle", "trap", "siege_start"].includes(e.kind)
-        && (e.faction === nextState.player || e.participants?.includes(nextState.player)));
-      if (focusEv && camera.zoom > 1.35) {
-        animateCamera(camera.zoom, focusEv.pos[0], focusEv.pos[1], 320);
-      }
-      ensurePulseLoop();
+      staticPinsDirty = true;
       draw();
+      ensureAnimLoop();
     },
     fitAll() {
-      animateCamera(1, field[0].center, field[1].center, 260);
+      animateCamera(1, field[0].center, field[1].center, 240);
     },
     zoomBy(factor) {
-      animateCamera(camera.zoom * factor, camera.x, camera.y, 180);
+      animateCamera(camera.zoom * factor, camera.x, camera.y, 170);
     },
     focusCity(cityKey, zoom = 1.95) {
       const p = cityPositions.get(cityKey);
-      if (p) animateCamera(Math.max(zoom, camera.zoom), p[0], p[1], 280);
+      if (p) animateCamera(Math.max(zoom, camera.zoom), p[0], p[1], 240);
     },
     setOverlay(mode) {
       overlayMode = mode;
-      draw();
+      staticPinsDirty = true;
+      scheduleDraw(true);
     },
     destroy() {
       cancelCameraAnim();
       if (pulseFrame) cancelAnimationFrame(pulseFrame);
-      if (fxFrame) cancelAnimationFrame(fxFrame);
+      if (scheduledDrawId) cancelAnimationFrame(scheduledDrawId);
     },
   };
 }

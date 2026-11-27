@@ -35,8 +35,9 @@
       <button type="button" class="v2-btn quiet" id="open-log" title="战局大事纪要 (L)">奏报</button>
       <button type="button" class="v2-btn quiet" id="toggle-immersive" aria-pressed="false" title="全屏专注沙盘 (H)">全屏</button>
       <button type="button" class="v2-btn quiet" id="open-menu" title="剧本、势力、存档与音效">菜单</button>
-      <button type="button" class="v2-btn secondary" id="advance-month" title="连续推演一月(3旬)，遇战事或急报自动暂停 (G)">连进</button>
-      <button type="button" class="v2-btn primary" id="advance-dekad" title="推进一旬 (Space)">推进一旬</button>
+      <button type="button" class="v2-btn secondary v2-flow-btn" id="toggle-flow" data-flowing="false" aria-pressed="false" title="实时流逝推演 / 暂停 (Space)">▶ 推演</button>
+      <button type="button" class="v2-btn quiet" id="cycle-speed" title="切换流逝流速 (G)">1×</button>
+      <button type="button" class="v2-btn primary" id="advance-dekad" title="手动推进一旬 (N)">+1旬</button>
     </div>
   </header>
 
@@ -85,6 +86,7 @@
         <button type="button" class="v2-tab" data-tab="officers" aria-selected="true">麾下名将</button>
         <button type="button" class="v2-tab" data-tab="armies" aria-selected="false">在途军团</button>
         <button type="button" class="v2-tab" data-tab="diplomacy" aria-selected="false">天下外交</button>
+        <button type="button" class="v2-tab" data-tab="decrees" aria-selected="false">官爵国策</button>
         <button type="button" class="v2-tab" data-tab="captives" aria-selected="false">俘将处置</button>
         <button type="button" class="v2-tab" data-tab="chronicle" aria-selected="false">战局奏报</button>
       </nav>

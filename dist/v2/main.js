@@ -22,11 +22,20 @@ function loadAutosave(world) {
   return createGameV2(world, 199, "cao", { difficulty: "standard" });
 }
 
-function saveAutosave(state) {
-  try {
-    localStorage.setItem(AUTOSAVE_KEY, serializeStateV2(state));
-  } catch {
-    // Ignore storage limits
+let autosaveTimer = null;
+function saveAutosave(state, immediate = false) {
+  clearTimeout(autosaveTimer);
+  const flush = () => {
+    try {
+      localStorage.setItem(AUTOSAVE_KEY, serializeStateV2(state));
+    } catch {
+      // Ignore storage limits
+    }
+  };
+  if (immediate) {
+    flush();
+  } else {
+    autosaveTimer = setTimeout(flush, 380);
   }
 }
 
@@ -37,8 +46,17 @@ async function boot() {
   const sound = createSoundController();
 
   let state = loadAutosave(world);
-  let advancingBatch = false;
+  const SPEED_MODES = [
+    { label: "1×", ms: 1100 },
+    { label: "2×", ms: 550 },
+    { label: "4×", ms: 280 },
+  ];
+  let speedIndex = 0;
+  let flowing = false;
+  let flowTimer = null;
   const $ = (id) => document.getElementById(id);
+
+  window.addEventListener("beforeunload", () => saveAutosave(state, true));
 
   function setState(next) {
     state = next;
@@ -102,7 +120,10 @@ async function boot() {
         const o = state.officers[a.officer];
         const sp = TROOP_TYPES[a.troopType] || TROOP_TYPES.infantry;
         const eta = armyEtaDekads(world, state, a);
-        tooltip.innerHTML = `<strong>${o?.name || "军团"}所部</strong>（${factionNameV2(world, state, a.faction)}）<br>${sp.icon} ${a.troops.toLocaleString()} · ${a.stance === "besiege" ? `围攻${cityNameV2(world, a.targetCity)}` : `趋向${cityNameV2(world, a.targetCity)}(${eta}旬)`}`;
+        const stTxt = a.stance === "besiege" ? `围攻${cityNameV2(world, a.targetCity)}`
+          : a.stance === "engaged" ? `⚔️ 阵前绞杀(第${a.engageRounds || 1}合)`
+            : `趋向${cityNameV2(world, a.targetCity)}(${eta}旬)`;
+        tooltip.innerHTML = `<strong>${o?.name || "军团"}所部</strong>（${factionNameV2(world, state, a.faction)}）<br>${sp.icon} ${a.troops.toLocaleString()} · ${stTxt}`;
       }
       tooltip.hidden = false;
       tooltip.style.left = `${Math.min(window.innerWidth - 220, info.x + 14)}px`;
@@ -117,10 +138,69 @@ async function boot() {
     setState,
     mapApi,
     onNewGame(fresh) {
+      stopFlow();
       setState(fresh);
       ui.renderAll();
     },
   });
+
+  function syncFlowUi() {
+    const flowBtn = $("toggle-flow");
+    const spdBtn = $("cycle-speed");
+    if (flowBtn) {
+      flowBtn.textContent = flowing ? "⏸ 暂停" : "▶ 推演";
+      flowBtn.dataset.flowing = String(flowing);
+      flowBtn.setAttribute("aria-pressed", String(flowing));
+    }
+    if (spdBtn) {
+      spdBtn.textContent = SPEED_MODES[speedIndex].label;
+    }
+  }
+
+  function stopFlow(reasonText = "") {
+    flowing = false;
+    clearTimeout(flowTimer);
+    flowTimer = null;
+    syncFlowUi();
+    if (reasonText) ui?.showTicker(reasonText);
+  }
+
+  function scheduleNextFlowTick(delayMs = SPEED_MODES[speedIndex].ms) {
+    clearTimeout(flowTimer);
+    if (!flowing || state.outcome !== "ongoing") return;
+    flowTimer = setTimeout(() => {
+      if (!flowing || state.outcome !== "ongoing") return;
+      if (document.querySelector("dialog[open]")) {
+        stopFlow();
+        return;
+      }
+      const evs = stepOneDekad();
+      const playerHot = evs.some((e) => (
+        ["capture", "field_battle", "trap", "siege_start", "supply_cut"].includes(e.kind)
+        && (e.faction === state.player || e.participants?.includes(state.player))
+      ));
+      if (state.outcome !== "ongoing") {
+        stopFlow();
+        return;
+      }
+      if (playerHot) {
+        stopFlow(`⚠️ 军情紧急自动暂停：${evs[0]?.text || "请主公定夺"}`);
+        return;
+      }
+      scheduleNextFlowTick();
+    }, delayMs);
+  }
+
+  function setFlowing(on) {
+    if (!on) {
+      stopFlow();
+      return;
+    }
+    if (state.outcome !== "ongoing" || document.querySelector("dialog[open]")) return;
+    flowing = true;
+    syncFlowUi();
+    scheduleNextFlowTick(160);
+  }
 
   function stepOneDekad() {
     if (state.outcome !== "ongoing") return [];
@@ -146,37 +226,25 @@ async function boot() {
   }
 
   $("advance-dekad")?.addEventListener("click", () => {
-    if (advancingBatch) return;
+    if (flowing) stopFlow();
     stepOneDekad();
   });
 
-  async function stepMonthBatch() {
-    if (advancingBatch || state.outcome !== "ongoing") return;
-    advancingBatch = true;
-    $("advance-dekad").disabled = true;
-    $("advance-month").disabled = true;
-    try {
-      for (let i = 0; i < 3; i += 1) {
-        if (state.outcome !== "ongoing") break;
-        const evs = stepOneDekad();
-        const playerHot = evs.some((e) => (
-          ["capture", "field_battle", "trap", "siege_start", "supply_cut"].includes(e.kind)
-          && (e.faction === state.player || e.participants?.includes(state.player))
-        ));
-        if (playerHot || state.outcome !== "ongoing") {
-          ui.showTicker(`⚠️ 遇重大军情自动暂停：${evs[0]?.text || "请主公定夺"}`);
-          break;
-        }
-        if (i < 2) await new Promise((r) => setTimeout(r, 420));
-      }
-    } finally {
-      advancingBatch = false;
-      $("advance-dekad").disabled = false;
-      $("advance-month").disabled = false;
-    }
-  }
+  $("toggle-flow")?.addEventListener("click", () => {
+    setFlowing(!flowing);
+  });
 
-  $("advance-month")?.addEventListener("click", stepMonthBatch);
+  $("cycle-speed")?.addEventListener("click", () => {
+    speedIndex = (speedIndex + 1) % SPEED_MODES.length;
+    syncFlowUi();
+    if (flowing) scheduleNextFlowTick();
+  });
+
+  for (const id of ["open-court", "open-log", "open-menu", "seal-btn"]) {
+    $(id)?.addEventListener("click", () => {
+      if (flowing) stopFlow();
+    }, { capture: true });
+  }
 
   function setImmersive(on) {
     document.body.dataset.immersive = String(Boolean(on));
@@ -200,25 +268,38 @@ async function boot() {
     if (ev.key === " ") {
       if (!document.querySelector("dialog[open]")) {
         ev.preventDefault();
-        if (!advancingBatch) stepOneDekad();
+        setFlowing(!flowing);
+      }
+    } else if (k === "n") {
+      if (!document.querySelector("dialog[open]")) {
+        ev.preventDefault();
+        if (flowing) stopFlow();
+        stepOneDekad();
       }
     } else if (k === "g") {
       ev.preventDefault();
-      stepMonthBatch();
+      speedIndex = (speedIndex + 1) % SPEED_MODES.length;
+      syncFlowUi();
+      if (flowing) scheduleNextFlowTick();
     } else if (k === "c") {
       ev.preventDefault();
+      if (flowing) stopFlow();
       ui.openCourtDialog("officers");
     } else if (k === "d") {
       ev.preventDefault();
+      if (flowing) stopFlow();
       ui.openCourtDialog("diplomacy");
     } else if (k === "l") {
       ev.preventDefault();
+      if (flowing) stopFlow();
       ui.openCourtDialog("chronicle");
     } else if (k === "h") {
       ev.preventDefault();
       setImmersive(document.body.dataset.immersive !== "true");
     }
   });
+
+  syncFlowUi();
 
   // Initial selection on player's capital / first city
   const firstPlayerCity = Object.values(state.cities).find((c) => c.owner === state.player)?.key || world.cities[0].key;
