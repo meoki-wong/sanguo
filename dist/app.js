@@ -121,10 +121,15 @@ import { issuePublicEdict, PUBLIC_EDICTS } from "./edicts.js";
 import { dispatchDisasterRelief, listActiveDisasters } from "./relief.js";
 import { archiveCurrentHistory, composeDynastyHistory, listArchivedHistories } from "./annals-book.js";
 import {
-  GRID_COLS, GRID_ROWS, TERRAIN_META, attackTarget, attackableTargets, autoResolveGridBattle,
-  createGridBattle, endPlayerRound, finalizeGridBattleModifiers, moveUnit, reachableTiles, tileAt, unitAt,
+  GRID_COLS, GRID_ROWS, GRID_SKILLS, TERRAIN_META, applyBattleDuelToGrid, attackTarget, attackableTargets,
+  autoResolveGridBattle, castGridSkill, createGridBattle, endPlayerRound, finalizeGridBattleModifiers,
+  moveUnit, reachableTiles, tileAt, unitAt, validAmbushTiles,
 } from "./tactical-grid.js";
 import { chooseDramaOption, currentDramaScene, listDramaPlays, startDramaPlay } from "./drama-theater.js";
+import {
+  ARENA_MOVES, applyArenaWorldReward, autoResolveArena, createArenaSession, resolveArenaRound,
+} from "./duel-arena.js";
+import { drawRoyalCard, hasPendingRoyalCard, resolveRoyalCard } from "./royal-cards.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -5289,6 +5294,11 @@ let activeTacticalPlan = null;
 let activeTacticalSession = null;
 let activeTacticalOnDone = null;
 let activeDramaSession = null;
+let activeArenaSession = null;
+let activeArenaConfig = null;
+let activeArenaRewardText = "";
+let activeRoyalCard = null;
+let activeRoyalOutcome = null;
 
 function setImmersiveMode(enabled) {
   const on = Boolean(enabled);
@@ -5347,6 +5357,86 @@ function renderTacticalBattleDialog() {
 
   const reachMap = new Map((selected && !ses.done ? reachableTiles(ses, selected.id) : []).map((t) => [`${t.x},${t.y}`, t]));
   const attackMap = new Map((selected && !ses.done ? attackableTargets(ses, selected.id) : []).map((t) => [`${t.x},${t.y}`, t]));
+  const ambushSlots = new Set(ses.armedSkill === "ambush" && !ses.done ? validAmbushTiles(ses).map((t) => `${t.x},${t.y}`) : []);
+  const fxByCell = new Map();
+  for (const fx of ses.lastFx || []) {
+    const k = `${fx.x},${fx.y}`;
+    if (!fxByCell.has(k)) fxByCell.set(k, []);
+    fxByCell.get(k).push(fx);
+  }
+
+  const skillBar = find("tb-skill-bar");
+  if (skillBar) {
+    const sp = ses.spirit ?? 40;
+    const maxSp = ses.maxSpirit ?? 100;
+    const spiritBox = make("div", undefined, "tb-spirit-meter");
+    spiritBox.append(make("span", `⚡ 战意 ${sp}/${maxSp}`, "tb-spirit-label"));
+    const spTrack = make("div", undefined, "tb-spirit-track");
+    const spFill = make("div", undefined, "tb-spirit-fill");
+    spFill.style.width = `${Math.round((sp / Math.max(1, maxSp)) * 100)}%`;
+    spTrack.append(spFill);
+    spiritBox.append(spTrack);
+
+    const windBtn = make("button", `${GRID_SKILLS.shift_wind.icon} ${GRID_SKILLS.shift_wind.name} (${GRID_SKILLS.shift_wind.cost})`, "quiet tb-skill-btn");
+    windBtn.type = "button";
+    windBtn.disabled = ses.done || sp < GRID_SKILLS.shift_wind.cost;
+    windBtn.title = GRID_SKILLS.shift_wind.summary;
+    windBtn.addEventListener("click", () => {
+      sound?.play("order");
+      activeTacticalSession = castGridSkill(ses, "shift_wind");
+      renderTacticalBattleDialog();
+    });
+
+    const kbArmed = ses.armedSkill === "knockback";
+    const kbBtn = make("button", kbArmed ? "💥 击退已蓄势（点敌攻击）" : `${GRID_SKILLS.knockback.icon} ${GRID_SKILLS.knockback.name} (${GRID_SKILLS.knockback.cost})`, kbArmed ? "primary tb-skill-btn" : "quiet tb-skill-btn");
+    kbBtn.type = "button";
+    kbBtn.setAttribute("aria-pressed", String(kbArmed));
+    kbBtn.disabled = ses.done || (!kbArmed && sp < GRID_SKILLS.knockback.cost);
+    kbBtn.title = GRID_SKILLS.knockback.summary;
+    kbBtn.addEventListener("click", () => {
+      sound?.play("order");
+      activeTacticalSession = castGridSkill(ses, "knockback");
+      renderTacticalBattleDialog();
+    });
+
+    const ambArmed = ses.armedSkill === "ambush";
+    const hasForests = validAmbushTiles(ses).length > 0;
+    const ambBtn = make("button", ambArmed ? "🌿 点选空密林释放" : `${GRID_SKILLS.ambush.icon} ${GRID_SKILLS.ambush.name} (${GRID_SKILLS.ambush.cost})`, ambArmed ? "primary tb-skill-btn" : "quiet tb-skill-btn");
+    ambBtn.type = "button";
+    ambBtn.setAttribute("aria-pressed", String(ambArmed));
+    ambBtn.disabled = ses.done || (!ambArmed && (sp < GRID_SKILLS.ambush.cost || !hasForests));
+    ambBtn.title = GRID_SKILLS.ambush.summary;
+    ambBtn.addEventListener("click", () => {
+      sound?.play("order");
+      activeTacticalSession = castGridSkill(ses, "ambush");
+      renderTacticalBattleDialog();
+    });
+
+    const duelBtn = make("button", ses.duelUsed ? (ses.duelWon ? "✓ 斗将大捷" : "✓ 已阵前叫阵") : "⚔️ 阵前叫阵", "quiet tb-skill-btn tb-duel-call-btn");
+    duelBtn.type = "button";
+    duelBtn.disabled = ses.done || Boolean(ses.duelUsed);
+    duelBtn.title = "每战一次：主将亲赴阵前无双单挑，胜则敌全军挫损 -22%、战意 +35 且攻势大增！";
+    duelBtn.addEventListener("click", () => {
+      const curEra = era();
+      const targetHolding = activeTacticalPlan ? state.cities[activeTacticalPlan.to] : null;
+      const defOfficer = targetHolding?.commander ? curEra.officers.find((o) => o.key === targetHolding.commander) : null;
+      openDuelArenaDialog({
+        context: "battle_duel",
+        mode: "duel",
+        playerOfficer: activeTacticalPlan?.officer || null,
+        enemyOfficer: defOfficer,
+        playerName: ses.attackerName,
+        enemyName: ses.defenderName,
+        cityName: ses.toName,
+        onComplete: (arenaSes) => {
+          activeTacticalSession = applyBattleDuelToGrid(activeTacticalSession, arenaSes);
+          renderTacticalBattleDialog();
+        },
+      });
+    });
+
+    skillBar.replaceChildren(spiritBox, windBtn, kbBtn, ambBtn, duelBtn);
+  }
 
   const boardEl = find("tb-grid-board");
   if (boardEl) {
@@ -5359,6 +5449,8 @@ function renderTacticalBattleDialog() {
         const key = `${x},${y}`;
         const canReach = reachMap.has(key);
         const atkTarget = attackMap.get(key);
+        const isAmbushSlot = ambushSlots.has(key);
+        const cellFx = fxByCell.get(key) || [];
 
         const cell = make("button", undefined, "tb-cell");
         cell.type = "button";
@@ -5368,7 +5460,10 @@ function renderTacticalBattleDialog() {
         if (selected && selected.x === x && selected.y === y) cell.dataset.selected = "true";
         if (canReach) cell.dataset.reachable = "true";
         if (atkTarget) cell.dataset.attackable = "true";
-        cell.title = `${tMeta.name} (${x + 1},${y + 1})：${tMeta.summary}` + (atkTarget ? ` · 点击攻击（预计 ${atkTarget.previewDmg} 伤）` : "");
+        if (isAmbushSlot) cell.dataset.ambushSlot = "true";
+        if (cellFx.length) cell.dataset.hit = "true";
+        cell.title = `${tMeta.name} (${x + 1},${y + 1})：${tMeta.summary}`
+          + (isAmbushSlot ? " · 点击此密林伏兵奇袭！" : atkTarget ? ` · 点击攻击（预计 ${atkTarget.previewDmg} 伤）` : "");
 
         const tTag = make("span", tMeta.icon, "tb-terrain-tag");
         cell.append(tTag);
@@ -5390,8 +5485,20 @@ function renderTacticalBattleDialog() {
           cell.append(make("span", `仓${tile.depotHp}`, "tb-obj-hp"));
         }
 
+        for (const fx of cellFx.slice(0, 2)) {
+          const fSpan = make("span", fx.text, "tb-float-fx");
+          fSpan.dataset.kind = fx.kind || "dmg";
+          cell.append(fSpan);
+        }
+
         cell.addEventListener("click", () => {
           if (ses.done) return;
+          if (isAmbushSlot) {
+            sound?.play("event");
+            activeTacticalSession = castGridSkill(ses, "ambush", { x, y });
+            renderTacticalBattleDialog();
+            return;
+          }
           if (atkTarget && selected) {
             sound?.play("order");
             activeTacticalSession = attackTarget(ses, selected.id, x, y);
@@ -5607,6 +5714,403 @@ function openDramaTheaterDialog(playId = null) {
   if (!dlg || !state) return;
   activeDramaSession = playId ? startDramaPlay(playId) : null;
   renderDramaTheaterDialog();
+  if (!dlg.open) dlg.showModal();
+}
+
+function finalizeArenaDone() {
+  if (!activeArenaSession?.done || activeArenaSession._settled) return;
+  activeArenaSession._settled = true;
+  if (activeArenaConfig?.onComplete) {
+    activeArenaConfig.onComplete(activeArenaSession);
+    activeArenaRewardText = activeArenaSession.winner === "player"
+      ? "🏆 斗将大胜！已震慑敌阵（全军 -22% 气势、我军战意 +35、攻势大增）！"
+      : "已交锋落幕，可返回战场继续统兵破城。";
+    return;
+  }
+  const res = applyArenaWorldReward(world, state, activeArenaSession, {
+    targetCityKey: activeArenaConfig?.targetCityKey,
+  });
+  activeArenaRewardText = res.rewardText || "";
+  if (res.state !== state) {
+    sound?.play("event");
+    mutate(() => res.state, activeArenaRewardText);
+    activeArenaConfig?.afterCommit?.();
+  }
+}
+
+function renderDuelArenaDialog() {
+  const body = find("arena-body");
+  if (!body || !activeArenaSession || !state) return;
+  const ses = activeArenaSession;
+  const isDebate = ses.mode === "debate";
+  const autoBtn = find("arena-auto-btn");
+  if (autoBtn) autoBtn.hidden = ses.done;
+
+  find("arena-badge-tag").textContent = ses.context === "battle_duel"
+    ? `战场阵前叫阵 · 第 ${Math.min(ses.round, ses.maxRounds)}/${ses.maxRounds} 合`
+    : ses.context === "city_debate"
+      ? `敌城传令舌战 · ${ses.cityName}`
+      : `演武擂台切磋 · 第 ${Math.min(ses.round, ses.maxRounds)}/${ses.maxRounds} 合`;
+  find("arena-dialog-title").textContent = isDebate
+    ? `${ses.playerName} 🗣️ 舌战 ${ses.enemyName}`
+    : `${ses.playerName} ⚔️ 单挑 ${ses.enemyName}`;
+
+  const nodes = [];
+  if (ses.context === "free_arena") {
+    const curEra = era();
+    const myPool = curEra.officers
+      .filter((o) => o.faction === state.player && knownOfficer(state, o))
+      .sort((a, b) => (isDebate ? (b.governance ?? 0) - (a.governance ?? 0) : (b.command ?? 0) - (a.command ?? 0)));
+    const rivalPool = curEra.officers
+      .filter((o) => o.faction !== state.player)
+      .sort((a, b) => (isDebate ? (b.governance ?? 0) - (a.governance ?? 0) : (b.command ?? 0) - (a.command ?? 0)))
+      .slice(0, 18);
+    if (myPool.length && rivalPool.length) {
+      const setupBar = make("div", undefined, "arena-setup-bar");
+      const modeSel = make("select");
+      modeSel.setAttribute("aria-label", "切磋模式");
+      for (const [val, lbl] of [["duel", "⚔️ 武斗单挑"], ["debate", "🗣️ 文斗舌战"]]) {
+        const opt = make("option", lbl);
+        opt.value = val;
+        if (ses.mode === val) opt.selected = true;
+        modeSel.append(opt);
+      }
+      const mySel = make("select");
+      mySel.setAttribute("aria-label", "我方出战名将");
+      for (const o of myPool.slice(0, 14)) {
+        const opt = make("option", `${o.name}（统${o.command ?? 75}）`);
+        opt.value = o.key;
+        if (o.name === ses.playerName) opt.selected = true;
+        mySel.append(opt);
+      }
+      const rivalSel = make("select");
+      rivalSel.setAttribute("aria-label", "挑战天下名将");
+      for (const o of rivalPool) {
+        const opt = make("option", `${o.name}（统${o.command ?? 75}）`);
+        opt.value = o.key;
+        if (o.name === ses.enemyName) opt.selected = true;
+        rivalSel.append(opt);
+      }
+      const rematchBtn = make("button", "重开擂台", "quiet");
+      rematchBtn.type = "button";
+      const relaunch = () => {
+        const pOff = curEra.officers.find((o) => o.key === mySel.value) || myPool[0];
+        const eOff = curEra.officers.find((o) => o.key === rivalSel.value) || rivalPool[0];
+        activeArenaRewardText = "";
+        activeArenaSession = createArenaSession({
+          mode: modeSel.value,
+          context: "free_arena",
+          playerOfficer: pOff,
+          enemyOfficer: eOff,
+          seedBonus: Date.now() % 97,
+        });
+        renderDuelArenaDialog();
+      };
+      modeSel.addEventListener("change", relaunch);
+      mySel.addEventListener("change", relaunch);
+      rivalSel.addEventListener("change", relaunch);
+      rematchBtn.addEventListener("click", relaunch);
+      setupBar.append(modeSel, mySel, make("span", "VS", "muted"), rivalSel, rematchBtn);
+      nodes.push(setupBar);
+    }
+  }
+
+  const stage = make("div", undefined, ses.lastClash?.shake ? "arena-stage arena-shake" : "arena-stage");
+  const fighters = make("div", undefined, "arena-fighters");
+  const buildCard = (side, name, stat, hp, maxHp, rage, sigName) => {
+    const box = make("div", undefined, "arena-fighter");
+    box.dataset.side = side;
+    const head = make("div", undefined, "arena-fighter-head");
+    head.append(make("strong", name), make("span", `${isDebate ? "智谋" : "武勇"} ${stat}`, "memorial-tag"));
+    const hpWrap = make("div", undefined, "arena-meter");
+    const hpLbl = make("small", `气势 ${hp}/${maxHp}`);
+    const hpTrack = make("div", undefined, "arena-bar-track");
+    const hpFill = make("div", undefined, "arena-bar-fill arena-hp-fill");
+    hpFill.style.width = `${Math.max(0, Math.round((hp / Math.max(1, maxHp)) * 100))}%`;
+    hpTrack.append(hpFill);
+    hpWrap.append(hpLbl, hpTrack);
+
+    const rWrap = make("div", undefined, "arena-meter");
+    const rLbl = make("small", `🔥 怒气 ${rage}/100 · 「${sigName}」`);
+    const rTrack = make("div", undefined, "arena-bar-track");
+    const rFill = make("div", undefined, "arena-bar-fill arena-rage-fill");
+    rFill.style.width = `${Math.min(100, rage)}%`;
+    rTrack.append(rFill);
+    rWrap.append(rLbl, rTrack);
+
+    box.append(head, hpWrap, rWrap);
+    return box;
+  };
+  fighters.append(
+    buildCard("player", ses.playerName, ses.playerStat, ses.playerHp, ses.playerMaxHp, ses.playerRage, ses.playerSignature.name),
+    buildCard("enemy", ses.enemyName, ses.enemyStat, ses.enemyHp, ses.enemyMaxHp, ses.enemyRage, ses.enemySignature.name),
+  );
+
+  const tellBox = make("div", `👁️ 动向洞察：${ses.enemyTell}`, "arena-tell");
+  stage.append(fighters, tellBox);
+
+  if (ses.lastClash) {
+    const clashEl = make("div", `${ses.lastClash.verdict} · ${ses.lastClash.headline}`, "arena-clash-banner");
+    stage.append(clashEl);
+  }
+
+  if (ses.done) {
+    const resBox = make("div", undefined, "drama-finale");
+    resBox.append(
+      make("strong", ses.winner === "player" ? "🏆 胜负已分 · 我方凯旋！" : ses.winner === "enemy" ? "💢 胜负已分 · 惜败敌手" : "🤝 鸣金收兵 · 未分胜负"),
+      make("p", activeArenaRewardText || ses.enemyTell),
+    );
+    const doneActions = make("div", undefined, "arena-done-actions");
+    const finishBtn = make("button", ses.context === "battle_duel" ? "返回 7×5 战场继续推演" : "收兵退场", "primary");
+    finishBtn.type = "button";
+    finishBtn.addEventListener("click", () => find("duel-arena-dialog")?.close());
+    doneActions.append(finishBtn);
+    if (ses.context === "free_arena") {
+      const againBtn = make("button", "再战一轮", "quiet");
+      againBtn.type = "button";
+      againBtn.addEventListener("click", () => {
+        activeArenaRewardText = "";
+        activeArenaSession = createArenaSession({
+          mode: ses.mode,
+          context: "free_arena",
+          playerName: ses.playerName,
+          enemyName: ses.enemyName,
+          playerStat: ses.playerStat,
+          enemyStat: ses.enemyStat,
+          seedBonus: (ses.round + Date.now()) % 997,
+        });
+        renderDuelArenaDialog();
+      });
+      doneActions.append(againBtn);
+    }
+    stage.append(resBox, doneActions);
+  } else {
+    const movesWrap = make("div", undefined, "arena-moves-grid");
+    const moves = ARENA_MOVES[ses.mode] || ARENA_MOVES.duel;
+    for (const mv of moves) {
+      const isMusou = Boolean(mv.requiresRage);
+      const readyMusou = isMusou && ses.playerRage >= mv.requiresRage;
+      const btn = make("button", undefined, readyMusou ? "arena-move-btn arena-musou-ready" : "arena-move-btn");
+      btn.type = "button";
+      btn.disabled = isMusou && !readyMusou;
+      btn.dataset.moveId = mv.id;
+      const top = make("div", undefined, "arena-move-top");
+      top.append(make("strong", `${mv.icon} ${isMusou ? ses.playerSignature.name : mv.name}`), make("span", mv.role, "memorial-tag"));
+      btn.append(top, make("small", isMusou && !readyMusou ? `怒气需满 100 方可释放（当前 ${ses.playerRage}）` : mv.summary));
+      btn.addEventListener("click", () => {
+        sound?.play(isMusou ? "event" : "order");
+        activeArenaSession = resolveArenaRound(ses, mv.id);
+        if (activeArenaSession.done) finalizeArenaDone();
+        renderDuelArenaDialog();
+      });
+      movesWrap.append(btn);
+    }
+    stage.append(movesWrap);
+  }
+
+  const logBox = make("div", undefined, "tb-log");
+  logBox.replaceChildren(...ses.log.slice(-5).map((l) => make("div", l)));
+  stage.append(logBox);
+  nodes.push(stage);
+  body.replaceChildren(...nodes);
+}
+
+function openDuelArenaDialog(config = {}) {
+  const dlg = find("duel-arena-dialog");
+  if (!dlg || !state) return;
+  const curEra = era();
+  const ctx = config.context || "free_arena";
+  const mode = config.mode || "duel";
+  let pOff = config.playerOfficer || null;
+  let eOff = config.enemyOfficer || null;
+  if (!pOff) {
+    const own = curEra.officers
+      .filter((o) => o.faction === state.player && knownOfficer(state, o))
+      .sort((a, b) => (mode === "debate" ? (b.governance ?? 0) - (a.governance ?? 0) : (b.command ?? 0) - (a.command ?? 0)));
+    pOff = own[0] || null;
+  }
+  if (!eOff) {
+    const rivals = curEra.officers
+      .filter((o) => o.faction !== state.player)
+      .sort((a, b) => (mode === "debate" ? (b.governance ?? 0) - (a.governance ?? 0) : (b.command ?? 0) - (a.command ?? 0)));
+    eOff = rivals[0] || null;
+  }
+  activeArenaConfig = config;
+  activeArenaRewardText = "";
+  activeArenaSession = createArenaSession({
+    mode,
+    context: ctx,
+    playerOfficer: pOff,
+    enemyOfficer: eOff,
+    playerName: config.playerName,
+    enemyName: config.enemyName,
+    cityName: config.cityName || "",
+    targetCityKey: config.targetCityKey || null,
+    seedBonus: state.turn ?? 1,
+  });
+  renderDuelArenaDialog();
+  if (!dlg.open) dlg.showModal();
+}
+
+function commitRoyalDecision(side) {
+  if (!activeRoyalCard || activeRoyalOutcome || !state?.century) return;
+  const res = resolveRoyalCard(state, activeRoyalCard.id, side);
+  activeRoyalOutcome = res;
+  sound?.play("event");
+  mutate(() => res.state, `君主密奏·${res.choice.stamp}：${res.notes.join(" · ")}`);
+  renderRoyalCardDialog();
+}
+
+function renderRoyalCardDialog() {
+  const body = find("royal-body");
+  if (!body || !state) return;
+  const pending = hasPendingRoyalCard(state);
+  const rd = state.saga?.royalDecrees || { streak: 0 };
+
+  if (activeRoyalOutcome) {
+    const res = activeRoyalOutcome;
+    find("royal-badge-tag").textContent = res.streakBonus ? `🌟 明君三连批！连续 ${res.streak} 季` : `批复落印 · 连续御批 ${res.streak} 季`;
+    const box = make("div", undefined, "royal-stage");
+    const fin = make("div", undefined, "drama-finale");
+    fin.append(
+      make("strong", `已批阅「${res.card.title}」→【${res.choice.stamp}】`),
+      make("p", res.choice.outcomeText),
+      make("p", res.notes.join(" · "), "memorial-tag"),
+    );
+    const doneBtn = make("button", "收笔还朝", "primary");
+    doneBtn.type = "button";
+    doneBtn.addEventListener("click", () => find("royal-card-dialog")?.close());
+    box.append(fin, doneBtn);
+    body.replaceChildren(box);
+    return;
+  }
+
+  if (!pending) {
+    find("royal-badge-tag").textContent = `今日密奏已阅 · 连批 ${rd.streak ?? 0} 季`;
+    const box = make("div", undefined, "royal-stage");
+    box.append(
+      make("p", `本季御案密奏已批阅完毕（当前连续批奏 ${rd.streak ?? 0} 季，每连批 3 季额外赏赐府库 +50、声望 +2）。请推进至下一季接阅新奏折！`, "muted"),
+      (() => {
+        const b = make("button", "知道了", "primary");
+        b.type = "button";
+        b.addEventListener("click", () => find("royal-card-dialog")?.close());
+        return b;
+      })(),
+    );
+    body.replaceChildren(box);
+    return;
+  }
+
+  activeRoyalCard ??= drawRoyalCard(state);
+  const card = activeRoyalCard;
+  find("royal-badge-tag").textContent = `君主闪电密奏 · 连批进度 ${rd.streak ?? 0}/3（可左右拖拽或按 ← / → 键）`;
+
+  const stage = make("div", undefined, "royal-stage");
+  const meters = make("div", undefined, "royal-meters");
+  const meterDefs = [
+    ["treasury", "💰 府库"],
+    ["grain", "🌾 储粮"],
+    ["morale", "❤️ 民心"],
+    ["reputation", "🌟 声望"],
+  ];
+  const meterEls = new Map();
+  for (const [mKey, mLabel] of meterDefs) {
+    const item = make("div", undefined, "royal-meter-item");
+    const dot = make("span", "●", "royal-meter-dot");
+    item.append(dot, make("span", mLabel));
+    meters.append(item);
+    meterEls.set(mKey, dot);
+  }
+
+  const setMeterPreview = (side) => {
+    const pv = side ? card[side]?.preview || {} : {};
+    for (const [mKey, dot] of meterEls.entries()) {
+      dot.dataset.delta = pv[mKey] || "none";
+    }
+  };
+
+  const cardEl = make("div", undefined, "royal-card");
+  const stampLeft = make("span", `✗ ${card.left.stamp}`, "royal-stamp royal-stamp-left");
+  const stampRight = make("span", `✓ ${card.right.stamp}`, "royal-stamp royal-stamp-right");
+  const topMeta = make("div", undefined, "royal-card-head");
+  topMeta.append(make("span", `${card.portraitIcon} ${card.speaker}`, "memorial-tag"), make("span", card.tag, "muted"));
+  const titleEl = make("h3", card.title);
+  const promptEl = make("p", card.prompt, "royal-card-prompt");
+  const swipeHint = make("small", "← 左滑驳回/权变 · 右滑准奏/仁政 →", "muted");
+  cardEl.append(stampLeft, stampRight, topMeta, titleEl, promptEl, swipeHint);
+
+  let dragStartX = null;
+  let dragging = false;
+  cardEl.addEventListener("pointerdown", (ev) => {
+    if (ev.button && ev.button !== 0) return;
+    dragStartX = ev.clientX;
+    dragging = true;
+    cardEl.setPointerCapture?.(ev.pointerId);
+    cardEl.style.transition = "none";
+  });
+  cardEl.addEventListener("pointermove", (ev) => {
+    if (!dragging || dragStartX === null) return;
+    const dx = Math.max(-160, Math.min(160, ev.clientX - dragStartX));
+    cardEl.style.transform = `translateX(${dx}px) rotate(${(dx * 0.045).toFixed(2)}deg)`;
+    stampLeft.style.opacity = dx < -24 ? String(Math.min(1, (-dx - 24) / 60)) : "0";
+    stampRight.style.opacity = dx > 24 ? String(Math.min(1, (dx - 24) / 60)) : "0";
+    setMeterPreview(dx < -32 ? "left" : dx > 32 ? "right" : null);
+  });
+  const endCardDrag = (ev) => {
+    if (!dragging || dragStartX === null) return;
+    dragging = false;
+    const dx = ev.clientX - dragStartX;
+    dragStartX = null;
+    cardEl.style.transition = "";
+    if (dx <= -72) {
+      commitRoyalDecision("left");
+      return;
+    }
+    if (dx >= 72) {
+      commitRoyalDecision("right");
+      return;
+    }
+    cardEl.style.transform = "";
+    stampLeft.style.opacity = "0";
+    stampRight.style.opacity = "0";
+    setMeterPreview(null);
+  };
+  cardEl.addEventListener("pointerup", endCardDrag);
+  cardEl.addEventListener("pointercancel", () => {
+    dragging = false;
+    dragStartX = null;
+    cardEl.style.transform = "";
+    stampLeft.style.opacity = "0";
+    stampRight.style.opacity = "0";
+    setMeterPreview(null);
+  });
+
+  const actions = make("div", undefined, "royal-actions");
+  const leftBtn = make("button", `← ${card.left.stamp}：${card.left.label}`, "quiet royal-choice-btn");
+  leftBtn.type = "button";
+  leftBtn.id = "royal-left-btn";
+  leftBtn.addEventListener("mouseenter", () => setMeterPreview("left"));
+  leftBtn.addEventListener("mouseleave", () => setMeterPreview(null));
+  leftBtn.addEventListener("click", () => commitRoyalDecision("left"));
+
+  const rightBtn = make("button", `${card.right.stamp}：${card.right.label} →`, "primary royal-choice-btn");
+  rightBtn.type = "button";
+  rightBtn.id = "royal-right-btn";
+  rightBtn.addEventListener("mouseenter", () => setMeterPreview("right"));
+  rightBtn.addEventListener("mouseleave", () => setMeterPreview(null));
+  rightBtn.addEventListener("click", () => commitRoyalDecision("right"));
+
+  actions.append(leftBtn, rightBtn);
+  stage.append(meters, cardEl, actions);
+  body.replaceChildren(stage);
+}
+
+function openRoyalCardDialog() {
+  const dlg = find("royal-card-dialog");
+  if (!dlg || !state) return;
+  activeRoyalOutcome = null;
+  activeRoyalCard = hasPendingRoyalCard(state) ? drawRoyalCard(state) : null;
+  renderRoyalCardDialog();
   if (!dlg.open) dlg.showModal();
 }
 
@@ -6864,9 +7368,25 @@ function wireControls() {
     });
   });
   find("open-drama-theater")?.addEventListener("click", () => openDramaTheaterDialog());
+  find("open-duel-arena")?.addEventListener("click", () => {
+    const m = find("hud-more-menu"); if (m) m.hidden = true;
+    openDuelArenaDialog({ context: "free_arena" });
+  });
+  find("open-royal-cards")?.addEventListener("click", () => {
+    const m = find("hud-more-menu"); if (m) m.hidden = true;
+    openRoyalCardDialog();
+  });
+  find("floating-royal-card-btn")?.addEventListener("click", () => openRoyalCardDialog());
+  find("arena-auto-btn")?.addEventListener("click", () => {
+    if (!activeArenaSession || activeArenaSession.done) return;
+    sound?.play("order");
+    activeArenaSession = autoResolveArena(activeArenaSession);
+    if (activeArenaSession.done) finalizeArenaDone();
+    renderDuelArenaDialog();
+  });
   find("toggle-immersive")?.addEventListener("click", () => setImmersiveMode(document.body.dataset.immersive !== "true"));
   find("exit-immersive")?.addEventListener("click", () => setImmersiveMode(false));
-  // v21.0 + v23.0 + v25.0 端游级全快捷键（W 军机处 / E 朝堂 / C 群雄谱 / T 兵技 / D 演义 / H 全屏 / G 推演 / "/" 九州秒搜）
+  // v21.0 + v23.0 + v25.0 + v26.0 端游级全快捷键（W 军机处 / E 朝堂 / C 群雄谱 / T 兵技 / D 演义 / V 演武 / K 密奏 / H 全屏 / G 推演 / "/" 九州秒搜）
   document.addEventListener("keydown", (ev) => {
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
     const tag = (ev.target?.tagName || "").toLowerCase();
@@ -6875,6 +7395,10 @@ function wireControls() {
       setImmersiveMode(false);
       return;
     }
+    if (find("royal-card-dialog")?.open && !activeRoyalOutcome && activeRoyalCard) {
+      if (ev.key === "ArrowLeft") { ev.preventDefault(); commitRoyalDecision("left"); return; }
+      if (ev.key === "ArrowRight") { ev.preventDefault(); commitRoyalDecision("right"); return; }
+    }
     if (!state?.century) return;
     const k = ev.key.toLowerCase();
     if (k === "w") { ev.preventDefault(); openWarRoomDialog("advisor"); }
@@ -6882,6 +7406,8 @@ function wireControls() {
     else if (k === "c") { ev.preventDefault(); openCodexDialog(); }
     else if (k === "t") { ev.preventDefault(); openTechDialog(); }
     else if (k === "d") { ev.preventDefault(); openDramaTheaterDialog(); }
+    else if (k === "v") { ev.preventDefault(); openDuelArenaDialog({ context: "free_arena" }); }
+    else if (k === "k") { ev.preventDefault(); openRoyalCardDialog(); }
     else if (k === "h") { ev.preventDefault(); setImmersiveMode(document.body.dataset.immersive !== "true"); }
     else if (k === "g") { ev.preventDefault(); runSmartAutoSim(4); }
     else if (k === "/") { ev.preventDefault(); openQuickSearchDialog(); }
@@ -8269,6 +8795,21 @@ async function start() {
     openTechDialog: () => openTechDialog(),
     openWarRoom: (tab) => openWarRoomDialog(tab),
     openTacticalBattle: (plan, onDone) => openTacticalBattleDialog(plan, onDone),
+    openCityDebate: (cityKey, ownerKey, afterCommit) => {
+      const curEra = era();
+      const targetHolding = state.cities[cityKey];
+      const defOfficer = targetHolding?.commander
+        ? curEra.officers.find((o) => o.key === targetHolding.commander)
+        : curEra.officers.find((o) => o.faction === ownerKey);
+      openDuelArenaDialog({
+        context: "city_debate",
+        mode: "debate",
+        targetCityKey: cityKey,
+        enemyOfficer: defOfficer,
+        cityName: cityName(world, cityKey),
+        afterCommit,
+      });
+    },
     notify: (msg, isError) => notify(msg, isError),
     openStratagemTab: () => openDiplomacyDialog("stratagem"),
   });

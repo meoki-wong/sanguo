@@ -4697,9 +4697,18 @@ body[data-immersive="true"] #feedback {
 }
 
 /* 沉浸式演义剧场 */
+#drama-theater-dialog,
+#duel-arena-dialog {
+  width: min(720px, calc(100vw - 1.25rem));
+  max-width: calc(100vw - 1.25rem);
+  padding: 0;
+  box-sizing: border-box;
+}
+
 .drama-dialog-content {
-  width: min(94vw, 720px);
-  max-height: 92dvh;
+  width: 100%;
+  box-sizing: border-box;
+  max-height: min(88dvh, 780px);
   overflow-y: auto;
 }
 
@@ -4850,5 +4859,459 @@ body[data-immersive="true"] #feedback {
   }
   .drama-catalog {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ===== v26.0 无双演武 · 战意主动技 · 君主闪电密奏 ===== */
+.floating-royal-card-btn {
+  position: absolute;
+  top: 0.72rem;
+  right: 0.72rem;
+  z-index: 12;
+  padding: 0.36rem 0.76rem;
+  border-radius: 999px;
+  border: 1px solid rgba(238, 184, 78, 0.85);
+  background: linear-gradient(135deg, rgba(132, 34, 24, 0.94), rgba(56, 20, 14, 0.94));
+  color: #ffeec2;
+  font-size: 0.82rem;
+  font-weight: 700;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45), 0 0 0 2px rgba(238, 184, 78, 0.25);
+  cursor: pointer;
+  animation: royalPulse 2.2s ease-in-out infinite;
+}
+
+@keyframes royalPulse {
+  0%, 100% { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45), 0 0 0 2px rgba(238, 184, 78, 0.28); }
+  50% { box-shadow: 0 6px 22px rgba(212, 74, 42, 0.52), 0 0 0 5px rgba(238, 184, 78, 0.48); }
+}
+
+body[data-immersive="true"] .floating-royal-card-btn {
+  display: none !important;
+}
+
+.tb-skill-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.42rem 0.56rem;
+  border-radius: 8px;
+  background: rgba(24, 20, 15, 0.92);
+  border: 1px solid rgba(214, 174, 96, 0.34);
+}
+
+.tb-spirit-meter {
+  display: flex;
+  align-items: center;
+  gap: 0.36rem;
+  margin-right: auto;
+}
+
+.tb-spirit-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #f9d976;
+  white-space: nowrap;
+}
+
+.tb-spirit-track {
+  width: 68px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.tb-spirit-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #e59a38, #fde068);
+  transition: width 220ms ease;
+}
+
+.tb-skill-btn {
+  font-size: 0.76rem !important;
+  padding: 0.24rem 0.54rem !important;
+  min-height: 1.7rem !important;
+}
+
+.tb-duel-call-btn {
+  border-color: rgba(235, 118, 78, 0.68) !important;
+  color: #ffd1b8 !important;
+}
+
+.tb-cell[data-ambush-slot="true"] {
+  border-color: #8bf09e;
+  box-shadow: inset 0 0 12px rgba(96, 224, 128, 0.55), 0 0 0 2px rgba(139, 240, 158, 0.58);
+}
+
+.tb-cell[data-hit="true"] {
+  animation: tbCellHit 320ms ease;
+}
+
+@keyframes tbCellHit {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  65% { transform: translateX(3px); }
+}
+
+.tb-float-fx {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  z-index: 5;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 0.66rem;
+  font-weight: 800;
+  background: rgba(18, 12, 8, 0.88);
+  color: #ff9c78;
+  pointer-events: none;
+  animation: tbFloatPop 950ms ease forwards;
+}
+
+.tb-float-fx[data-kind="crit"] {
+  color: #ffe26a;
+  border: 1px solid rgba(255, 226, 106, 0.7);
+}
+
+.tb-float-fx[data-kind="buff"] {
+  color: #79f2be;
+  border: 1px solid rgba(121, 242, 190, 0.65);
+}
+
+@keyframes tbFloatPop {
+  0% { opacity: 0; transform: translateY(4px) scale(0.9); }
+  25% { opacity: 1; transform: translateY(-2px) scale(1.06); }
+  100% { opacity: 0.92; transform: translateY(-8px) scale(1); }
+}
+
+/* 阵前无双单挑 & 舌战擂台 */
+.arena-dialog-content {
+  width: 100%;
+  box-sizing: border-box;
+  max-height: min(88dvh, 780px);
+  overflow-y: auto;
+}
+
+.arena-setup-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.55rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(24, 20, 15, 0.88);
+  border: 1px solid rgba(212, 174, 96, 0.25);
+}
+
+.arena-setup-bar select {
+  max-width: 145px;
+  font-size: 0.8rem;
+}
+
+.arena-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 12px;
+  background: linear-gradient(155deg, rgba(36, 26, 20, 0.96), rgba(18, 15, 12, 0.98));
+  border: 1px solid rgba(224, 176, 86, 0.45);
+}
+
+.arena-shake {
+  animation: arenaShake 360ms ease;
+}
+
+@keyframes arenaShake {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(-5px, 2px); }
+  50% { transform: translate(5px, -2px); }
+  80% { transform: translate(-3px, 1px); }
+}
+
+.arena-fighters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.arena-fighter {
+  padding: 0.62rem 0.72rem;
+  border-radius: 9px;
+  background: rgba(20, 17, 13, 0.86);
+  border: 1px solid rgba(255, 240, 210, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 0.36rem;
+}
+
+.arena-fighter[data-side="player"] {
+  border-color: rgba(94, 216, 176, 0.48);
+}
+
+.arena-fighter[data-side="enemy"] {
+  border-color: rgba(238, 108, 84, 0.48);
+}
+
+.arena-fighter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.arena-meter small {
+  display: block;
+  font-size: 0.72rem;
+  color: #dcd0b8;
+  margin-bottom: 2px;
+}
+
+.arena-bar-track {
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.arena-bar-fill {
+  height: 100%;
+  transition: width 240ms ease;
+}
+
+.arena-hp-fill {
+  background: linear-gradient(90deg, #34d399, #10b981);
+}
+
+.arena-fighter[data-side="enemy"] .arena-hp-fill {
+  background: linear-gradient(90deg, #f87171, #dc2626);
+}
+
+.arena-rage-fill {
+  background: linear-gradient(90deg, #f59e0b, #fde047);
+}
+
+.arena-tell {
+  padding: 0.48rem 0.7rem;
+  border-radius: 8px;
+  background: rgba(217, 167, 78, 0.12);
+  border-left: 3px solid #f0b958;
+  color: #fae6bc;
+  font-size: 0.84rem;
+}
+
+.arena-clash-banner {
+  padding: 0.42rem 0.68rem;
+  border-radius: 7px;
+  background: rgba(168, 48, 34, 0.24);
+  border: 1px solid rgba(244, 128, 92, 0.42);
+  color: #ffdcd0;
+  font-size: 0.82rem;
+}
+
+.arena-moves-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.arena-move-btn {
+  text-align: left;
+  padding: 0.58rem 0.72rem;
+  border-radius: 8px;
+  background: rgba(40, 32, 23, 0.94);
+  border: 1px solid rgba(216, 174, 96, 0.36);
+  color: #f8eed8;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  cursor: pointer;
+}
+
+.arena-move-btn:hover:not(:disabled) {
+  border-color: #f5cc72;
+  background: rgba(58, 45, 30, 0.98);
+}
+
+.arena-move-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.arena-musou-ready {
+  background: linear-gradient(135deg, rgba(146, 44, 24, 0.94), rgba(84, 34, 14, 0.96)) !important;
+  border-color: #ffe066 !important;
+  box-shadow: 0 0 16px rgba(255, 198, 72, 0.45);
+}
+
+.arena-move-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.arena-move-btn small {
+  font-size: 0.74rem;
+  color: #cbb99a;
+}
+
+.arena-done-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* 王权 Reigns 君主闪电密奏 */
+#royal-card-dialog {
+  width: min(540px, calc(100vw - 1.25rem));
+  max-width: calc(100vw - 1.25rem);
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.royal-dialog-content {
+  width: 100%;
+  box-sizing: border-box;
+  max-height: min(88dvh, 760px);
+  overflow-y: auto;
+}
+
+.royal-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.royal-meters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.4rem;
+  padding: 0.48rem 0.6rem;
+  border-radius: 9px;
+  background: rgba(24, 20, 15, 0.92);
+  border: 1px solid rgba(212, 174, 96, 0.28);
+}
+
+.royal-meter-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: #e9dcc2;
+}
+
+.royal-meter-dot {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.22);
+  transition: color 140ms ease, transform 140ms ease;
+}
+
+.royal-meter-dot[data-delta="up"] {
+  color: #4ade80;
+  transform: scale(1.45);
+}
+
+.royal-meter-dot[data-delta="down"] {
+  color: #f87171;
+  transform: scale(1.45);
+}
+
+.royal-card {
+  position: relative;
+  padding: 1.05rem 1rem;
+  border-radius: 13px;
+  background: linear-gradient(165deg, rgba(44, 34, 23, 0.98), rgba(24, 19, 14, 0.98));
+  border: 1px solid rgba(228, 184, 94, 0.55);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  touch-action: pan-y;
+  user-select: none;
+  cursor: grab;
+  transition: transform 180ms ease;
+}
+
+.royal-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.royal-card h3 {
+  margin: 0;
+  font-size: 1.08rem;
+  color: #fae6ba;
+}
+
+.royal-card-prompt {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.62;
+  color: #ebe0cb;
+}
+
+.royal-stamp {
+  position: absolute;
+  top: 0.85rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.86rem;
+  font-weight: 800;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.royal-stamp-left {
+  right: 0.85rem;
+  border: 2px solid #f87171;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.82);
+  transform: rotate(10deg);
+}
+
+.royal-stamp-right {
+  left: 0.85rem;
+  border: 2px solid #4ade80;
+  color: #bbf7d0;
+  background: rgba(20, 83, 45, 0.82);
+  transform: rotate(-10deg);
+}
+
+.royal-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.royal-choice-btn {
+  padding: 0.58rem 0.65rem !important;
+  font-size: 0.8rem !important;
+  line-height: 1.35;
+  white-space: normal;
+  height: auto;
+}
+
+@media (max-width: 960px) {
+  .floating-royal-card-btn {
+    top: auto;
+    bottom: 9.8rem;
+    right: 0.35rem;
+    font-size: 0.72rem;
+    padding: 0.28rem 0.62rem;
+  }
+  .arena-fighters,
+  .arena-moves-grid,
+  .royal-actions {
+    grid-template-columns: 1fr;
+  }
+  .royal-meters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

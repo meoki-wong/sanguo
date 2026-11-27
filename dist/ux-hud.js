@@ -44,6 +44,7 @@ import { personaForFaction } from "./ai-persona.js";
 import { collectWarRoomItems } from "./war-room.js";
 import { evaluateChallengeProgress } from "./challenges.js";
 import { unplayedDramaCount } from "./drama-theater.js";
+import { hasPendingRoyalCard } from "./royal-cards.js";
 import { getCeremonyState } from "./dynasty-ceremony.js";
 import { executeCoordinatedAttack, findCoordinatedAttackPlan } from "./multi-siege.js";
 import { inciteCityDefection } from "./upheaval.js";
@@ -365,6 +366,16 @@ export function createUxHud(world, api) {
         dramaBtn.textContent = unplayed > 0 ? `演义 ${unplayed}` : "演义剧场";
       }
     }
+    const arenaMenuBtn = $("open-duel-arena");
+    if (arenaMenuBtn) arenaMenuBtn.hidden = !state.century;
+    const pendingRoyal = Boolean(state.century && hasPendingRoyalCard(state) && gameOutcome(state) === "ongoing");
+    const royalMenuBtn = $("open-royal-cards");
+    if (royalMenuBtn) {
+      royalMenuBtn.hidden = !state.century;
+      if (state.century) royalMenuBtn.textContent = pendingRoyal ? "📜 君主密奏·待批 (K)" : "📜 君主密奏 (K)";
+    }
+    const floatRoyalBtn = $("floating-royal-card-btn");
+    if (floatRoyalBtn) floatRoyalBtn.hidden = !pendingRoyal;
     syncModeToggleLabel();
     const tDelta = $("treasury-delta");
     const gDelta = $("grain-delta");
@@ -1577,6 +1588,16 @@ export function createUxHud(world, api) {
               renderSovereignCityCard();
             });
             stratBar.append(surrBtn);
+          }
+
+          if (api.openCityDebate) {
+            const debBtn = el("button", "🗣️ 阵前舌战", "quiet");
+            debBtn.type = "button";
+            debBtn.title = `遣谋士往「${city.name}」外舌战群儒：胜则敌城陷流言动摇 3 季且全军攻势 +8%`;
+            debBtn.addEventListener("click", () => {
+              api.openCityDebate(key, holding.owner, () => renderSovereignCityCard());
+            });
+            stratBar.append(debBtn);
           }
           box.append(stratBar);
         }

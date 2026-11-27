@@ -55,6 +55,8 @@
         <div class="hud-more-menu" id="hud-more-menu" hidden>
           <button type="button" class="quiet" id="open-codex-dialog" hidden>群雄谱 (C)</button>
           <button type="button" class="quiet" id="open-tech-dialog" hidden>兵技 (T)</button>
+          <button type="button" class="quiet" id="open-duel-arena" hidden>⚔️ 演武擂台 (V)</button>
+          <button type="button" class="quiet" id="open-royal-cards" hidden>📜 君主密奏 (K)</button>
           <button type="button" class="quiet" id="open-saga-chronicle" hidden>本纪</button>
           <button type="button" class="quiet" id="open-achievements-dialog" hidden>勋鉴</button>
           <button type="button" class="quiet hud-mode-toggle" id="toggle-hud-mode" aria-pressed="false" title="切换君主大势模式 / 幕府详图微操模式">幕府详图</button>
@@ -149,6 +151,7 @@
           <button type="button" id="open-sandtable-map" hidden>天下沙盘</button>
           <button type="button" id="open-frontline-map" aria-haspopup="dialog" hidden><span aria-hidden="true">⚑</span> 会战指挥</button>
           <button type="button" id="dynasty-map-return" hidden>退出粮运图</button>
+          <button type="button" id="floating-royal-card-btn" class="floating-royal-card-btn" hidden title="君主闪电密奏待批 (快捷键 K)">📜 密奏待批</button>
           <div id="reign-map-tools" hidden>
             <select id="reign-map-lens" aria-label="全国地图视图"><option value="regions">政区</option><option value="economy">经济</option><option value="diplomacy">外交</option><option value="war">战争</option></select>
             <button type="button" id="reign-map-close">退出</button>
@@ -2646,6 +2649,7 @@
       </div>
       <div id="tb-header-meta" class="tb-header-meta"></div>
       <div id="tb-grid-wrap" class="tb-grid-wrap">
+        <div id="tb-skill-bar" class="tb-skill-bar"></div>
         <div id="tb-grid-board" class="tb-grid-board" role="grid" aria-label="7×5 战术棋盘"></div>
         <div id="tb-unit-bar" class="tb-unit-bar"></div>
       </div>
@@ -2669,6 +2673,35 @@
         <button type="button" class="quiet" data-close="drama-theater-dialog">返回</button>
       </div>
       <div id="drama-body" class="drama-body"></div>
+    </div>
+  </dialog>
+
+  <dialog id="duel-arena-dialog" aria-labelledby="arena-dialog-title">
+    <div class="dialog-content arena-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag" id="arena-badge-tag">v26.0 阵前无双演武</span>
+          <h2 id="arena-dialog-title">名将对决擂台</h2>
+        </div>
+        <div class="tb-heading-actions">
+          <button type="button" class="quiet" id="arena-auto-btn">一键托管</button>
+          <button type="button" class="quiet" data-close="duel-arena-dialog">退场</button>
+        </div>
+      </div>
+      <div id="arena-body" class="arena-body"></div>
+    </div>
+  </dialog>
+
+  <dialog id="royal-card-dialog" aria-labelledby="royal-dialog-title">
+    <div class="dialog-content royal-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag" id="royal-badge-tag">v26.0 君主闪电密奏 · 每季一决</span>
+          <h2 id="royal-dialog-title">御案密奏批复</h2>
+        </div>
+        <button type="button" class="quiet" data-close="royal-card-dialog">暂缓</button>
+      </div>
+      <div id="royal-body" class="royal-body"></div>
     </div>
   </dialog>
 
@@ -2782,6 +2815,7 @@
       <ul class="shortcut-list">
         <li><span>搜索并定位城池</span><kbd>/</kbd></li>
         <li><span>演义剧场 / 全屏看图</span><span><kbd>D</kbd> / <kbd>H</kbd></span></li>
+        <li><span>演武擂台 / 君主密奏</span><span><kbd>V</kbd> / <kbd>K</kbd></span></li>
         <li><span>推进一季</span><kbd>Space</kbd></li>
         <li><span>切换己方城池（上一城 / 下一城）</span><span><kbd>[</kbd> / <kbd>]</kbd></span></li>
         <li><span>城池面板切换（内政 / 出征 / 调兵 / 官吏）</span><span><kbd>G</kbd> <kbd>A</kbd> <kbd>T</kbd> <kbd>O</kbd></span></li>

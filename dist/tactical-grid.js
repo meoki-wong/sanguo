@@ -156,9 +156,36 @@ export const UNIT_TYPES = {
 export const WIND_DIRS = [
   { key: "east", label: "东风（吹向东阵）", short: "东风 →", dx: 1, dy: 0 },
   { key: "south", label: "南风（吹向南翼）", short: "南风 ↓", dx: 0, dy: 1 },
-  { key: "north", label: "北风（吹向北翼）", short: "北风 ↑", dx: 0, dy: -1 },
   { key: "west", label: "西风（吹向西阵）", short: "西风 ←", dx: -1, dy: 0 },
+  { key: "north", label: "北风（吹向北翼）", short: "北风 ↑", dx: 0, dy: -1 },
 ];
+
+export const GRID_SKILLS = {
+  shift_wind: {
+    id: "shift_wind",
+    name: "借东风",
+    cost: 25,
+    targetMode: "instant",
+    icon: "🌬️",
+    summary: "耗 25 战意，顺时针改变战场风向，令纵火转道延烧敌营。",
+  },
+  knockback: {
+    id: "knockback",
+    name: "破阵击退",
+    cost: 30,
+    targetMode: "armed",
+    icon: "💥",
+    summary: "耗 30 战意蓄势：下次攻击敌将退 1 格；撞墙/撞兵 +22 撞伤，入火 +18 灼烧！",
+  },
+  ambush: {
+    id: "ambush",
+    name: "密林伏兵",
+    cost: 45,
+    targetMode: "forest",
+    icon: "🌿",
+    summary: "耗 45 战意，择一无人密林唤出「伏兵奇袭营」即刻参战！",
+  },
+};
 
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
@@ -440,6 +467,15 @@ export function createGridBattle({
     done: false,
     outcome: null,
     surrenderTriggered: false,
+    spirit: 40,
+    maxSpirit: 100,
+    armedSkill: null,
+    duelUsed: false,
+    duelOutcome: null,
+    duelWon: false,
+    duelAtkBonus: 0,
+    duelDefPenalty: 0,
+    lastFx: [],
     atkMult: 1,
     defMult: 1,
     lossMult: 1,
@@ -600,9 +636,9 @@ function applyFinalBattleStats(session) {
     session.outcome = playerHpPct >= enemyHpPct || session.depotDestroyed ? "victory" : "defeat";
   }
 
-  let atkMult = 1 + (0.65 - enemyHpPct) * 0.65 + (session.depotDestroyed ? 0.16 : 0) + (session.wallsDestroyed * 0.05);
-  let defMult = 1 - (1 - enemyHpPct) * 0.38 - (session.depotDestroyed ? 0.2 : 0) - (session.wallsDestroyed * 0.08);
-  let lossMult = 1 - (playerHpPct - 0.55) * 0.45 - (session.depotDestroyed ? 0.12 : 0);
+  let atkMult = 1 + (0.65 - enemyHpPct) * 0.65 + (session.depotDestroyed ? 0.16 : 0) + (session.wallsDestroyed * 0.05) + (session.duelAtkBonus || 0);
+  let defMult = 1 - (1 - enemyHpPct) * 0.38 - (session.depotDestroyed ? 0.2 : 0) - (session.wallsDestroyed * 0.08) - (session.duelDefPenalty || 0);
+  let lossMult = 1 - (playerHpPct - 0.55) * 0.45 - (session.depotDestroyed ? 0.12 : 0) - (session.duelWon ? 0.08 : 0);
 
   if (session.outcome === "defeat" && alivePlayers.length === 0) {
     atkMult = Math.min(atkMult, 0.86);
@@ -610,15 +646,164 @@ function applyFinalBattleStats(session) {
     lossMult = Math.max(lossMult, 1.2);
   }
 
-  session.atkMult = Number(clamp(atkMult, 0.78, 1.62).toFixed(3));
-  session.defMult = Number(clamp(defMult, 0.48, 1.22).toFixed(3));
-  session.lossMult = Number(clamp(lossMult, 0.48, 1.38).toFixed(3));
+  session.atkMult = Number(clamp(atkMult, 0.78, 1.72).toFixed(3));
+  session.defMult = Number(clamp(defMult, 0.45, 1.22).toFixed(3));
+  session.lossMult = Number(clamp(lossMult, 0.45, 1.38).toFixed(3));
 
-  if (session.outcome === "victory" && session.depotDestroyed && (aliveEnemies.length <= 1 || session.targetCut || session.insiderActive)) {
+  if (session.outcome === "victory" && session.depotDestroyed && (aliveEnemies.length <= 1 || session.targetCut || session.insiderActive || session.duelWon)) {
     session.surrenderTriggered = true;
-    session.defMult = Math.min(session.defMult, 0.55);
-    session.lossMult = Math.min(session.lossMult, 0.56);
+    session.defMult = Math.min(session.defMult, 0.52);
+    session.lossMult = Math.min(session.lossMult, 0.54);
   }
+}
+
+function pushFx(session, x, y, text, kind = "dmg") {
+  session.lastFx ??= [];
+  session.lastFx.push({ x, y, text, kind });
+}
+
+function addSpirit(session, amount) {
+  session.spirit = clamp((session.spirit ?? 40) + amount, 0, session.maxSpirit ?? 100);
+}
+
+/**
+ * 列出所有可召唤「密林伏兵」的空闲密林格
+ */
+export function validAmbushTiles(session) {
+  if (!session?.tiles || session.done) return [];
+  const out = [];
+  for (let y = 0; y < GRID_ROWS; y += 1) {
+    for (let x = 0; x < GRID_COLS; x += 1) {
+      const tile = tileAt(session, x, y);
+      if (tile?.terrain === "forest" && !unitAt(session, x, y)) {
+        out.push({ x, y });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 释放战场战意主动技：借东风 / 破阵击退 / 密林伏兵
+ */
+export function castGridSkill(session, skillId, targetPos = null) {
+  if (!session || session.done) return session;
+  const skill = GRID_SKILLS[skillId];
+  if (!skill) return session;
+  const next = structuredClone(session);
+  next.lastFx = [];
+  const curSpirit = next.spirit ?? 40;
+
+  if (skillId === "shift_wind") {
+    if (curSpirit < skill.cost) return session;
+    next.spirit = curSpirit - skill.cost;
+    const idx = WIND_DIRS.findIndex((w) => w.key === next.wind?.key);
+    next.wind = WIND_DIRS[(idx + 1) % WIND_DIRS.length];
+    next.armedSkill = null;
+    const anchor = next.units.find((u) => u.side === "player" && u.hp > 0) || { x: 1, y: 2 };
+    pushFx(next, anchor.x, anchor.y, `${next.wind.short}`, "buff");
+    pushLog(next, `🌬️ 施展「借东风」（-${skill.cost} 战意）：战风骤转为「${next.wind.short}」！`);
+    return next;
+  }
+
+  if (skillId === "knockback") {
+    if (next.armedSkill === "knockback") {
+      next.armedSkill = null;
+      next.spirit = Math.min(next.maxSpirit ?? 100, curSpirit + skill.cost);
+      pushLog(next, "已收起「破阵击退」蓄势，战意如数返还。");
+      return next;
+    }
+    if (curSpirit < skill.cost) return session;
+    next.spirit = curSpirit - skill.cost;
+    next.armedSkill = "knockback";
+    pushLog(next, `💥 蓄势「破阵击退」（-${skill.cost} 战意）：下次攻击命中敌军时强力震退 1 格！`);
+    return next;
+  }
+
+  if (skillId === "ambush") {
+    if (!targetPos) {
+      if (next.armedSkill === "ambush") {
+        next.armedSkill = null;
+        return next;
+      }
+      if (curSpirit < skill.cost || !validAmbushTiles(next).length) return session;
+      next.armedSkill = "ambush";
+      pushLog(next, "🌿 请在棋盘上点选一处无人密林，伏兵即刻现身奇袭！");
+      return next;
+    }
+    if (curSpirit < skill.cost) return session;
+    const valid = validAmbushTiles(next).some((t) => t.x === targetPos.x && t.y === targetPos.y);
+    if (!valid) return session;
+    next.spirit = curSpirit - skill.cost;
+    next.armedSkill = null;
+    const ambushId = `p_ambush_${next.round}_${next.units.length}`;
+    const ambushUnit = {
+      id: ambushId,
+      side: "player",
+      type: "cavalry",
+      name: "伏兵奇袭营",
+      shortName: "伏",
+      icon: "🌿",
+      move: 3,
+      range: 1,
+      hp: 75,
+      maxHp: 75,
+      atk: 35,
+      def: 7,
+      canIgnite: false,
+      siegeMult: 1.0,
+      chargeBonus: 0.2,
+      x: targetPos.x,
+      y: targetPos.y,
+      moved: false,
+      acted: false,
+      moveDist: 0,
+    };
+    next.units.push(ambushUnit);
+    next.selectedUnitId = ambushId;
+    pushFx(next, targetPos.x, targetPos.y, "伏兵现!", "buff");
+    pushLog(next, `🌿 「密林伏兵」于 (${targetPos.x + 1},${targetPos.y + 1}) 杀出（-${skill.cost} 战意），即刻可战！`);
+    applyFinalBattleStats(next);
+    return next;
+  }
+
+  return session;
+}
+
+/**
+ * 将「阵前无双单挑」的结果真实写入 7×5 战场态势
+ */
+export function applyBattleDuelToGrid(session, arenaSession) {
+  if (!session || session.duelUsed) return session;
+  const next = structuredClone(session);
+  next.lastFx = [];
+  next.duelUsed = true;
+  next.duelOutcome = arenaSession?.winner || "draw";
+
+  if (next.duelOutcome === "player") {
+    next.duelWon = true;
+    next.duelAtkBonus = 0.15;
+    next.duelDefPenalty = 0.14;
+    addSpirit(next, 35);
+    for (const enemy of next.units) {
+      if (enemy.side === "enemy" && enemy.hp > 0) {
+        const drop = Math.max(10, Math.round(enemy.hp * 0.22));
+        enemy.hp = Math.max(5, enemy.hp - drop);
+        pushFx(next, enemy.x, enemy.y, `-${drop}破胆`, "crit");
+      }
+    }
+    pushLog(next, `🏆 阵前斗将「${arenaSession.playerName}」大破敌将！敌阵气势溃 -22%，战意 +35，我军攻势猛增！`);
+  } else if (next.duelOutcome === "enemy") {
+    next.duelAtkBonus = -0.04;
+    addSpirit(next, 15);
+    pushLog(next, `💢 阵前斗将失利，稳住阵线以奇谋火攻破敌（战意 +15）。`);
+  } else {
+    addSpirit(next, 20);
+    pushLog(next, `🤝 两将阵前激斗平手，鸣金各自回营（战意 +20）。`);
+  }
+
+  applyFinalBattleStats(next);
+  return next;
 }
 
 function igniteTile(session, x, y, reason) {
@@ -668,8 +853,10 @@ export function moveUnit(session, unitId, x, y) {
   unit.moveDist = step.cost;
 
   const landed = tileAt(next, x, y);
+  next.lastFx = [];
   if (landed?.terrain === "fire") {
     unit.hp = Math.max(0, unit.hp - (TERRAIN_META.fire.burnDamage || 16));
+    pushFx(next, x, y, "-16🔥", "burn");
     pushLog(next, `${unit.icon} ${unit.name} 踏入火海受灼伤（剩余 ${unit.hp} HP）。`);
   } else {
     pushLog(next, `${unit.icon} ${unit.name} 进驻 (${x + 1},${y + 1}) ${TERRAIN_META[landed.terrain].name}。`);
@@ -684,6 +871,7 @@ export function moveUnit(session, unitId, x, y) {
 export function attackTarget(session, unitId, targetX, targetY) {
   if (!session || session.done) return session;
   const next = structuredClone(session);
+  next.lastFx = [];
   const attacker = next.units.find((u) => u.id === unitId && u.hp > 0);
   if (!attacker || attacker.side !== next.turnSide || attacker.acted) return session;
   const validTargets = attackableTargets(next, unitId);
@@ -697,7 +885,40 @@ export function attackTarget(session, unitId, targetX, targetY) {
     const defender = unitAt(next, targetX, targetY);
     const dmg = estimateDamage(next, attacker, defender, null);
     defender.hp = Math.max(0, defender.hp - dmg);
+    addSpirit(next, defender.hp <= 0 ? 25 : 15);
+    pushFx(next, targetX, targetY, `-${dmg}`, "dmg");
     let note = `${attacker.icon} ${attacker.name} 痛击 ${defender.name}，造成 ${dmg} 点杀伤`;
+
+    // v26.0 破阵击退 + 撞墙/撞敌/入火连锁伤害
+    if (next.armedSkill === "knockback" && attacker.side === "player") {
+      next.armedSkill = null;
+      if (defender.hp > 0) {
+        const dxRaw = targetX - attacker.x;
+        const dyRaw = targetY - attacker.y;
+        const dx = Math.abs(dxRaw) >= Math.abs(dyRaw) ? Math.sign(dxRaw) : 0;
+        const dy = Math.abs(dyRaw) > Math.abs(dxRaw) ? Math.sign(dyRaw) : 0;
+        const kx = targetX + dx;
+        const ky = targetY + dy;
+        const kTile = tileAt(next, kx, ky);
+        const kOcc = unitAt(next, kx, ky);
+        if (!kTile || (kTile.terrain === "wall" && kTile.wallHp > 0) || kOcc) {
+          defender.hp = Math.max(0, defender.hp - 22);
+          pushFx(next, targetX, targetY, "撞击-22!", "crit");
+          note += "；💥击退撞壁/撞阵追加 22 暴击伤";
+        } else {
+          defender.x = kx;
+          defender.y = ky;
+          if (kTile.terrain === "fire") {
+            defender.hp = Math.max(0, defender.hp - 18);
+            pushFx(next, kx, ky, "坠火-18🔥", "burn");
+            note += "；💥击退落入火海额外灼伤 18";
+          } else {
+            pushFx(next, kx, ky, "击退!", "crit");
+            note += "；💥震退 1 格";
+          }
+        }
+      }
+    }
 
     // 火攻器械攻击自带点燃油火与顺风蔓延
     if (attacker.canIgnite) {
@@ -707,6 +928,7 @@ export function attackTarget(session, unitId, targetX, targetY) {
       if (windTile && (windTile.terrain === "forest" || windTile.terrain === "depot")) {
         const wasDepot = windTile.terrain === "depot";
         igniteTile(next, windX, windY, true);
+        pushFx(next, windX, windY, "延烧🔥", "burn");
         note += `，火星借${next.wind.short}引燃(${windX + 1},${windY + 1})`;
         if (wasDepot) triggerDepotDestroyed(next, `${attacker.name}火矢顺风引燃粮仓`);
       }
@@ -721,6 +943,7 @@ export function attackTarget(session, unitId, targetX, targetY) {
       if (dist <= effectiveRange(defender, next.tiles)) {
         const counterDmg = Math.max(4, Math.round(estimateDamage(next, defender, attacker, null) * 0.55));
         attacker.hp = Math.max(0, attacker.hp - counterDmg);
+        pushFx(next, attacker.x, attacker.y, `-${counterDmg}`, "dmg");
         note += `；敌反击致 ${counterDmg} 伤。`;
       } else {
         note += "。";
@@ -731,6 +954,8 @@ export function attackTarget(session, unitId, targetX, targetY) {
     const tile = tileAt(next, targetX, targetY);
     const dmg = estimateDamage(next, attacker, null, tile);
     tile.wallHp = Math.max(0, tile.wallHp - dmg);
+    addSpirit(next, tile.wallHp <= 0 ? 25 : 15);
+    pushFx(next, targetX, targetY, tile.wallHp <= 0 ? "破城!" : `-${dmg}`, tile.wallHp <= 0 ? "crit" : "dmg");
     if (tile.wallHp <= 0) {
       tile.terrain = "plain";
       next.wallsDestroyed += 1;
@@ -742,6 +967,8 @@ export function attackTarget(session, unitId, targetX, targetY) {
     const tile = tileAt(next, targetX, targetY);
     const dmg = attacker.canIgnite ? tile.depotHp : estimateDamage(next, attacker, null, tile);
     tile.depotHp = Math.max(0, tile.depotHp - dmg);
+    addSpirit(next, 25);
+    pushFx(next, targetX, targetY, tile.depotHp <= 0 ? "焚仓大溃!" : `-${dmg}`, "crit");
     if (tile.depotHp <= 0) {
       tile.terrain = "fire";
       tile.burnTurns = 2;
@@ -751,6 +978,8 @@ export function attackTarget(session, unitId, targetX, targetY) {
     }
   } else if (picked.kind === "forest") {
     igniteTile(next, targetX, targetY, true);
+    addSpirit(next, 15);
+    pushFx(next, targetX, targetY, "纵火🔥", "burn");
     pushLog(next, `🔥 ${attacker.name} 举火焚林 (${targetX + 1},${targetY + 1})，烟焰顺风而起！`);
     // 顺风蔓延相邻密林/粮仓
     const wx = targetX + next.wind.dx;
@@ -759,6 +988,7 @@ export function attackTarget(session, unitId, targetX, targetY) {
     if (wt && (wt.terrain === "forest" || wt.terrain === "depot")) {
       const wasDepot = wt.terrain === "depot";
       igniteTile(next, wx, wy, true);
+      pushFx(next, wx, wy, "顺风延烧🔥", "burn");
       if (wasDepot) triggerDepotDestroyed(next, "密林大火借风延烧至敌军粮仓");
     }
   }
@@ -858,6 +1088,8 @@ function runEnemyTurn(session) {
 export function endPlayerRound(session) {
   if (!session || session.done) return session;
   let next = structuredClone(session);
+  next.lastFx = [];
+  next.armedSkill = null;
   advanceFireAndSpread(next);
   applyFinalBattleStats(next);
   if (next.done) return next;
@@ -865,6 +1097,7 @@ export function endPlayerRound(session) {
   runEnemyTurn(next);
   next.turnSide = "player";
   next.round += 1;
+  addSpirit(next, 10);
   for (const u of next.units) {
     u.moved = false;
     u.acted = false;
@@ -872,7 +1105,7 @@ export function endPlayerRound(session) {
   }
   applyFinalBattleStats(next);
   if (!next.done) {
-    pushLog(next, `—— 第 ${next.round} / ${next.maxRounds} 回合 ——`);
+    pushLog(next, `—— 第 ${next.round} / ${next.maxRounds} 回合（战意 +10）——`);
   }
   return next;
 }
