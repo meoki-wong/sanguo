@@ -4384,3 +4384,98 @@ body[data-hud-mode="sovereign"] #feedback {
     bottom: 8.6rem;
   }
 }
+
+/* ==================== v24.1 H5 移动端超薄顶栏 & 全视野防遮挡优化 ==================== */
+@media (max-width: 960px) {
+  .topbar {
+    top: 0.25rem !important;
+    left: 0.3rem !important;
+    right: 0.3rem !important;
+    padding: 0.26rem 0.42rem !important;
+    gap: 0.18rem 0.3rem !important;
+    border-radius: 10px !important;
+  }
+  .topbar .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.32rem;
+    min-width: 0;
+  }
+  .topbar .brand-seal,
+  .topbar .brand-sub,
+  .topbar #scenario-note,
+  .topbar .brand p,
+  .topbar .brand small,
+  .topbar #hud-weather-btn {
+    display: none !important;
+  }
+  .topbar .brand h1 {
+    font-size: 0.88rem !important;
+    line-height: 1.15 !important;
+    margin: 0 !important;
+    white-space: nowrap;
+  }
+  .topbar #hud-rank-badge {
+    font-size: 0.66rem !important;
+    padding: 0.08rem 0.32rem !important;
+    max-width: 11.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .topbar .resources {
+    gap: 0.18rem !important;
+  }
+  .topbar .resources > div {
+    padding: 0.1rem 0.22rem !important;
+    gap: 0.16rem !important;
+  }
+  .topbar .resources dt { font-size: 0.62rem !important; }
+  .topbar .resources dd { font-size: 0.74rem !important; }
+  .topbar .res-delta { display: none !important; }
+  .topbar .turn-tools {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    scrollbar-width: none;
+    justify-content: flex-start !important;
+    align-items: center;
+    gap: 0.2rem !important;
+    padding-bottom: 1px;
+  }
+  .topbar .turn-tools::-webkit-scrollbar { display: none; }
+  .topbar .turn-date {
+    font-size: 0.68rem !important;
+    padding: 0.14rem 0.32rem !important;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+  .topbar .turn-tools button {
+    font-size: 0.68rem !important;
+    padding: 0.16rem 0.34rem !important;
+    min-height: 1.6rem !important;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+  .topbar .turn-tools #open-codex-dialog,
+  .topbar .turn-tools #open-menu {
+    padding-inline: 0.28rem !important;
+  }
+  .topbar .turn-tools #advance {
+    position: sticky;
+    right: 0;
+    z-index: 2;
+    margin-left: auto !important;
+    padding: 0.16rem 0.48rem !important;
+    box-shadow: -8px 0 12px rgba(20, 17, 13, 0.94);
+  }
+  .v24-filter-bar {
+    left: 0.35rem !important;
+    bottom: 7.5rem !important;
+    padding: 0.18rem 0.24rem !important;
+  }
+  .v24-filter-btn {
+    font-size: 0.66rem !important;
+    padding: 0.12rem 0.36rem !important;
+    min-height: 1.38rem !important;
+  }
+}

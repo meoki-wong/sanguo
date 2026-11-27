@@ -541,7 +541,34 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
   }
 
   function fittedMap(rect) {
-    const scale = Math.min(rect.width / field[0].span, rect.height / field[1].span);
+    let topInset = 0;
+    let bottomInset = 0;
+    if (typeof document !== "undefined" && rect.width <= 960) {
+      const topbar = document.querySelector(".topbar");
+      if (topbar) {
+        const tb = topbar.getBoundingClientRect();
+        if (tb.height > 0 && tb.bottom > rect.top) {
+          topInset = Math.min(rect.height * 0.32, Math.max(0, tb.bottom - rect.top) + 10);
+        }
+      }
+      const dock = document.querySelector("#sovereign-dock, .view-switcher");
+      if (dock) {
+        const db = dock.getBoundingClientRect();
+        if (db.height > 0 && db.top < rect.bottom) {
+          bottomInset = Math.min(rect.height * 0.34, Math.max(0, rect.bottom - db.top) + 46);
+        }
+      } else {
+        bottomInset = 110;
+      }
+    }
+    const availH = Math.max(160, rect.height - topInset - bottomInset);
+    const scale = Math.min(rect.width / field[0].span, availH / field[1].span);
+    if (rect.width <= 960) {
+      // H5 竖屏：将九州全图精准居中于「顶栏下方 ~ 底栏上方」的安全可见区，绝不被顶栏遮挡
+      const safeCenterY = topInset + availH * 0.48;
+      const top = safeCenterY - (height / 2) * scale;
+      return { scale, left: (rect.width - width * scale) / 2, top };
+    }
     const spaceBelow = Math.max(0, rect.height - field[1].span * scale) * .3;
     return { scale, left: (rect.width - width * scale) / 2, top: (rect.height - height * scale) / 2 - spaceBelow };
   }
