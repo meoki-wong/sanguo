@@ -445,7 +445,7 @@ export function executeSovereignReinforce(world, state, plan) {
  * Evaluates the optimal 1-click expedition plan from adjacent player cities to `targetCity`,
  * optionally locked to a specific battle tactic (`assault` | `siege` | `stratagem` | `rally`).
  */
-export function bestAttackPlan(world, state, plannedInput, targetCity, { tactic } = {}) {
+export function bestAttackPlan(world, state, plannedInput, targetCity, { tactic, fromCity } = {}) {
   if (gameOutcome(state) !== "ongoing") {
     return { ok: false, reason: "ended", message: "战局已决，无法继续用兵。" };
   }
@@ -469,7 +469,9 @@ export function bestAttackPlan(world, state, plannedInput, targetCity, { tactic 
   }
 
   const targetNode = world.cities.find(({ key }) => key === targetCity);
-  const neighbors = (targetNode?.links || []).filter((key) => planned.cities[key]?.owner === state.player);
+  const neighbors = fromCity
+    ? ((targetNode?.links || []).includes(fromCity) && planned.cities[fromCity]?.owner === state.player ? [fromCity] : [])
+    : (targetNode?.links || []).filter((key) => planned.cities[key]?.owner === state.player);
   if (!neighbors.length) {
     return {
       ok: false,

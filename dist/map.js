@@ -229,9 +229,16 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
   let battlePulses = [];
   let pulseFrame = 0;
   let lastAnimatedTurn = null;
+  let dragHandler = null;
+  let dragOrder = null;
+  let suppressClickUntil = 0;
 
   function toView([x, y]) {
     return [(x - camera.x) * camera.zoom + center[0], (y - camera.y) * camera.zoom + center[1]];
+  }
+
+  function viewToWorld([vx, vy]) {
+    return [(vx - center[0]) / camera.zoom + camera.x, (vy - center[1]) / camera.zoom + camera.y];
   }
 
   function restrictCamera() {
@@ -317,7 +324,27 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
         if (event.pointerType === "mouse") onHover?.({ type: "city", key: city.key, x: event.clientX, y: event.clientY });
       });
       token.addEventListener("pointerleave", () => onHover?.(null));
+      token.addEventListener("pointerdown", (event) => {
+        if (event.button && event.button !== 0) return;
+        if (historicalFrame || !mapState || !dragHandler) return;
+        if (mapState.cities[city.key]?.owner !== mapState.player) return;
+        dragOrder = {
+          pointerId: event.pointerId,
+          fromKey: city.key,
+          startX: event.clientX,
+          startY: event.clientY,
+          worldPt: city.position,
+          active: false,
+          snapKey: null,
+          preview: null,
+        };
+      });
       token.addEventListener("click", (event) => {
+        if (Date.now() < suppressClickUntil) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         onHover?.(null);
         if (!event.detail) {
           onCity(city.key);
@@ -1287,6 +1314,101 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     }
   }
 
+  function drawDragOrderOverlay(fit) {
+    if (!dragOrder?.active || !mapState) return;
+    const fromPos = cityPositions.get(dragOrder.fromKey);
+    const fromCity = world.cities.find((c) => c.key === dragOrder.fromKey);
+    if (!fromPos || !fromCity) return;
+    const z = camera.zoom;
+
+    // 标示相邻可出征 / 调兵城池光环
+    ctx.save();
+    for (const adjKey of fromCity.links || []) {
+      const ap = cityPositions.get(adjKey);
+      if (!ap) continue;
+      const isFriendly = mapState.cities[adjKey]?.owner === mapState.player;
+      const snapped = dragOrder.snapKey === adjKey;
+      ctx.beginPath();
+      ctx.arc(ap[0], ap[1], (snapped ? 15 : 11.5) / z, 0, Math.PI * 2);
+      ctx.setLineDash(snapped ? [] : [3 / z, 3 / z]);
+      ctx.strokeStyle = isFriendly
+        ? (snapped ? "#7ef5cf" : "rgba(110, 226, 192, 0.72)")
+        : (snapped ? "#ffd470" : "rgba(244, 120, 82, 0.78)");
+      ctx.lineWidth = (snapped ? 2.8 : 1.7) / z;
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    const endPos = dragOrder.worldPt || fromPos;
+    const distWorld = Math.hypot(endPos[0] - fromPos[0], endPos[1] - fromPos[1]);
+    if (distWorld > 2) {
+      const kind = dragOrder.preview?.kind;
+      const blocked = dragOrder.preview && dragOrder.preview.ok === false;
+      const color = !dragOrder.snapKey
+        ? "#e7d39b"
+        : blocked
+          ? "#a39179"
+          : kind === "transfer"
+            ? "#5ee0bc"
+            : "#f26b44";
+      const glow = !dragOrder.snapKey
+        ? "rgba(231, 211, 155, 0.35)"
+        : blocked
+          ? "rgba(163, 145, 121, 0.25)"
+          : kind === "transfer"
+            ? "rgba(94, 224, 188, 0.42)"
+            : "rgba(242, 107, 68, 0.46)";
+      const mx = (fromPos[0] + endPos[0]) * 0.5;
+      const my = (fromPos[1] + endPos[1]) * 0.5 - Math.min(28, distWorld * 0.22) / Math.max(1, z * 0.8);
+
+      ctx.beginPath();
+      ctx.moveTo(fromPos[0], fromPos[1]);
+      ctx.quadraticCurveTo(mx, my, endPos[0], endPos[1]);
+      ctx.strokeStyle = glow;
+      ctx.lineWidth = 7.2 / z;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(fromPos[0], fromPos[1]);
+      ctx.quadraticCurveTo(mx, my, endPos[0], endPos[1]);
+      if (!dragOrder.snapKey) ctx.setLineDash([5 / z, 4 / z]);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3.1 / z;
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const ang = Math.atan2(endPos[1] - my, endPos[0] - mx);
+      const head = 8.5 / z;
+      ctx.beginPath();
+      ctx.moveTo(endPos[0], endPos[1]);
+      ctx.lineTo(endPos[0] - head * Math.cos(ang - 0.44), endPos[1] - head * Math.sin(ang - 0.44));
+      ctx.lineTo(endPos[0] - head * Math.cos(ang + 0.44), endPos[1] - head * Math.sin(ang + 0.44));
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      // 悬浮军情提示条
+      const label = dragOrder.preview?.label || `从「${fromCity.name}」拖向相邻城池可出征 / 调兵`;
+      const fontSize = Math.max(7.2, 9.6 / z);
+      ctx.font = `700 ${fontSize}px sans-serif`;
+      const textW = ctx.measureText(label).width;
+      const boxW = textW + 12 / z;
+      const boxH = 16 / z;
+      const bx = clamp(mx, 40 / z, width - 40 / z);
+      const by = clamp(my - 14 / z, 18 / z, height - 18 / z);
+      ctx.fillStyle = "rgba(18, 15, 11, 0.92)";
+      ctx.fillRect(bx - boxW / 2, by - boxH / 2, boxW, boxH);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.1 / z;
+      ctx.strokeRect(bx - boxW / 2, by - boxH / 2, boxW, boxH);
+      ctx.fillStyle = "#fbf2de";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, bx, by + 0.4 / z);
+    }
+    ctx.restore();
+  }
+
   function draw() {
     if (!mapState) return;
     const rect = stage.getBoundingClientRect();
@@ -1353,6 +1475,7 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
       drawBattlePulses();
       drawEmperorSeal();
       drawSagaOverlays();
+      drawDragOrderOverlay(fit);
     }
     if (dynastyLayer && mapState.dynasty) drawDynasty(fit);
     if (reignMode && mapState.reign && !historicalFrame) drawReign(fit);
@@ -1600,6 +1723,55 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     cityTouch = event.pointerType === "touch" && event.target.closest(".city-pin")
       ? { x: event.clientX, y: event.clientY, time: event.timeStamp } : undefined;
   }, { capture: true });
+  window.addEventListener("pointermove", (event) => {
+    if (!dragOrder || event.pointerId !== dragOrder.pointerId) return;
+    const distPx = Math.hypot(event.clientX - dragOrder.startX, event.clientY - dragOrder.startY);
+    if (!dragOrder.active) {
+      if (distPx < 14) return;
+      dragOrder.active = true;
+      stage.dataset.cityDragging = "true";
+      onHover?.(null);
+    }
+    if (event.cancelable) event.preventDefault();
+    const rect = stage.getBoundingClientRect();
+    const fit = fittedMap(rect);
+    const viewPt = relativePoint(event);
+    const wp = viewToWorld(viewPt);
+    const fromCity = world.cities.find((c) => c.key === dragOrder.fromKey);
+    let bestAdj = null;
+    let bestDistPx = 44;
+    for (const adjKey of fromCity?.links || []) {
+      const ap = cityPositions.get(adjKey);
+      if (!ap) continue;
+      const av = toView(ap);
+      const pxDist = Math.hypot((av[0] - viewPt[0]) * fit.scale, (av[1] - viewPt[1]) * fit.scale);
+      if (pxDist <= bestDistPx) {
+        bestDistPx = pxDist;
+        bestAdj = adjKey;
+      }
+    }
+    if (bestAdj !== dragOrder.snapKey) {
+      dragOrder.snapKey = bestAdj;
+      dragOrder.preview = bestAdj ? dragHandler?.preview?.(dragOrder.fromKey, bestAdj) || null : null;
+    }
+    dragOrder.worldPt = dragOrder.snapKey ? cityPositions.get(dragOrder.snapKey) : wp;
+    draw();
+  }, { passive: false });
+  const finishCityDrag = (event) => {
+    if (!dragOrder || event.pointerId !== dragOrder.pointerId) return;
+    const finished = dragOrder;
+    dragOrder = null;
+    delete stage.dataset.cityDragging;
+    if (finished.active) {
+      suppressClickUntil = Date.now() + 280;
+      draw();
+      if (event.type === "pointerup" && finished.snapKey) {
+        dragHandler?.commit?.(finished.fromKey, finished.snapKey);
+      }
+    }
+  };
+  window.addEventListener("pointerup", finishCityDrag);
+  window.addEventListener("pointercancel", finishCityDrag);
   canvas.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
     cancelCameraAnimation();
@@ -1709,6 +1881,7 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
       draw();
     },
     setLayer(next) { switchLayer(next); draw(); },
+    setDragHandler(handler) { dragHandler = handler || null; },
     locate,
     showTrade(path, blocked) {
       trade = { path, blocked };

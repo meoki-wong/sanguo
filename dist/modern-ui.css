@@ -4439,33 +4439,34 @@ body[data-hud-mode="sovereign"] #feedback {
     scrollbar-width: none;
     justify-content: flex-start !important;
     align-items: center;
-    gap: 0.2rem !important;
+    gap: 0.12rem !important;
     padding-bottom: 1px;
   }
   .topbar .turn-tools::-webkit-scrollbar { display: none; }
   .topbar .turn-date {
-    font-size: 0.68rem !important;
-    padding: 0.14rem 0.32rem !important;
+    font-size: 0.62rem !important;
+    padding: 0.1rem 0.24rem !important;
     white-space: nowrap;
     flex: 0 0 auto;
   }
   .topbar .turn-tools button {
-    font-size: 0.68rem !important;
-    padding: 0.16rem 0.34rem !important;
-    min-height: 1.6rem !important;
+    font-size: 0.63rem !important;
+    padding: 0.13rem 0.25rem !important;
+    min-height: 1.52rem !important;
     white-space: nowrap;
     flex: 0 0 auto;
   }
   .topbar .turn-tools #open-codex-dialog,
+  .topbar .turn-tools #toggle-immersive,
   .topbar .turn-tools #open-menu {
-    padding-inline: 0.28rem !important;
+    padding-inline: 0.22rem !important;
   }
   .topbar .turn-tools #advance {
     position: sticky;
     right: 0;
     z-index: 2;
     margin-left: auto !important;
-    padding: 0.16rem 0.48rem !important;
+    padding: 0.14rem 0.42rem !important;
     box-shadow: -8px 0 12px rgba(20, 17, 13, 0.94);
   }
   .v24-filter-bar {
@@ -4477,5 +4478,377 @@ body[data-hud-mode="sovereign"] #feedback {
     font-size: 0.66rem !important;
     padding: 0.12rem 0.36rem !important;
     min-height: 1.38rem !important;
+  }
+}
+
+/* ===== v25.0 战场新生 · 拖拽拉线 + 7×5 战术棋盘 + 沉浸全屏 + 演义剧场 ===== */
+.city-pin {
+  touch-action: none;
+}
+
+.drama-entry-btn {
+  border-color: rgba(218, 174, 88, 0.52) !important;
+  color: #f6dfab !important;
+}
+
+.exit-immersive-btn {
+  position: fixed;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: 0.75rem;
+  z-index: 65;
+  padding: 0.42rem 0.92rem;
+  border-radius: 999px;
+  background: rgba(22, 18, 13, 0.92);
+  color: #f8e9c8;
+  border: 1px solid rgba(218, 174, 88, 0.78);
+  font-size: 0.84rem;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+}
+
+body[data-immersive="true"] .topbar,
+body[data-immersive="true"] #bottom-hud,
+body[data-immersive="true"] .v24-filter-bar,
+body[data-immersive="true"] #command-dock,
+body[data-immersive="true"] #view-switcher,
+body[data-immersive="true"] .left-rail-toggle,
+body[data-immersive="true"] #feedback {
+  display: none !important;
+}
+
+/* 7×5 战术棋盘 */
+.tb-dialog-content {
+  width: min(95vw, 680px);
+  max-height: 92dvh;
+  overflow-y: auto;
+}
+
+.tb-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.tb-grid-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0.55rem 0;
+}
+
+.tb-grid-board {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  padding: 7px;
+  border-radius: 10px;
+  background: rgba(16, 13, 9, 0.92);
+  border: 1px solid rgba(196, 158, 92, 0.36);
+  user-select: none;
+}
+
+.tb-cell {
+  position: relative;
+  min-height: 54px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 240, 210, 0.14);
+  background: rgba(78, 84, 56, 0.32);
+  color: #f5ebd7;
+  padding: 3px 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  transition: transform 110ms ease, border-color 110ms ease, box-shadow 110ms ease;
+  font: inherit;
+}
+
+.tb-cell:hover {
+  border-color: rgba(240, 200, 118, 0.65);
+}
+
+.tb-cell[data-terrain="forest"] {
+  background: rgba(34, 82, 52, 0.58);
+}
+
+.tb-cell[data-terrain="hill"] {
+  background: rgba(126, 94, 52, 0.54);
+}
+
+.tb-cell[data-terrain="ford"] {
+  background: rgba(36, 88, 110, 0.56);
+}
+
+.tb-cell[data-terrain="wall"] {
+  background: rgba(74, 65, 56, 0.88);
+  border-color: rgba(214, 198, 168, 0.42);
+}
+
+.tb-cell[data-terrain="depot"] {
+  background: rgba(112, 74, 22, 0.85);
+  border-color: rgba(246, 198, 84, 0.72);
+  box-shadow: inset 0 0 12px rgba(246, 190, 68, 0.25);
+}
+
+.tb-cell[data-terrain="fire"] {
+  background: rgba(182, 56, 24, 0.74);
+  border-color: rgba(255, 146, 72, 0.82);
+  box-shadow: inset 0 0 12px rgba(255, 118, 44, 0.45);
+}
+
+.tb-cell[data-reachable="true"] {
+  border-color: #62e0be;
+  box-shadow: inset 0 0 0 2px rgba(98, 224, 190, 0.55);
+}
+
+.tb-cell[data-attackable="true"] {
+  border-color: #ff704d;
+  box-shadow: inset 0 0 0 2px rgba(255, 112, 77, 0.72);
+}
+
+.tb-cell[data-selected="true"] {
+  border-color: #ffdc73;
+  box-shadow: 0 0 0 2px #ffdc73, 0 4px 12px rgba(0, 0, 0, 0.45);
+  transform: translateY(-1px);
+}
+
+.tb-terrain-tag {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  font-size: 0.64rem;
+  opacity: 0.88;
+  line-height: 1;
+}
+
+.tb-obj-hp {
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: #fce2a6;
+}
+
+.tb-unit-chip {
+  width: 92%;
+  padding: 2px 3px;
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  font-size: 0.7rem;
+  line-height: 1.1;
+}
+
+.tb-unit-chip[data-side="player"] {
+  background: rgba(26, 102, 86, 0.9);
+  border: 1px solid rgba(114, 232, 198, 0.65);
+}
+
+.tb-unit-chip[data-side="enemy"] {
+  background: rgba(136, 42, 34, 0.9);
+  border: 1px solid rgba(255, 142, 122, 0.65);
+}
+
+.tb-unit-chip[data-exhausted="true"] {
+  opacity: 0.62;
+}
+
+.tb-unit-top {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-weight: 700;
+}
+
+.tb-hp-bar {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.tb-hp-fill {
+  height: 100%;
+  background: #6ee7b7;
+}
+
+.tb-unit-chip[data-side="enemy"] .tb-hp-fill {
+  background: #f87171;
+}
+
+.tb-unit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.72rem;
+  border-radius: 8px;
+  background: rgba(28, 24, 18, 0.92);
+  border: 1px solid rgba(212, 174, 102, 0.28);
+  font-size: 0.82rem;
+  color: #ebdfc7;
+}
+
+/* 沉浸式演义剧场 */
+.drama-dialog-content {
+  width: min(94vw, 720px);
+  max-height: 92dvh;
+  overflow-y: auto;
+}
+
+.drama-catalog {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
+  gap: 0.7rem;
+  margin-top: 0.55rem;
+}
+
+.drama-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+  padding: 0.82rem 0.9rem;
+  border-radius: 10px;
+  background: rgba(29, 24, 18, 0.92);
+  border: 1px solid rgba(208, 170, 96, 0.34);
+}
+
+.drama-card[data-played="true"] {
+  opacity: 0.76;
+  border-style: dashed;
+}
+
+.drama-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.drama-card p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #d6c8b0;
+  line-height: 1.45;
+}
+
+.drama-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.95rem 1.05rem;
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(35, 27, 19, 0.96), rgba(20, 17, 13, 0.98));
+  border: 1px solid rgba(218, 174, 88, 0.44);
+}
+
+.drama-stage-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.drama-narration {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: #ebe0ca;
+}
+
+.drama-quote {
+  margin: 0;
+  padding: 0.65rem 0.85rem;
+  border-left: 3px solid #d9a74e;
+  background: rgba(217, 167, 78, 0.08);
+  border-radius: 0 8px 8px 0;
+  font-size: 0.94rem;
+  line-height: 1.55;
+  color: #f9e6be;
+}
+
+.drama-speaker {
+  display: inline-block;
+  font-weight: 700;
+  color: #f3c469;
+  margin-right: 0.35rem;
+}
+
+.drama-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.drama-option-btn {
+  text-align: left;
+  padding: 0.72rem 0.88rem;
+  border-radius: 9px;
+  background: rgba(42, 34, 24, 0.92);
+  border: 1px solid rgba(218, 174, 88, 0.38);
+  color: #f7ecd6;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+
+.drama-option-btn:hover {
+  border-color: #f3c469;
+  background: rgba(58, 46, 30, 0.96);
+}
+
+.drama-option-top {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 600;
+}
+
+.drama-option-hint {
+  font-size: 0.78rem;
+  color: #cbba9d;
+}
+
+.drama-finale {
+  padding: 0.85rem 0.95rem;
+  border-radius: 9px;
+  background: rgba(34, 86, 62, 0.25);
+  border: 1px solid rgba(102, 212, 162, 0.5);
+  color: #dff8eb;
+}
+
+.drama-history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  font-size: 0.78rem;
+  color: #bcae94;
+  border-top: 1px solid rgba(255, 240, 210, 0.12);
+  padding-top: 0.55rem;
+}
+
+@media (max-width: 960px) {
+  .tb-cell {
+    min-height: 41px;
+    padding: 2px 1px;
+  }
+  .tb-unit-chip {
+    font-size: 0.62rem;
+    padding: 1px 2px;
+  }
+  .tb-terrain-tag {
+    font-size: 0.56rem;
+  }
+  .drama-catalog {
+    grid-template-columns: 1fr;
   }
 }

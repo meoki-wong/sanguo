@@ -2,7 +2,7 @@ import {
   advanceQuarter, applyDelegationBudgetAdjustments, appoint, availableAttackers, cityIncome, cityName, cityReserve, createGame, decodeSave,
   delegateCities, delegateZones, delegationBudgetAdjustments, delegationPriorityLimit, delegationZones, describeOrder as describeTurnOrder,
   eraByYear, expeditionGrain, factionName, firstCity, forceTotals, forecastAttack, forecastDelegation, forecastDelegationBudgets,
-  forecastDelegationReserve, forecastDelegationZones, forecastFinance, forecastOrderSteps, gameOutcome, previewMilitaryOrders,
+  forecastDelegationReserve, forecastDelegationZones, forecastFinance, forecastOrderSteps, gameOutcome, previewMilitaryOrders, previewOrders,
   minimumMarch, occupationProgress, pendingExpedition, playableFactions, postingOf, projects, queueOrder, reassignOfficer, recruitment, replaceOrders, respondToTreaty,
   resumeNationalPolicy, seasonOrderLimit, seasons, sendTreatyOffer, setDelegationPriority, setDelegationReserve, setGovernance, setNationalPolicy, transferGrain, transferOfficer, transferRoutes, turnVersion,
 } from "./engine.js";
@@ -85,7 +85,7 @@ import { createCustomRulerGame, SANDBOX_HERO_POOL, sandboxHeroSummary } from "./
 import {
   canResearchTech, factionEliteUnit, getTechState, hasTech, researchTech, TECH_BRANCHES, TECH_TREE,
 } from "./tech.js";
-import { executeSovereignAttack } from "./sovereign.js";
+import { bestAttackPlan, executeSovereignAttack } from "./sovereign.js";
 import { activeSiegeOn, isSupplyCut } from "./supply.js";
 import { hasInsider, isFogOfWarEnabled, setFogOfWar } from "./espionage.js";
 import { isLifespanEnabled, performMentorship, setLifespanEnabled } from "./ai-persona.js";
@@ -120,6 +120,11 @@ import { craftSiegeEngine, engineInCity, SIEGE_ENGINES } from "./siege-engines.j
 import { issuePublicEdict, PUBLIC_EDICTS } from "./edicts.js";
 import { dispatchDisasterRelief, listActiveDisasters } from "./relief.js";
 import { archiveCurrentHistory, composeDynastyHistory, listArchivedHistories } from "./annals-book.js";
+import {
+  GRID_COLS, GRID_ROWS, TERRAIN_META, attackTarget, attackableTargets, autoResolveGridBattle,
+  createGridBattle, endPlayerRound, finalizeGridBattleModifiers, moveUnit, reachableTiles, tileAt, unitAt,
+} from "./tactical-grid.js";
+import { chooseDramaOption, currentDramaScene, listDramaPlays, startDramaPlay } from "./drama-theater.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -5283,63 +5288,25 @@ function openQuickSearchDialog() {
 let activeTacticalPlan = null;
 let activeTacticalSession = null;
 let activeTacticalOnDone = null;
+let activeDramaSession = null;
 
-function renderTacticalBattleDialog() {
-  const dlg = find("tactical-battle-dialog");
-  if (!dlg || !activeTacticalSession) return;
-  const ses = activeTacticalSession;
-  const phase = TACTICAL_PHASES[ses.phaseIndex] || TACTICAL_PHASES[TACTICAL_PHASES.length - 1];
-  find("tb-phase-tag").textContent = ses.done ? "三阵议定 · 决战令下" : phase.title;
-  find("tb-dialog-title").textContent = `${ses.fromName} ⚔ ${ses.toName} · 临阵军议`;
-  const projOff = Math.round(ses.baseOffense * ses.atkMult);
-  const projDef = Math.round(ses.baseDefense * ses.defMult);
-  find("tb-header-meta").textContent = `我军 ${ses.attackerName}（战力 ${projOff.toLocaleString()} · ×${ses.atkMult.toFixed(2)}） 对 敌军 ${ses.defenderName}（战力 ${projDef.toLocaleString()} · ×${ses.defMult.toFixed(2)}） · 预计战损 ×${ses.lossMult.toFixed(2)}`;
-
-  const grid = find("tb-orders-grid");
-  const commitBtn = find("tb-commit-btn");
-  const autoBtn = find("tb-auto-btn");
-  if (ses.done) {
-    const fin = finalizeTacticalModifiers(ses);
-    grid.replaceChildren(make("div", fin.summary, "v18-empty"));
-    if (commitBtn) commitBtn.hidden = false;
-    if (autoBtn) autoBtn.hidden = true;
-  } else {
-    const options = currentPhaseOrders(ses);
-    grid.replaceChildren(...options.map((ord) => {
-      const btn = make("button", undefined, "tb-order-card");
-      btn.type = "button";
-      const head = make("div", undefined, "tb-order-head");
-      head.append(make("strong", ord.name), make("span", `${ord.tag} · ${ord.rating}`, "memorial-tag"));
-      btn.append(head, make("p", ord.summary), make("div", ord.hint, "tb-order-hint"));
-      btn.addEventListener("click", () => {
-        sound?.play("order");
-        activeTacticalSession = resolveTacticalPhase(activeTacticalSession, ord.id);
-        renderTacticalBattleDialog();
-      });
-      return btn;
-    }));
-    if (commitBtn) commitBtn.hidden = true;
-    if (autoBtn) autoBtn.hidden = false;
-  }
-
-  const logEl = find("tb-log");
-  if (logEl) {
-    logEl.replaceChildren(
-      ...(ses.log.length ? ses.log.map((line) => make("div", line)) : [make("div", "请依天时、地利与敌我虚实，下达第一阵军令。")]),
-    );
-  }
+function setImmersiveMode(enabled) {
+  const on = Boolean(enabled);
+  document.body.dataset.immersive = on ? "true" : "false";
+  const btn = find("toggle-immersive");
+  if (btn) btn.setAttribute("aria-pressed", String(on));
+  const exitBtn = find("exit-immersive");
+  if (exitBtn) exitBtn.hidden = !on;
+  if (on) notify("已进入沉浸全屏看图（按 H 或 Esc 退出）");
+  requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
 }
 
-function openTacticalBattleDialog(plan, onCommitted) {
-  const dlg = find("tactical-battle-dialog");
-  if (!dlg || !plan?.ok) return;
+function buildLegacyFastSession(plan) {
   const currentEra = era();
   const targetHolding = state.cities[plan.to];
   const defender = targetHolding?.commander ? currentEra.officers.find((o) => o.key === targetHolding.commander) : null;
   const siege = activeSiegeOn(state, plan.to);
-  activeTacticalPlan = plan;
-  activeTacticalOnDone = onCommitted || null;
-  activeTacticalSession = createTacticalSession({
+  return createTacticalSession({
     fromName: cityName(world, plan.from),
     toName: cityName(world, plan.to),
     attackerName: plan.officer.name,
@@ -5356,7 +5323,290 @@ function openTacticalBattleDialog(plan, onCommitted) {
     baseOffense: plan.outcome?.offense ?? 10000,
     baseDefense: plan.outcome?.defense ?? 10000,
   });
+}
+
+function renderTacticalBattleDialog() {
+  const dlg = find("tactical-battle-dialog");
+  if (!dlg || !activeTacticalSession) return;
+  const ses = activeTacticalSession;
+  find("tb-phase-tag").textContent = ses.done
+    ? (ses.outcome === "victory" ? "沙盘凯旋 · 决战令下" : "沙盘激战 · 收兵定计")
+    : `第 ${ses.round} / ${ses.maxRounds} 回合 · ${ses.wind.short}`;
+  find("tb-dialog-title").textContent = `${ses.fromName} ⚔ ${ses.toName} · 7×5 临阵棋盘`;
+  const projOff = Math.round(ses.baseOffense * ses.atkMult);
+  const projDef = Math.round(ses.baseDefense * ses.defMult);
+  find("tb-header-meta").textContent = `我军 ${ses.attackerName}（战力 ${projOff.toLocaleString()} · ×${ses.atkMult.toFixed(2)}） 对 敌军 ${ses.defenderName}（战力 ${projDef.toLocaleString()} · ×${ses.defMult.toFixed(2)}） · 战损 ×${ses.lossMult.toFixed(2)} · 粮仓 ${ses.depotDestroyed ? "已焚毁🔥" : "完好🏮"}`;
+
+  let selected = ses.units.find((u) => u.id === ses.selectedUnitId && u.hp > 0 && u.side === "player");
+  if (!selected) {
+    selected = ses.units.find((u) => u.hp > 0 && u.side === "player" && (!u.moved || !u.acted))
+      || ses.units.find((u) => u.hp > 0 && u.side === "player")
+      || null;
+    ses.selectedUnitId = selected?.id || null;
+  }
+
+  const reachMap = new Map((selected && !ses.done ? reachableTiles(ses, selected.id) : []).map((t) => [`${t.x},${t.y}`, t]));
+  const attackMap = new Map((selected && !ses.done ? attackableTargets(ses, selected.id) : []).map((t) => [`${t.x},${t.y}`, t]));
+
+  const boardEl = find("tb-grid-board");
+  if (boardEl) {
+    const cells = [];
+    for (let y = 0; y < GRID_ROWS; y += 1) {
+      for (let x = 0; x < GRID_COLS; x += 1) {
+        const tile = tileAt(ses, x, y);
+        const tMeta = TERRAIN_META[tile.terrain] || TERRAIN_META.plain;
+        const occ = unitAt(ses, x, y);
+        const key = `${x},${y}`;
+        const canReach = reachMap.has(key);
+        const atkTarget = attackMap.get(key);
+
+        const cell = make("button", undefined, "tb-cell");
+        cell.type = "button";
+        cell.dataset.x = String(x);
+        cell.dataset.y = String(y);
+        cell.dataset.terrain = tile.terrain;
+        if (selected && selected.x === x && selected.y === y) cell.dataset.selected = "true";
+        if (canReach) cell.dataset.reachable = "true";
+        if (atkTarget) cell.dataset.attackable = "true";
+        cell.title = `${tMeta.name} (${x + 1},${y + 1})：${tMeta.summary}` + (atkTarget ? ` · 点击攻击（预计 ${atkTarget.previewDmg} 伤）` : "");
+
+        const tTag = make("span", tMeta.icon, "tb-terrain-tag");
+        cell.append(tTag);
+
+        if (occ) {
+          const chip = make("div", undefined, "tb-unit-chip");
+          chip.dataset.side = occ.side;
+          chip.dataset.exhausted = String(occ.side === "player" && occ.moved && occ.acted);
+          const top = make("div", `${occ.icon}${occ.shortName} ${occ.hp}`, "tb-unit-top");
+          const bar = make("div", undefined, "tb-hp-bar");
+          const fill = make("div", undefined, "tb-hp-fill");
+          fill.style.width = `${Math.max(4, Math.round((occ.hp / occ.maxHp) * 100))}%`;
+          bar.append(fill);
+          chip.append(top, bar);
+          cell.append(chip);
+        } else if (tile.terrain === "wall" && tile.wallHp > 0) {
+          cell.append(make("span", `墙${tile.wallHp}`, "tb-obj-hp"));
+        } else if (tile.terrain === "depot" && tile.depotHp > 0) {
+          cell.append(make("span", `仓${tile.depotHp}`, "tb-obj-hp"));
+        }
+
+        cell.addEventListener("click", () => {
+          if (ses.done) return;
+          if (atkTarget && selected) {
+            sound?.play("order");
+            activeTacticalSession = attackTarget(ses, selected.id, x, y);
+            const nextReady = activeTacticalSession.units.find((u) => u.side === "player" && u.hp > 0 && (!u.moved || !u.acted));
+            if (nextReady) activeTacticalSession.selectedUnitId = nextReady.id;
+            renderTacticalBattleDialog();
+            return;
+          }
+          if (canReach && selected) {
+            sound?.play("order");
+            activeTacticalSession = moveUnit(ses, selected.id, x, y);
+            renderTacticalBattleDialog();
+            return;
+          }
+          if (occ?.side === "player") {
+            ses.selectedUnitId = occ.id;
+            renderTacticalBattleDialog();
+          }
+        });
+        cells.push(cell);
+      }
+    }
+    boardEl.replaceChildren(...cells);
+  }
+
+  const unitBar = find("tb-unit-bar");
+  if (unitBar) {
+    if (ses.done) {
+      const fin = finalizeGridBattleModifiers(ses);
+      unitBar.textContent = fin.summary;
+    } else if (selected) {
+      const tile = tileAt(ses, selected.x, selected.y);
+      const tMeta = TERRAIN_META[tile.terrain];
+      const statusText = selected.acted ? "本轮已攻" : selected.moved ? "已移待攻" : "可移可攻";
+      unitBar.innerHTML = "";
+      unitBar.append(
+        make("span", `${selected.icon} ${selected.name}（HP ${selected.hp}/${selected.maxHp} · 移 ${selected.move} · 射 ${selected.range}${tile.terrain === "hill" ? "+1" : ""} · ${tMeta.name}）`),
+        make("span", `${statusText} · 🌬️ ${ses.wind.short}`, "memorial-tag"),
+      );
+    } else {
+      unitBar.textContent = "点击友方单位调遣：绿框移动 · 红框攻击/破墙/焚仓 · 火攻可顺风引燃密林与粮仓。";
+    }
+  }
+
+  const gridSummary = find("tb-orders-grid");
+  const commitBtn = find("tb-commit-btn");
+  const autoBtn = find("tb-auto-btn");
+  const endRoundBtn = find("tb-end-round-btn");
+  const skipBtn = find("tb-skip-fast-btn");
+  const anyReady = ses.units.some((u) => u.side === "player" && u.hp > 0 && (!u.moved || !u.acted));
+
+  if (ses.done) {
+    const fin = finalizeGridBattleModifiers(ses);
+    if (gridSummary) {
+      gridSummary.hidden = false;
+      gridSummary.replaceChildren(make("div", fin.summary, "v18-empty"));
+    }
+    if (commitBtn) commitBtn.hidden = false;
+    if (endRoundBtn) endRoundBtn.hidden = true;
+    if (autoBtn) autoBtn.hidden = true;
+    if (skipBtn) skipBtn.hidden = true;
+  } else {
+    if (gridSummary) gridSummary.hidden = true;
+    if (commitBtn) commitBtn.hidden = true;
+    if (endRoundBtn) {
+      endRoundBtn.hidden = false;
+      endRoundBtn.className = anyReady ? "quiet" : "primary";
+    }
+    if (autoBtn) autoBtn.hidden = false;
+    if (skipBtn) skipBtn.hidden = false;
+  }
+
+  const logEl = find("tb-log");
+  if (logEl) {
+    logEl.replaceChildren(
+      ...(ses.log.length ? ses.log.slice(-6).map((line) => make("div", line)) : [make("div", "点击我军单位调遣进击，焚毁右翼「粮仓」或全歼敌军即大捷！")]),
+    );
+  }
+}
+
+function openTacticalBattleDialog(plan, onCommitted) {
+  const dlg = find("tactical-battle-dialog");
+  if (!dlg || !plan?.ok) return;
+  const currentEra = era();
+  const targetHolding = state.cities[plan.to];
+  const defender = targetHolding?.commander ? currentEra.officers.find((o) => o.key === targetHolding.commander) : null;
+  const siege = activeSiegeOn(state, plan.to);
+  activeTacticalPlan = plan;
+  activeTacticalOnDone = onCommitted || null;
+  activeTacticalSession = createGridBattle({
+    fromName: cityName(world, plan.from),
+    toName: cityName(world, plan.to),
+    attackerName: plan.officer.name,
+    defenderName: defender?.name || "城防守军",
+    attacker: plan.officer,
+    defender,
+    attackerTroops: plan.troops,
+    defenderTroops: targetHolding?.troops ?? 3000,
+    terrain: plan.outcome?.terrainLabel?.includes("江") ? "river" : plan.outcome?.terrainLabel?.includes("关") ? "pass" : "land",
+    season: seasons[(state.turn ?? 0) % 4],
+    targetCut: isSupplyCut(state, plan.to),
+    siegeTurns: siege ? Math.max(1, (state.turn ?? 1) - (siege.sinceTurn ?? 1) + 1) : 0,
+    insiderActive: hasInsider(state, plan.to),
+    baseOffense: plan.outcome?.offense ?? 10000,
+    baseDefense: plan.outcome?.defense ?? 10000,
+  });
   renderTacticalBattleDialog();
+  if (!dlg.open) dlg.showModal();
+}
+
+function renderDramaTheaterDialog() {
+  const body = find("drama-body");
+  if (!body || !state) return;
+
+  if (!activeDramaSession) {
+    find("drama-badge-tag").textContent = "v25.0 演义剧场 · 八幕经典多分支抉择";
+    find("drama-dialog-title").textContent = "三国演义交互剧场";
+    const plays = listDramaPlays(state);
+    const wrap = make("div", undefined, "drama-catalog");
+    for (const play of plays) {
+      const card = make("div", undefined, "drama-card");
+      card.dataset.played = String(play.played);
+      const head = make("div", undefined, "drama-card-head");
+      head.append(make("span", play.played ? "✓ 已演毕" : play.badge, "memorial-tag"), make("small", play.cast, "muted"));
+      const btn = make("button", play.played ? "重温此幕" : "开演抉择", play.played ? "quiet" : "primary");
+      btn.type = "button";
+      btn.addEventListener("click", () => {
+        sound?.play("event");
+        activeDramaSession = startDramaPlay(play.id);
+        renderDramaTheaterDialog();
+      });
+      card.append(head, make("strong", play.title), make("p", play.summary), btn);
+      wrap.append(card);
+    }
+    body.replaceChildren(wrap);
+    return;
+  }
+
+  const ses = activeDramaSession;
+  find("drama-badge-tag").textContent = ses.done ? "剧终落幕 · 载入青史" : `第 ${ses.step} / ${ses.totalSteps} 幕`;
+  find("drama-dialog-title").textContent = ses.title;
+
+  const stageEl = make("div", undefined, "drama-stage");
+  const metaRow = make("div", undefined, "drama-stage-meta");
+  const backBtn = make("button", "← 返回剧目单", "quiet");
+  backBtn.type = "button";
+  backBtn.addEventListener("click", () => {
+    activeDramaSession = null;
+    renderDramaTheaterDialog();
+  });
+
+  if (ses.done) {
+    metaRow.append(make("span", "演义终章", "memorial-tag"), backBtn);
+    const finale = make("div", undefined, "drama-finale");
+    finale.append(make("strong", "名戏落幕 · 天下反响："), make("p", ses.resultSummary || "已记入史官本纪。"));
+    const hist = make("div", undefined, "drama-history");
+    for (const h of ses.history) hist.append(make("div", `• ${h}`));
+    const replayOutroBtn = make("button", "赏阅其余演义名剧", "primary");
+    replayOutroBtn.type = "button";
+    replayOutroBtn.addEventListener("click", () => {
+      activeDramaSession = null;
+      renderDramaTheaterDialog();
+    });
+    stageEl.append(metaRow, finale, hist, replayOutroBtn);
+    body.replaceChildren(stageEl);
+    return;
+  }
+
+  const scene = currentDramaScene(ses);
+  if (!scene) {
+    activeDramaSession = null;
+    renderDramaTheaterDialog();
+    return;
+  }
+  metaRow.append(make("span", `${scene.actLabel} · ${scene.speaker}（${scene.mood}）`, "memorial-tag"), backBtn);
+
+  const narr = make("p", scene.narration, "drama-narration");
+  const quote = make("blockquote", undefined, "drama-quote");
+  quote.append(make("span", `${scene.speaker}：`, "drama-speaker"), document.createTextNode(scene.dialogue));
+
+  const optsWrap = make("div", undefined, "drama-options");
+  for (const opt of scene.options) {
+    const btn = make("button", undefined, "drama-option-btn");
+    btn.type = "button";
+    const top = make("div", undefined, "drama-option-top");
+    top.append(make("span", opt.style, "memorial-tag"), make("span", opt.label));
+    btn.append(top, make("div", opt.hint, "drama-option-hint"));
+    btn.addEventListener("click", () => {
+      const res = chooseDramaOption(state, activeDramaSession, opt.id);
+      activeDramaSession = res.session;
+      if (res.completed && res.state !== state) {
+        sound?.play("event");
+        mutate(() => res.state, `演义剧场「${activeDramaSession.title}」：${activeDramaSession.resultSummary}`);
+      } else {
+        sound?.play("order");
+      }
+      renderDramaTheaterDialog();
+    });
+    optsWrap.append(btn);
+  }
+
+  stageEl.append(metaRow, narr, quote, optsWrap);
+  if (ses.history.length) {
+    const hist = make("div", undefined, "drama-history");
+    for (const h of ses.history) hist.append(make("div", `• ${h}`));
+    stageEl.append(hist);
+  }
+  body.replaceChildren(stageEl);
+}
+
+function openDramaTheaterDialog(playId = null) {
+  const dlg = find("drama-theater-dialog");
+  if (!dlg || !state) return;
+  activeDramaSession = playId ? startDramaPlay(playId) : null;
+  renderDramaTheaterDialog();
   if (!dlg.open) dlg.showModal();
 }
 
@@ -6613,17 +6863,26 @@ function wireControls() {
       render();
     });
   });
-  // v21.0 + v23.0 端游级全快捷键（W 军机处 / E 朝堂 / C 群雄谱 / T 兵技 / G 智能推演 / "/" 九州秒搜）
+  find("open-drama-theater")?.addEventListener("click", () => openDramaTheaterDialog());
+  find("toggle-immersive")?.addEventListener("click", () => setImmersiveMode(document.body.dataset.immersive !== "true"));
+  find("exit-immersive")?.addEventListener("click", () => setImmersiveMode(false));
+  // v21.0 + v23.0 + v25.0 端游级全快捷键（W 军机处 / E 朝堂 / C 群雄谱 / T 兵技 / D 演义 / H 全屏 / G 推演 / "/" 九州秒搜）
   document.addEventListener("keydown", (ev) => {
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
     const tag = (ev.target?.tagName || "").toLowerCase();
     if (tag === "input" || tag === "textarea" || tag === "select" || ev.target?.isContentEditable) return;
+    if (ev.key === "Escape" && document.body.dataset.immersive === "true") {
+      setImmersiveMode(false);
+      return;
+    }
     if (!state?.century) return;
     const k = ev.key.toLowerCase();
     if (k === "w") { ev.preventDefault(); openWarRoomDialog("advisor"); }
     else if (k === "e") { ev.preventDefault(); openEmpireDialog("ceremony"); }
     else if (k === "c") { ev.preventDefault(); openCodexDialog(); }
     else if (k === "t") { ev.preventDefault(); openTechDialog(); }
+    else if (k === "d") { ev.preventDefault(); openDramaTheaterDialog(); }
+    else if (k === "h") { ev.preventDefault(); setImmersiveMode(document.body.dataset.immersive !== "true"); }
     else if (k === "g") { ev.preventDefault(); runSmartAutoSim(4); }
     else if (k === "/") { ev.preventDefault(); openQuickSearchDialog(); }
   });
@@ -6714,10 +6973,32 @@ function wireControls() {
       notify(err.message, true);
     }
   });
+  find("tb-end-round-btn")?.addEventListener("click", () => {
+    if (!activeTacticalSession || activeTacticalSession.done) return;
+    sound?.play("turn");
+    activeTacticalSession = endPlayerRound(activeTacticalSession);
+    renderTacticalBattleDialog();
+  });
   find("tb-auto-btn")?.addEventListener("click", () => {
     if (!activeTacticalSession) return;
-    activeTacticalSession = autoResolveTacticalSession(activeTacticalSession);
+    sound?.play("order");
+    activeTacticalSession = autoResolveGridBattle(activeTacticalSession);
     renderTacticalBattleDialog();
+  });
+  find("tb-skip-fast-btn")?.addEventListener("click", () => {
+    if (!activeTacticalPlan) return;
+    const fastFin = finalizeTacticalModifiers(autoResolveTacticalSession(buildLegacyFastSession(activeTacticalPlan)));
+    const enrichedPlan = { ...activeTacticalPlan, tactical: fastFin };
+    const dlg = find("tactical-battle-dialog");
+    if (dlg?.open) dlg.close();
+    sound?.play("march");
+    mutate(
+      () => executeSovereignAttack(world, state, enrichedPlan),
+      `快速出征：命${enrichedPlan.officer.name}自${cityName(world, enrichedPlan.from)}攻打${cityName(world, enrichedPlan.to)}（${fastFin.summary}）`,
+    );
+    activeTacticalOnDone?.();
+    activeTacticalPlan = null;
+    activeTacticalSession = null;
   });
   find("tb-cancel-btn")?.addEventListener("click", () => {
     find("tactical-battle-dialog")?.close();
@@ -6726,14 +7007,14 @@ function wireControls() {
   });
   find("tb-commit-btn")?.addEventListener("click", () => {
     if (!activeTacticalPlan || !activeTacticalSession) return;
-    const fin = finalizeTacticalModifiers(activeTacticalSession);
+    const fin = finalizeGridBattleModifiers(activeTacticalSession);
     const enrichedPlan = { ...activeTacticalPlan, tactical: fin };
     const dlg = find("tactical-battle-dialog");
     if (dlg?.open) dlg.close();
     sound?.play("march");
     mutate(
       () => executeSovereignAttack(world, state, enrichedPlan),
-      `临阵定计出征：命${enrichedPlan.officer.name}自${cityName(world, enrichedPlan.from)}攻打${cityName(world, enrichedPlan.to)}（${fin.summary}）`,
+      `棋盘克敌出征：命${enrichedPlan.officer.name}自${cityName(world, enrichedPlan.from)}攻打${cityName(world, enrichedPlan.to)}（${fin.summary}）`,
     );
     activeTacticalOnDone?.();
     activeTacticalPlan = null;
@@ -7700,6 +7981,72 @@ async function start() {
     if (row) strategyDesk.open("fronts", row.id);
     else highCommandDesk.open(undefined, id);
   }, (key) => dynastyDesk.open("supply", key), (info) => uxHud?.showHover(info));
+  map.setDragHandler({
+    preview(fromKey, toKey) {
+      if (!state || gameOutcome(state) !== "ongoing") return { ok: false, label: "战局已决" };
+      const toCity = state.cities[toKey];
+      const toName = cityName(world, toKey);
+      if (!toCity) return { ok: false, label: "目标城池不可达" };
+      if (toCity.owner === state.player) {
+        const planned = previewOrders(world, state);
+        const origin = planned.cities[fromKey];
+        const maxSend = Math.min((origin?.troops ?? 0) - cityReserve, Math.floor((planned.factions[state.player]?.grain ?? 0) * 100));
+        if (maxSend < minimumMarch) return { kind: "transfer", ok: false, label: `兵粮不足调往「${toName}」` };
+        const send = Math.max(minimumMarch, Math.min(maxSend, Math.round(((origin.troops - cityReserve) * 0.5) / 50) * 50));
+        return { kind: "transfer", ok: true, troops: send, label: `⇄ 调兵援「${toName}」(${formatted.format(send)} 兵)` };
+      }
+      const plan = bestAttackPlan(world, state, null, toKey, { fromCity: fromKey });
+      if (!plan.ok) return { kind: "attack", ok: false, label: plan.message.slice(0, 28) };
+      const tag = plan.outcome?.wins ? "胜面占优" : "硬仗强攻";
+      return {
+        kind: "attack",
+        ok: true,
+        plan,
+        label: `⚔ 攻「${toName}」· ${plan.officer.name} (${formatted.format(plan.troops)}兵·${tag})`,
+      };
+    },
+    commit(fromKey, toKey) {
+      if (!state || gameOutcome(state) !== "ongoing") return;
+      const toCity = state.cities[toKey];
+      const toName = cityName(world, toKey);
+      if (!toCity) return;
+      if (toCity.owner === state.player) {
+        const planned = previewOrders(world, state);
+        const origin = planned.cities[fromKey];
+        const maxSend = Math.min((origin?.troops ?? 0) - cityReserve, Math.floor((planned.factions[state.player]?.grain ?? 0) * 100));
+        if (maxSend < minimumMarch) {
+          notify(`从「${cityName(world, fromKey)}」调兵前往「${toName}」失败：兵力或储粮不足。`, true);
+          return;
+        }
+        const send = Math.max(minimumMarch, Math.min(maxSend, Math.round(((origin.troops - cityReserve) * 0.5) / 50) * 50));
+        try {
+          sound?.play("march");
+          mutate(
+            () => queueOrder(world, state, { type: "transfer", from: fromKey, to: toKey, troops: send }),
+            `拖拽调兵：${cityName(world, fromKey)} → ${toName}（${formatted.format(send)} 兵）`,
+          );
+        } catch (err) {
+          notify(err.message, true);
+        }
+        return;
+      }
+      const plan = bestAttackPlan(world, state, null, toKey, { fromCity: fromKey });
+      if (!plan.ok) {
+        notify(plan.message, true);
+        return;
+      }
+      const useManual = Boolean(state.century && state.saga?.options?.manualBattle !== false);
+      if (useManual) {
+        openTacticalBattleDialog(plan, () => render());
+      } else {
+        sound?.play("march");
+        mutate(
+          () => executeSovereignAttack(world, state, plan),
+          `拖拽出征：${plan.officer.name} 自「${cityName(world, fromKey)}」攻打「${toName}」`,
+        );
+      }
+    },
+  });
   frontlineDesk = createFrontlineDesk(world, {
     snapshot: () => ({ state, era: era() }),
     commit: (next, message) => mutate(() => next, message),

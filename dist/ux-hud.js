@@ -43,6 +43,7 @@ import {
 import { personaForFaction } from "./ai-persona.js";
 import { collectWarRoomItems } from "./war-room.js";
 import { evaluateChallengeProgress } from "./challenges.js";
+import { unplayedDramaCount } from "./drama-theater.js";
 import { getCeremonyState } from "./dynasty-ceremony.js";
 import { executeCoordinatedAttack, findCoordinatedAttackPlan } from "./multi-siege.js";
 import { inciteCityDefection } from "./upheaval.js";
@@ -356,6 +357,14 @@ export function createUxHud(world, api) {
     }
     const achBtn = $("open-achievements-dialog");
     if (achBtn) achBtn.hidden = !state.century;
+    const dramaBtn = $("open-drama-theater");
+    if (dramaBtn) {
+      dramaBtn.hidden = !state.century;
+      if (state.century) {
+        const unplayed = unplayedDramaCount(state);
+        dramaBtn.textContent = unplayed > 0 ? `演义 ${unplayed}` : "演义剧场";
+      }
+    }
     syncModeToggleLabel();
     const tDelta = $("treasury-delta");
     const gDelta = $("grain-delta");

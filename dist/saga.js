@@ -83,6 +83,7 @@ export function createSagaState(world, era, state, { historicalEvents = true } =
     duelWins: 0,
     rules: {},
     custom: null,
+    dramasPlayed: [],
     annals: [],
   };
 }
@@ -514,6 +515,7 @@ export function validSaga(world, state, officers) {
   if (s.duelWins !== undefined && !nonneg(s.duelWins)) return false;
   if (s.rules !== undefined && !plain(s.rules)) return false;
   if (s.custom !== undefined && s.custom !== null && (!plain(s.custom) || typeof s.custom.rulerName !== "string")) return false;
+  if (s.dramasPlayed !== undefined && (!Array.isArray(s.dramasPlayed) || s.dramasPlayed.length > 16 || !s.dramasPlayed.every((d) => typeof d === "string"))) return false;
   if (!Array.isArray(s.annals) || s.annals.length > MAX_ANNALS) return false;
   return true;
 }

@@ -49,11 +49,12 @@
       <button type="button" class="quiet" id="open-chronicle">奏报</button>
       <button type="button" class="quiet" id="open-war-room" hidden>军机处</button>
       <button type="button" class="quiet" id="open-empire-dialog" hidden>朝堂</button>
-      <button type="button" class="quiet" id="open-codex-dialog" hidden>群雄谱</button>
-      <button type="button" class="quiet" id="open-tech-dialog" hidden>兵技</button>
+      <button type="button" class="quiet drama-entry-btn" id="open-drama-theater" hidden title="沉浸式演义多分支剧场 (快捷键 D)">演义剧场</button>
       <div class="hud-more-wrap">
-        <button type="button" class="quiet" id="toggle-hud-more" aria-expanded="false" title="展开更多典籍、音律与视图工具">更多 ▾</button>
+        <button type="button" class="quiet" id="toggle-hud-more" aria-expanded="false" title="展开群雄谱、兵技、典籍与音律">更多 ▾</button>
         <div class="hud-more-menu" id="hud-more-menu" hidden>
+          <button type="button" class="quiet" id="open-codex-dialog" hidden>群雄谱 (C)</button>
+          <button type="button" class="quiet" id="open-tech-dialog" hidden>兵技 (T)</button>
           <button type="button" class="quiet" id="open-saga-chronicle" hidden>本纪</button>
           <button type="button" class="quiet" id="open-achievements-dialog" hidden>勋鉴</button>
           <button type="button" class="quiet hud-mode-toggle" id="toggle-hud-mode" aria-pressed="false" title="切换君主大势模式 / 幕府详图微操模式">幕府详图</button>
@@ -64,12 +65,14 @@
           <button type="button" class="quiet" id="open-quick-search" hidden>🔍 九州秒搜 (/)</button>
         </div>
       </div>
+      <button type="button" class="quiet" id="toggle-immersive" aria-pressed="false" title="一键沉浸全屏看图 (快捷键 H)">全屏</button>
       <button type="button" class="quiet" id="open-menu">菜单</button>
       <button type="button" class="turn-orders" id="turn-orders" aria-haspopup="true">政令 <span id="turn-order-count">0</span></button>
       <button type="button" class="primary" id="advance" disabled title="推进一季 (快捷键 Space)">推进一季</button>
       <button type="button" id="advance-year" title="连续推进最多四季（遇急报自动暂停）" hidden>四季</button>
     </div>
   </header>
+  <button type="button" id="exit-immersive" class="exit-immersive-btn" hidden title="退出全屏看图 (H / Esc)">✕ 退出全屏看图</button>
 
   <p id="feedback" class="feedback" role="status" hidden></p>
   <p id="boot" role="status">正在载入山河舆图…</p>
@@ -2633,18 +2636,39 @@
     <div class="dialog-content tb-dialog-content">
       <div class="dialog-heading">
         <div>
-          <span class="memorial-tag" id="tb-phase-tag">第一阵 · 接战破阵</span>
-          <h2 id="tb-dialog-title">临阵三回合军议</h2>
+          <span class="memorial-tag" id="tb-phase-tag">第 1 / 6 回合</span>
+          <h2 id="tb-dialog-title">临阵棋盘推演</h2>
         </div>
-        <button type="button" class="quiet" id="tb-auto-btn">一键委任速战</button>
+        <div class="tb-heading-actions">
+          <button type="button" class="quiet" id="tb-auto-btn">一键自动推演</button>
+          <button type="button" class="quiet" id="tb-skip-fast-btn" title="略过棋盘微操直接按军势速算">直接速战</button>
+        </div>
       </div>
       <div id="tb-header-meta" class="tb-header-meta"></div>
-      <div id="tb-orders-grid" class="tb-orders-grid"></div>
+      <div id="tb-grid-wrap" class="tb-grid-wrap">
+        <div id="tb-grid-board" class="tb-grid-board" role="grid" aria-label="7×5 战术棋盘"></div>
+        <div id="tb-unit-bar" class="tb-unit-bar"></div>
+      </div>
+      <div id="tb-orders-grid" class="tb-orders-grid" hidden></div>
       <div id="tb-log" class="tb-log"></div>
       <div class="dialog-actions">
         <button type="button" class="quiet" id="tb-cancel-btn">取消出征</button>
-        <button type="button" class="primary" id="tb-commit-btn" hidden>依此军令下达出征！</button>
+        <button type="button" class="quiet" id="tb-end-round-btn">结束本回合</button>
+        <button type="button" class="primary" id="tb-commit-btn" hidden>依此战果下达出征！</button>
       </div>
+    </div>
+  </dialog>
+
+  <dialog id="drama-theater-dialog" aria-labelledby="drama-dialog-title">
+    <div class="dialog-content drama-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag" id="drama-badge-tag">v25.0 演义剧场 · 多分支抉择</span>
+          <h2 id="drama-dialog-title">三国演义交互剧场</h2>
+        </div>
+        <button type="button" class="quiet" data-close="drama-theater-dialog">返回</button>
+      </div>
+      <div id="drama-body" class="drama-body"></div>
     </div>
   </dialog>
 
@@ -2757,6 +2781,7 @@
       </div>
       <ul class="shortcut-list">
         <li><span>搜索并定位城池</span><kbd>/</kbd></li>
+        <li><span>演义剧场 / 全屏看图</span><span><kbd>D</kbd> / <kbd>H</kbd></span></li>
         <li><span>推进一季</span><kbd>Space</kbd></li>
         <li><span>切换己方城池（上一城 / 下一城）</span><span><kbd>[</kbd> / <kbd>]</kbd></span></li>
         <li><span>城池面板切换（内政 / 出征 / 调兵 / 官吏）</span><span><kbd>G</kbd> <kbd>A</kbd> <kbd>T</kbd> <kbd>O</kbd></span></li>
