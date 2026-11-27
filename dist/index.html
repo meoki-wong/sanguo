@@ -61,6 +61,7 @@
           <button type="button" class="quiet" id="toggle-sound" aria-label="切换音效" title="切换古风音效">🔊 音效</button>
           <button type="button" class="quiet" id="open-poster-dialog" hidden>战报海报</button>
           <button type="button" class="quiet" id="toggle-auto-sim" hidden>⏩ 智能推演 (G)</button>
+          <button type="button" class="quiet" id="open-quick-search" hidden>🔍 九州秒搜 (/)</button>
         </div>
       </div>
       <button type="button" class="quiet" id="open-menu">菜单</button>
@@ -2661,11 +2662,15 @@
         <button type="button" class="quiet emp-tab" data-emp-group="military" data-emp-tab="corps" aria-selected="false" hidden>大军团</button>
         <button type="button" class="quiet emp-tab" data-emp-group="military" data-emp-tab="formations" aria-selected="false" hidden>阵法演武</button>
         <button type="button" class="quiet emp-tab" data-emp-group="military" data-emp-tab="navy" aria-selected="false" hidden>长江水师</button>
+        <button type="button" class="quiet emp-tab" data-emp-group="military" data-emp-tab="scrolls" aria-selected="false" hidden>三十六计</button>
         <button type="button" class="quiet emp-tab" data-emp-group="external" data-emp-tab="tribes" aria-selected="false" hidden>边疆五族</button>
         <button type="button" class="quiet emp-tab" data-emp-group="external" data-emp-tab="commerce" aria-selected="false" hidden>商贸黑市</button>
+        <button type="button" class="quiet emp-tab" data-emp-group="external" data-emp-tab="vassals" aria-selected="false" hidden>册封附庸</button>
         <button type="button" class="quiet emp-tab" data-emp-group="saga" data-emp-tab="adventures" aria-selected="false" hidden>九州奇闻</button>
+        <button type="button" class="quiet emp-tab" data-emp-group="saga" data-emp-tab="destiny" aria-selected="false" hidden>名将宿命</button>
         <button type="button" class="quiet emp-tab" data-emp-group="saga" data-emp-tab="relations" aria-selected="false" hidden>结义联姻</button>
         <button type="button" class="quiet emp-tab" data-emp-group="saga" data-emp-tab="challenges" aria-selected="false" hidden>名战残局</button>
+        <button type="button" class="quiet emp-tab" data-emp-group="saga" data-emp-tab="trials" aria-selected="false" hidden>天命试炼</button>
       </div>
       <div id="emp-body" class="emp-body"></div>
     </div>
@@ -2715,6 +2720,20 @@
         <button type="button" class="quiet" data-close="poster-dialog">关闭</button>
         <a id="poster-download-link" class="primary poster-dl-btn" download="jinglue-sanguo-poster.png">下载高清 PNG 海报</a>
       </div>
+    </div>
+  </dialog>
+
+  <dialog id="quick-search-dialog" aria-labelledby="qs-title">
+    <div class="dialog-content qs-dialog-content">
+      <div class="dialog-heading">
+        <div>
+          <span class="memorial-tag">v23.0 九州秒搜 · 快捷键 /</span>
+          <h2 id="qs-title">秒搜城池与天下名将</h2>
+        </div>
+        <button type="button" class="quiet" data-close="quick-search-dialog">返回</button>
+      </div>
+      <input type="search" id="qs-input" class="qs-input" placeholder="输入城池名、名将名或特产名（如：洛阳、关羽、汗血）…" autocomplete="off">
+      <div id="qs-results" class="qs-results"></div>
     </div>
   </dialog>
 

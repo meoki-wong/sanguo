@@ -46,6 +46,7 @@ import { evaluateChallengeProgress } from "./challenges.js";
 import { getCeremonyState } from "./dynasty-ceremony.js";
 import { executeCoordinatedAttack, findCoordinatedAttackPlan } from "./multi-siege.js";
 import { inciteCityDefection } from "./upheaval.js";
+import { citySpecialty } from "./specialties.js";
 
 const fmt = new Intl.NumberFormat("zh-CN");
 const signed = (n) => (n > 0 ? "+" : "") + fmt.format(n);
@@ -343,6 +344,8 @@ export function createUxHud(world, api) {
     if (posterBtn) posterBtn.hidden = !state.century;
     const autoSimBtn = $("toggle-auto-sim");
     if (autoSimBtn) autoSimBtn.hidden = !state.century;
+    const qsBtn = $("open-quick-search");
+    if (qsBtn) qsBtn.hidden = !state.century;
     const techBtn = $("open-tech-dialog");
     if (techBtn) {
       techBtn.hidden = !state.century;
@@ -1294,7 +1297,9 @@ export function createUxHud(world, api) {
     const prov = historicalProvince(city.key, city.region);
     $("sov-city-head")?.style.setProperty("--city-accent", forceColor(holding.owner));
     if ($("sov-city-region")) {
-      $("sov-city-region").textContent = han.active && han.cityKey === key ? `${prov} · ${han.name}驻跸` : prov;
+      const sp = state.century ? citySpecialty(key) : null;
+      const baseReg = han.active && han.cityKey === key ? `${prov} · ${han.name}驻跸` : prov;
+      $("sov-city-region").textContent = sp ? `${baseReg} · ${sp.icon}${sp.name}` : baseReg;
     }
     if ($("sov-city-owner")) {
       const ownerName = factionName(era, holding.owner);

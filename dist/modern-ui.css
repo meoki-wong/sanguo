@@ -4275,3 +4275,66 @@ body[data-hud-mode="sovereign"] #feedback {
     align-items: stretch;
   }
 }
+
+/* ==================== v23.0 九州秒搜 & 沙盒弹窗底部常驻抛光 ==================== */
+#sandbox-dialog {
+  max-height: min(88vh, 820px);
+}
+#sandbox-dialog .sb-dialog-content {
+  max-height: min(86vh, 800px);
+  overflow-y: auto;
+}
+#sandbox-dialog .dialog-actions {
+  position: sticky;
+  bottom: 0;
+  background: rgba(22, 18, 14, 0.96);
+  padding: 0.55rem 0 0.2rem;
+  border-top: 1px solid rgba(228, 190, 116, 0.2);
+}
+#quick-search-dialog {
+  width: min(560px, calc(100vw - 1.25rem));
+  max-width: calc(100vw - 1.25rem);
+  padding: 0;
+  box-sizing: border-box;
+}
+.qs-dialog-content {
+  width: 100%;
+  box-sizing: border-box;
+  display: grid;
+  gap: 0.55rem;
+}
+.qs-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.55rem 0.72rem;
+  font-size: 0.9rem;
+  border-radius: var(--radius-sm);
+  background: rgba(16, 13, 10, 0.92);
+  color: #f6e7c6;
+  border: 1px solid rgba(228, 190, 116, 0.36);
+}
+.qs-results {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 48vh;
+  overflow-y: auto;
+}
+.qs-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.48rem 0.65rem;
+  border-radius: var(--radius-sm);
+  background: rgba(30, 25, 19, 0.9);
+  border: 1px solid rgba(228, 190, 116, 0.2);
+  color: #f4e6c5;
+  cursor: pointer;
+}
+.qs-item:hover {
+  border-color: var(--gold);
+  background: rgba(62, 48, 28, 0.9);
+}
+.qs-item small { color: var(--muted); font-size: 0.72rem; }

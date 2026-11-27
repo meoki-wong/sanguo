@@ -20,6 +20,8 @@ import { evaluateChallengeProgress } from "./challenges.js";
 import { clearCoordinatedTargets } from "./multi-siege.js";
 import { spawnAdventures } from "./adventures.js";
 import { settleUpheavalTurn } from "./upheaval.js";
+import { settleVassalsTurn } from "./vassals.js";
+import { specialtyEconomyModifiers } from "./specialties.js";
 import { quarterlyTechPoints, techEconomyModifiers, techStratagemModifiers } from "./tech.js";
 
 export const MAX_CAPTIVES = 6;
@@ -447,8 +449,13 @@ export function settleSagaQuarter(world, era, state) {
     const commRes = settleCommerceTurn(reformRes.state);
     const advState = spawnAdventures(world, commRes.state);
     const uphRes = settleUpheavalTurn(world, era, advState);
-    clearCoordinatedTargets(uphRes.state);
-    const snapState = recordHistorySnapshot(uphRes.state);
+    const vasRes = settleVassalsTurn(uphRes.state);
+    const spTp = specialtyEconomyModifiers(vasRes.state, vasRes.state.player).tpBonus;
+    if (spTp > 0 && vasRes.state.saga?.tech) {
+      vasRes.state.saga.tech.points = (vasRes.state.saga.tech.points ?? 0) + spTp;
+    }
+    clearCoordinatedTargets(vasRes.state);
+    const snapState = recordHistorySnapshot(vasRes.state);
     state.cities = snapState.cities;
     state.factions = snapState.factions;
     if (snapState.recruitedOfficers) state.recruitedOfficers = snapState.recruitedOfficers;
@@ -458,7 +465,7 @@ export function settleSagaQuarter(world, era, state) {
       state.saga.challenge.status = chProg.status;
       state.saga.challenge.medal = chProg.medal;
     }
-    const v18Notes = [...supRes.notes, ...bldRes.notes, ...lifeRes.notes, ...corpsRes.notes, ...tribeRes.notes, ...reformRes.notes, ...commRes.notes, ...uphRes.notes];
+    const v18Notes = [...supRes.notes, ...bldRes.notes, ...lifeRes.notes, ...corpsRes.notes, ...tribeRes.notes, ...reformRes.notes, ...commRes.notes, ...uphRes.notes, ...vasRes.notes];
     for (const note of v18Notes.slice(0, 4)) {
       if (Array.isArray(state.saga?.annals)) {
         state.saga.annals.push({ turn: state.turn, year: state.year + Math.floor((state.turn - 1) / 4), title: "军略奏报", text: note, kind: "war" });

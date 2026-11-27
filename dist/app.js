@@ -110,6 +110,11 @@ import { listActiveAdventures, spawnAdventures, visitAdventure } from "./adventu
 import { AUTO_SIM_PRESETS, shouldPauseAutoSim } from "./auto-sim.js";
 import { claimRoadmapReward, evaluateRoadmap } from "./roadmap.js";
 import { computeCampaignLedger, deleteSaveSlot, listSaveSlots, loadFromSlot, saveToSlot } from "./save-slots.js";
+import { annexVassal, demandVassalage, listVassals } from "./vassals.js";
+import { activeSpecialtiesFor, citySpecialty } from "./specialties.js";
+import { castStratagemScroll, STRATAGEM_SCROLLS } from "./stratagem-scrolls.js";
+import { awakenHeroDestiny, evaluateDestinies } from "./destiny.js";
+import { dailyTrialSeed, previewTrialBySeed, startTrialGame } from "./trials.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -4213,9 +4218,9 @@ const EMPIRE_GROUP_DEFAULT_TAB = {
 };
 const EMPIRE_TAB_TO_GROUP = {
   ceremony: "domestic", reforms: "domestic", court: "domestic",
-  corps: "military", formations: "military", navy: "military",
-  tribes: "external", commerce: "external",
-  adventures: "saga", relations: "saga", challenges: "saga",
+  corps: "military", formations: "military", navy: "military", scrolls: "military",
+  tribes: "external", commerce: "external", vassals: "external",
+  adventures: "saga", destiny: "saga", relations: "saga", challenges: "saga", trials: "saga",
 };
 
 function renderEmpireDialog() {
@@ -4426,6 +4431,169 @@ function renderEmpireDialog() {
       }
     }
     body.replaceChildren(grid);
+    return;
+  }
+
+  // 0b-4. 三十六计战略锦囊
+  if (empireTab === "scrolls") {
+    const enemyCities = Object.entries(state.cities).filter(([, c]) => c.owner !== player).map(([k]) => k);
+    const bar = make("div", undefined, "emp-form-row");
+    const eSel = make("select");
+    for (const ek of enemyCities.slice(0, 20)) eSel.append(new Option(`${cityName(world, ek)}（${factionName(currentEra, state.cities[ek].owner)}）`, ek));
+    const oSel = make("select");
+    for (const mk of myCities) oSel.append(new Option(cityName(world, mk), mk));
+    const l1 = make("label"); l1.append(make("span", "敌城目标（围魏/连环）"), eSel);
+    const l2 = make("label"); l2.append(make("span", "己城目标（空城计）"), oSel);
+    bar.append(l1, l2);
+
+    const grid = make("div", undefined, "emp-grid");
+    for (const sc of STRATAGEM_SCROLLS) {
+      const card = make("div", undefined, "emp-card");
+      card.append(make("strong", `${sc.icon} ${sc.name}`), make("p", sc.summary));
+      const btn = make("button", `施展锦囊（${sc.costTp}TP · ${sc.costTreasury}金）`, "primary");
+      btn.type = "button";
+      btn.addEventListener("click", () => {
+        const tgt = sc.targetKind === "own_city" ? oSel.value : eSel.value;
+        const res = castStratagemScroll(world, currentEra, state, sc.id, { targetCityKey: tgt });
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play("event");
+        mutate(() => res.state, res.summary);
+        renderEmpireDialog();
+      });
+      card.append(btn);
+      grid.append(card);
+    }
+    body.replaceChildren(bar, grid);
+    return;
+  }
+
+  // 0b-5. 册封附庸 & 和平削藩
+  if (empireTab === "vassals") {
+    const vassals = listVassals(state);
+    const form = make("div", undefined, "emp-form-row");
+    const fSel = make("select");
+    for (const ef of enemyFactions) {
+      const cCnt = Object.values(state.cities).filter((c) => c.owner === ef.key).length;
+      fSel.append(new Option(`${ef.name}（${cCnt}城）`, ef.key));
+    }
+    const lF = make("label"); lF.append(make("span", "遣使逼降诸侯（≤5城）"), fSel);
+    const dBtn = make("button", "册封附庸（50金）", "primary");
+    dBtn.type = "button";
+    dBtn.disabled = !fSel.value;
+    dBtn.addEventListener("click", () => {
+      const res = demandVassalage(world, currentEra, state, fSel.value);
+      if (!res.ok) { notify(res.reason, true); return; }
+      sound?.play("victory");
+      mutate(() => res.state, res.summary);
+      renderEmpireDialog();
+    });
+    form.append(lF, dBtn);
+
+    const spList = activeSpecialtiesFor(state, player);
+    const spBanner = make("div", spList.length
+      ? `【我朝掌控名城特产（${spList.length}/12）】${spList.map((s) => `${s.icon}${s.name}`).join(" · ")}`
+      : "【名城特产】夺取洛阳、长安、成都、建业、武威、襄阳等 12 座九州名城可激活专属全势力特产光环！", "advisor-speech");
+
+    const grid = make("div", undefined, "emp-grid");
+    if (!vassals.length) {
+      grid.append(make("div", "尚无称臣附庸国。削弱周边诸侯至 5 城以内即可逼其纳贡称臣，满 2 季后可和平削藩。", "v18-empty"));
+    } else {
+      for (const v of vassals) {
+        const card = make("div", undefined, "emp-card");
+        const cCnt = Object.values(state.cities).filter((c) => c.owner === v.faction).length;
+        card.append(make("strong", `${v.name}（附庸 · ${cCnt}城）`), make("p", `每季上贡金 +${cCnt * 14}、粮 +${cCnt * 18}。`));
+        const aBtn = make("button", "和平削藩归附（70金）", "primary");
+        aBtn.type = "button";
+        aBtn.addEventListener("click", () => {
+          const res = annexVassal(world, currentEra, state, v.faction);
+          if (!res.ok) { notify(res.reason, true); return; }
+          sound?.play("victory");
+          mutate(() => res.state, res.summary);
+          renderEmpireDialog();
+        });
+        card.append(aBtn);
+        grid.append(card);
+      }
+    }
+    body.replaceChildren(spBanner, form, grid);
+    return;
+  }
+
+  // 0b-6. 12 大顶级名将宿命与史诗觉醒
+  if (empireTab === "destiny") {
+    const list = evaluateDestinies(currentEra, state);
+    const grid = make("div", undefined, "emp-grid");
+    if (!list.length) {
+      grid.append(make("div", "当前阵营麾下暂无宿命觉醒名将（可招募曹操、刘备、孙权、诸葛亮、关羽、周瑜、吕布、司马懿等 12 位名将触发）。", "v18-empty"));
+    } else {
+      for (const d of list) {
+        const card = make("div", undefined, "emp-card");
+        card.append(
+          make("strong", `${d.heroName} · 「${d.title}」${d.awakened ? ` · ✦ ${d.awakenTitle}` : ""}`),
+          make("p", `宿命目标：${d.goalText}`),
+        );
+        const btn = make("button", d.awakened ? "✓ 已史诗觉醒（攻+14%·损-12%）" : d.canAwaken ? "✦ 触发史诗觉醒！" : "尚未达成", d.canAwaken ? "primary" : "quiet");
+        btn.type = "button";
+        btn.disabled = !d.canAwaken;
+        btn.addEventListener("click", () => {
+          const res = awakenHeroDestiny(currentEra, state, d.id);
+          if (!res.ok) { notify(res.reason, true); return; }
+          sound?.play("victory");
+          mutate(() => res.state, res.summary);
+          renderEmpireDialog();
+        });
+        card.append(btn);
+        grid.append(card);
+      }
+    }
+    body.replaceChildren(grid);
+    return;
+  }
+
+  // 0b-7. 天命试炼随机词条种子局
+  if (empireTab === "trials") {
+    const seedIn = make("input");
+    seedIn.type = "text";
+    seedIn.maxLength = 20;
+    seedIn.value = state.saga?.trial?.seed || dailyTrialSeed();
+    const previewBox = make("div", undefined, "emp-grid");
+
+    const drawPreview = () => {
+      const spec = previewTrialBySeed(world, seedIn.value);
+      const head = make("div", undefined, "emp-card");
+      head.append(
+        make("strong", `试炼种子：${spec.seed} · ${spec.year}年 ${spec.eraTitle} · ${spec.factionName}`),
+        make("p", "本局将同时激活以下 3 条天地法则词条："),
+      );
+      const cards = spec.modifiers.map((m) => {
+        const c = make("div", undefined, "emp-card");
+        c.append(make("strong", `${m.icon} ${m.name}`), make("p", m.summary));
+        return c;
+      });
+      previewBox.replaceChildren(head, ...cards);
+    };
+    drawPreview();
+
+    const form = make("div", undefined, "emp-form-row");
+    const lS = make("label"); lS.append(make("span", "试炼种子（每日自动更新，可自拟）"), seedIn);
+    const rBtn = make("button", "随机换种", "quiet");
+    rBtn.type = "button";
+    rBtn.addEventListener("click", () => {
+      seedIn.value = `TRIAL-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+      drawPreview();
+    });
+    const goBtn = make("button", "开启天命试炼局！", "primary");
+    goBtn.type = "button";
+    goBtn.addEventListener("click", () => {
+      const { state: tState, spec } = startTrialGame(world, seedIn.value);
+      replaceGame(tState);
+      dlg.close();
+      sound?.play("victory");
+      notify(`已开启天命试炼「${spec.seed}」（${spec.year}年 · ${spec.factionName}）！`);
+    });
+    seedIn.addEventListener("input", drawPreview);
+    form.append(lS, rBtn, goBtn);
+    body.replaceChildren(form, previewBox);
     return;
   }
 
@@ -4888,6 +5056,67 @@ function openPosterDialog() {
     link.download = `jinglue-sanguo-${data.titleName}-v20.png`;
   }
   if (!dlg.open) dlg.showModal();
+}
+
+function renderQuickSearchResults() {
+  const box = find("qs-results");
+  const input = find("qs-input");
+  if (!box || !state) return;
+  const q = String(input?.value || "").trim().toLowerCase();
+  const currentEra = era();
+  const results = [];
+
+  for (const c of world.cities || []) {
+    const holding = state.cities?.[c.key];
+    if (!holding) continue;
+    const sp = citySpecialty(c.key);
+    const ownerName = factionName(currentEra, holding.owner);
+    const hit = !q || c.name.toLowerCase().includes(q) || ownerName.toLowerCase().includes(q) || (sp && sp.name.toLowerCase().includes(q));
+    if (hit) {
+      results.push({
+        label: `🏯 ${c.name}${sp ? ` · ${sp.icon}${sp.name}` : ""}`,
+        sub: `${ownerName} · ${holding.troops.toLocaleString()}兵`,
+        cityKey: c.key,
+      });
+    }
+  }
+  if (q) {
+    for (const o of [...currentEra.officers, ...(state.recruitedOfficers || [])]) {
+      if (!o.name.toLowerCase().includes(q)) continue;
+      const st = state.stations?.[o.key];
+      if (!st || !state.cities?.[st]) continue;
+      results.push({
+        label: `👤 ${o.name}（统${o.command ?? 70}）`,
+        sub: `${factionName(currentEra, o.faction)} · 驻${cityName(world, st)}`,
+        cityKey: st,
+      });
+    }
+  }
+
+  if (!results.length) {
+    box.replaceChildren(make("div", "未找到匹配的城池、特产或名将。", "v18-empty"));
+    return;
+  }
+  box.replaceChildren(...results.slice(0, 16).map((item) => {
+    const btn = make("button", undefined, "qs-item");
+    btn.type = "button";
+    btn.append(make("span", item.label), make("small", item.sub));
+    btn.addEventListener("click", () => {
+      find("quick-search-dialog")?.close();
+      selectMapCity(item.cityKey, true);
+    });
+    return btn;
+  }));
+}
+
+function openQuickSearchDialog() {
+  const dlg = find("quick-search-dialog");
+  const input = find("qs-input");
+  if (!dlg || !state) return;
+  if (input) input.value = "";
+  renderQuickSearchResults();
+  if (!dlg.open) dlg.showModal();
+  setTimeout(() => input?.focus(), 30);
 }
 
 let activeTacticalPlan = null;
@@ -6209,7 +6438,12 @@ function wireControls() {
     const m = find("hud-more-menu"); if (m) m.hidden = true;
     runSmartAutoSim(4);
   });
-  // v21.0 端游级全快捷键（W 军机处 / E 朝堂 / C 群雄谱 / T 兵技 / G 智能推演）
+  find("open-quick-search")?.addEventListener("click", () => {
+    const m = find("hud-more-menu"); if (m) m.hidden = true;
+    openQuickSearchDialog();
+  });
+  find("qs-input")?.addEventListener("input", renderQuickSearchResults);
+  // v21.0 + v23.0 端游级全快捷键（W 军机处 / E 朝堂 / C 群雄谱 / T 兵技 / G 智能推演 / "/" 九州秒搜）
   document.addEventListener("keydown", (ev) => {
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
     const tag = (ev.target?.tagName || "").toLowerCase();
@@ -6221,6 +6455,7 @@ function wireControls() {
     else if (k === "c") { ev.preventDefault(); openCodexDialog(); }
     else if (k === "t") { ev.preventDefault(); openTechDialog(); }
     else if (k === "g") { ev.preventDefault(); runSmartAutoSim(4); }
+    else if (k === "/") { ev.preventDefault(); openQuickSearchDialog(); }
   });
   find("codex-open-poster")?.addEventListener("click", () => {
     find("codex-dialog")?.close();
