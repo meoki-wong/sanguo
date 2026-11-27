@@ -42,7 +42,7 @@ function restore(state, selected = "luoyang") {
 }
 
 test("all opening factions share the same 44 cities and an old midsession save upgrades without losing data", () => {
-  assert.deepEqual(world.scenarios.map(({ year }) => year).sort(), [184, 190, 199, 208, 219, 234, 251, 262, 265]);
+  assert.deepEqual(world.scenarios.map(({ year }) => year).sort((a, b) => a - b), [184, 190, 194, 199, 208, 219, 225, 234, 251, 262, 265]);
   for (const era of world.scenarios) for (const { key } of playableFactions(era)) {
     const state = createGame(world, era.year, key, { realm: true });
     assert.equal(Object.keys(state.realm.cities).length, 44);

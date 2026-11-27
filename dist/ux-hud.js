@@ -45,6 +45,7 @@ import { collectWarRoomItems } from "./war-room.js";
 import { evaluateChallengeProgress } from "./challenges.js";
 import { getCeremonyState } from "./dynasty-ceremony.js";
 import { executeCoordinatedAttack, findCoordinatedAttackPlan } from "./multi-siege.js";
+import { inciteCityDefection } from "./upheaval.js";
 
 const fmt = new Intl.NumberFormat("zh-CN");
 const signed = (n) => (n > 0 ? "+" : "") + fmt.format(n);
@@ -1513,6 +1514,21 @@ export function createUxHud(world, api) {
               renderSovereignCityCard();
             });
             opsBar.append(eBtn);
+          }
+          // v22.0 高声望「招降纳叛」献城策反
+          if ((state.saga?.reputation ?? 50) >= 65) {
+            const defBtn = el("button", "仁威招降（60金）", "quiet");
+            defBtn.type = "button";
+            defBtn.title = "声望 ≥ 72 时可联络城内降将献城或引发大批倒戈";
+            defBtn.addEventListener("click", () => {
+              const cur = api.snapshot().state;
+              const res = inciteCityDefection(world, cur, key);
+              if (!res.ok) { api.notify?.(res.reason, true); return; }
+              api.sound?.play(res.captured ? "victory" : "alert");
+              api.commitState(() => res.state, res.summary);
+              renderSovereignCityCard();
+            });
+            opsBar.append(defBtn);
           }
           box.append(opsBar);
 

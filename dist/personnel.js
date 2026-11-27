@@ -1,6 +1,7 @@
 import { redCliffScenario } from "./scenario208.js";
 import { grandScenarios } from "./grand-scenarios.js";
 import { heroesAssemblyScenario } from "./scenario251.js";
+import { scenario194Xuzhou, scenario225Nanzhong } from "./scenarios-v22.js";
 
 // The starting roster and ratings are gameplay data for each scenario.
 const early = {
@@ -96,6 +97,9 @@ export function enrichWorld(world) {
   if (earlier && !scenarios.some(({ year }) => year === 208)) scenarios.push(redCliffScenario(world, earlier));
   if (earlier) scenarios.push(...grandScenarios(world, earlier).filter(({ year }) => !scenarios.some((era) => era.year === year)));
   if (earlier && !scenarios.some(({ year }) => year === 251)) scenarios.push(heroesAssemblyScenario(world, earlier));
+  if (earlier && !scenarios.some(({ year }) => year === 194)) scenarios.push(scenario194Xuzhou(world, earlier));
+  const era234 = scenarios.find(({ year }) => year === 234);
+  if (era234 && !scenarios.some(({ year }) => year === 225)) scenarios.push(scenario225Nanzhong(world, era234));
   return {
     ...world,
     scenarios: scenarios.map((era) => {

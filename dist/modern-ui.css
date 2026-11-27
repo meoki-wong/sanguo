@@ -4214,3 +4214,64 @@ body[data-hud-mode="sovereign"] #feedback {
   font-size: 0.82rem;
   color: #f6e7c6;
 }
+
+/* ==================== v22.0 万象归元 · 朝堂四大分组 / 霸业路线 / 多槽位存档 ==================== */
+.emp-group-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.35rem;
+  margin: 0.5rem 0 0.4rem;
+}
+.emp-group-btn {
+  position: relative;
+  font-weight: 600;
+  justify-content: center;
+}
+.emp-group-btn[aria-selected="true"] {
+  background: rgba(188, 142, 62, 0.32);
+  border-color: var(--gold);
+  color: var(--gold-bright);
+}
+.emp-dot {
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: #ef5a47;
+  margin-left: 0.3rem;
+  vertical-align: middle;
+}
+.emp-sub-tabs {
+  margin-top: 0 !important;
+  padding-top: 0.25rem;
+  border-top: 1px solid rgba(228, 190, 116, 0.14);
+}
+.emp-sub-tabs [hidden] {
+  display: none !important;
+}
+.rm-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  padding: 0.62rem 0.78rem;
+  border-radius: var(--radius-md);
+  background: rgba(28, 23, 18, 0.9);
+  border: 1px solid rgba(228, 190, 116, 0.22);
+}
+.rm-card[data-status="claimable"] {
+  border-color: var(--gold);
+  background: rgba(68, 52, 24, 0.75);
+}
+.rm-card[data-status="claimed"] {
+  opacity: 0.72;
+}
+@media (max-width: 540px) {
+  .emp-group-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rm-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

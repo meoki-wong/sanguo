@@ -108,6 +108,8 @@ import { FORMATION_CATALOG, getActiveFormation, getOfficerSpecialties, GRADE_LAB
 import { COURT_FACTIONS, currentCourtDebate, getCourtFactionsState, resolveCourtDebate } from "./court-factions.js";
 import { listActiveAdventures, spawnAdventures, visitAdventure } from "./adventures.js";
 import { AUTO_SIM_PRESETS, shouldPauseAutoSim } from "./auto-sim.js";
+import { claimRoadmapReward, evaluateRoadmap } from "./roadmap.js";
+import { computeCampaignLedger, deleteSaveSlot, listSaveSlots, loadFromSlot, saveToSlot } from "./save-slots.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -3983,9 +3985,89 @@ function renderWarRoomDialog() {
     const active = btn.dataset.wrTab === warRoomTab;
     btn.setAttribute("aria-selected", String(active));
   }
-  for (const id of ["advisor", "briefing", "trends", "mentorship", "rules"]) {
+  for (const id of ["advisor", "roadmap", "briefing", "trends", "mentorship", "saves", "rules"]) {
     const panel = find(`wr-panel-${id}`);
     if (panel) panel.hidden = warRoomTab !== id;
+  }
+
+  // 0.5 霸业路线图（四阶段国策引导与阶梯赏赐）
+  const rmEl = find("wr-panel-roadmap");
+  if (rmEl) {
+    const stages = evaluateRoadmap(state);
+    rmEl.replaceChildren(...stages.map((s) => {
+      const card = make("div", undefined, "rm-card");
+      card.dataset.status = s.claimed ? "claimed" : s.claimable ? "claimable" : "pending";
+      const body = make("div", undefined, "wr-item-body");
+      body.append(make("strong", s.title), make("p", `目标：${s.goalText}`), make("p", s.rewardText));
+      const btn = make("button", s.claimed ? "✓ 已领赏" : s.claimable ? "领取阶段赏赐" : "尚未达成", s.claimable ? "primary" : "quiet");
+      btn.type = "button";
+      btn.disabled = !s.claimable;
+      btn.addEventListener("click", () => {
+        const res = claimRoadmapReward(state, s.id);
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play("victory");
+        mutate(() => res.state, res.summary);
+        renderWarRoomDialog();
+      });
+      card.append(body, btn);
+      return card;
+    }));
+  }
+
+  // 0.6 5 槽位可视化存档管理 & 全军 MVP 总账
+  const savesEl = find("wr-panel-saves");
+  if (savesEl) {
+    const ledger = computeCampaignLedger(currentEra, state);
+    const mvpCard = make("div", undefined, "emp-card");
+    mvpCard.append(
+      make("strong", `本局战绩总账 · 全军 MVP：${ledger.mvp.name}`),
+      make("p", `辖城 ${ledger.ownedCount} 城 · 总兵力 ${ledger.totalTroops.toLocaleString()} · 设施 ${ledger.totalBuildings} 处 · 奇观 ${ledger.wondersCount} 座 · 大军团 ${ledger.corpsCount} 支 · 单挑 ${ledger.duelWins} 胜`),
+    );
+    const slotList = listSaveSlots();
+    const grid = make("div", undefined, "emp-grid");
+    for (const sl of slotList) {
+      const card = make("div", undefined, "emp-card");
+      card.append(
+        make("strong", sl.empty ? `槽位 ${sl.index}（空）` : `槽位 ${sl.index} · ${sl.label}`),
+        make("p", sl.empty ? "点击「保存至此」记录当前战局" : `${sl.cities} 城 · ${sl.troops.toLocaleString()} 兵 · 保存于 ${sl.savedAt}`),
+      );
+      const acts = make("div", undefined, "emp-card-actions");
+      const svBtn = make("button", sl.empty ? "保存至此" : "覆盖保存", "primary");
+      svBtn.type = "button";
+      svBtn.addEventListener("click", () => {
+        const res = saveToSlot(sl.id, { world, era: currentEra, state, selected });
+        sound?.play("order");
+        notify(res.summary);
+        renderWarRoomDialog();
+      });
+      acts.append(svBtn);
+      if (!sl.empty) {
+        const ldBtn = make("button", "读取", "quiet");
+        ldBtn.type = "button";
+        ldBtn.addEventListener("click", () => {
+          try {
+            const res = loadFromSlot(world, sl.id);
+            if (!res.ok) { notify(res.reason, true); return; }
+            replaceGame(res.state, res.selected);
+            dlg.close();
+            sound?.play("event");
+            notify(`已读取存档「${res.label}」！`);
+          } catch (err) {
+            notify(err.message, true);
+          }
+        });
+        const rmBtn = make("button", "删档", "quiet");
+        rmBtn.type = "button";
+        rmBtn.addEventListener("click", () => {
+          deleteSaveSlot(sl.id);
+          renderWarRoomDialog();
+        });
+        acts.append(ldBtn, rmBtn);
+      }
+      card.append(acts);
+      grid.append(card);
+    }
+    savesEl.replaceChildren(mvpCard, grid);
   }
 
   // 0. 首席军师三策献言
@@ -4122,6 +4204,19 @@ function openWarRoomDialog(tab = "advisor") {
 }
 
 let empireTab = "ceremony";
+let empireGroup = "domestic";
+const EMPIRE_GROUP_DEFAULT_TAB = {
+  domestic: "ceremony",
+  military: "corps",
+  external: "tribes",
+  saga: "adventures",
+};
+const EMPIRE_TAB_TO_GROUP = {
+  ceremony: "domestic", reforms: "domestic", court: "domestic",
+  corps: "military", formations: "military", navy: "military",
+  tribes: "external", commerce: "external",
+  adventures: "saga", relations: "saga", challenges: "saga",
+};
 
 function renderEmpireDialog() {
   const dlg = find("empire-dialog");
@@ -4129,7 +4224,25 @@ function renderEmpireDialog() {
   if (!dlg || !body || !state?.century) return;
   const currentEra = era();
   const player = state.player;
+  empireGroup = EMPIRE_TAB_TO_GROUP[empireTab] || empireGroup;
+
+  // 同步四大分组高亮与待办红点
+  const hasCoronation = Boolean(nextAvailableTier(state)?.eligible);
+  const hasAdventures = listActiveAdventures(state).length > 0;
+  for (const gBtn of dlg.querySelectorAll(".emp-group-btn")) {
+    const g = gBtn.dataset.empGroup;
+    gBtn.setAttribute("aria-selected", String(g === empireGroup));
+    const showDot = (g === "domestic" && hasCoronation) || (g === "saga" && hasAdventures);
+    let dot = gBtn.querySelector(".emp-dot");
+    if (showDot && !dot) {
+      dot = make("span", "", "emp-dot");
+      gBtn.append(dot);
+    } else if (!showDot && dot) {
+      dot.remove();
+    }
+  }
   for (const btn of dlg.querySelectorAll(".emp-tab")) {
+    btn.hidden = btn.dataset.empGroup !== empireGroup;
     btn.setAttribute("aria-selected", String(btn.dataset.empTab === empireTab));
   }
 
@@ -6132,6 +6245,14 @@ function wireControls() {
       }
     });
   }
+  find("empire-dialog")?.querySelectorAll(".emp-group-btn").forEach((gBtn) => {
+    gBtn.addEventListener("click", () => {
+      const g = gBtn.dataset.empGroup || "domestic";
+      empireGroup = g;
+      empireTab = EMPIRE_GROUP_DEFAULT_TAB[g] || "ceremony";
+      renderEmpireDialog();
+    });
+  });
   find("empire-dialog")?.querySelectorAll(".emp-tab").forEach((btn) => {
     btn.addEventListener("click", () => {
       empireTab = btn.dataset.empTab || "corps";

@@ -968,6 +968,23 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
         ctx.textBaseline = "middle";
         ctx.fillText("奇", p[0] - 9 / z, p[1] - 8.6 / z);
       }
+      // v22.0 沙盘实景交战火花 & 易帜光波扩散（高亮最近一季交战热点城池）
+      const recentTurn = mapState.history?.at?.(-1);
+      if (recentTurn && Array.isArray(recentTurn.entries)) {
+        const nowPulse = (Date.now() % 1800) / 1800;
+        for (const entry of recentTurn.entries) {
+          if (entry.type !== "battle" || !entry.city) continue;
+          const p = cityPositions.get(entry.city);
+          if (!p) continue;
+          const captured = Boolean(entry.captured || entry.text?.includes("攻克") || entry.text?.includes("夺取"));
+          const r1 = (10 + nowPulse * 14) / z;
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], r1, 0, Math.PI * 2);
+          ctx.strokeStyle = captured ? `rgba(244, 198, 86, ${(1 - nowPulse) * 0.85})` : `rgba(232, 86, 62, ${(1 - nowPulse) * 0.8})`;
+          ctx.lineWidth = 2.2 / z;
+          ctx.stroke();
+        }
+      }
       ctx.restore();
     }
 

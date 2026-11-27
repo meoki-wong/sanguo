@@ -69,8 +69,8 @@ function plannedBattle() {
   return { state, plan };
 }
 
-test("all nine eras share the same 44 cities and a custom opening applies all three kinds of edits", () => {
-  assert.deepEqual(world.scenarios.map(({ year }) => year).sort(), [184, 190, 199, 208, 219, 234, 251, 262, 265]);
+test("all eleven eras share the same 44 cities and a custom opening applies all three kinds of edits", () => {
+  assert.deepEqual(world.scenarios.map(({ year }) => year).sort((a, b) => a - b), [184, 190, 194, 199, 208, 219, 225, 234, 251, 262, 265]);
   for (const era of world.scenarios) assert.deepEqual(Object.keys(era.ownership).sort(), world.cities.map(({ key }) => key).sort());
   const opening = { title: "南线推演", owners: { changan: "cao" }, stocks: { cao: { treasury: 256, grain: 318 } }, stations: { "cao-1": "changan" } };
   const state = restore(createGame(world, 199, "cao", { grand: true, opening }));
