@@ -130,6 +130,12 @@ import {
   ARENA_MOVES, applyArenaWorldReward, autoResolveArena, createArenaSession, resolveArenaRound,
 } from "./duel-arena.js";
 import { drawRoyalCard, hasPendingRoyalCard, resolveRoyalCard } from "./royal-cards.js";
+import {
+  applyClashWorldReward, autoResolveClash, createClashSession, endClashTurn, playClashCard,
+} from "./card-clash.js";
+import {
+  answerWarlordDispatch, evaluateWarlordMedals, getActiveWarlordDispatch, getSeasonEncounters, resolveWorldEncounter,
+} from "./living-world.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -3673,6 +3679,8 @@ function openJointPlan(draft) {
 }
 
 function renderMap() {
+  map?.setEncounters?.(state ? getSeasonEncounters(world, state) : []);
+  renderWarlordDispatchBanner();
   const command = statecraftDesk?.overlay() ?? cityCommand?.overlay() ?? landscapeMap?.overlay();
   if (command) {
     map.show(state, selected, command.to, command.type, command.route, command);
@@ -5299,6 +5307,9 @@ let activeArenaConfig = null;
 let activeArenaRewardText = "";
 let activeRoyalCard = null;
 let activeRoyalOutcome = null;
+let activeClashSession = null;
+let activeClashRewardText = "";
+let activeEncounter = null;
 
 function setImmersiveMode(enabled) {
   const on = Boolean(enabled);
@@ -5463,10 +5474,15 @@ function renderTacticalBattleDialog() {
         if (isAmbushSlot) cell.dataset.ambushSlot = "true";
         if (cellFx.length) cell.dataset.hit = "true";
         cell.title = `${tMeta.name} (${x + 1},${y + 1})：${tMeta.summary}`
-          + (isAmbushSlot ? " · 点击此密林伏兵奇袭！" : atkTarget ? ` · 点击攻击（预计 ${atkTarget.previewDmg} 伤）` : "");
+          + (isAmbushSlot ? " · 点击此密林伏兵奇袭！" : atkTarget ? ` · 点击攻击（预计 ${atkTarget.previewDmg} 伤${atkTarget.flanked ? " · 夹击暴击" : ""}${atkTarget.knockbackCrash ? " · 碰撞暴击" : ""}）` : "");
 
         const tTag = make("span", tMeta.icon, "tb-terrain-tag");
         cell.append(tTag);
+        if (atkTarget) {
+          const prevBadge = make("span", `${atkTarget.flanked || atkTarget.knockbackCrash ? "⚡" : ""}-${atkTarget.previewDmg}`, "tb-atk-preview");
+          if (atkTarget.flanked || atkTarget.knockbackCrash) prevBadge.dataset.crit = "true";
+          cell.append(prevBadge);
+        }
 
         if (occ) {
           const chip = make("div", undefined, "tb-unit-chip");
@@ -6111,6 +6127,235 @@ function openRoyalCardDialog() {
   activeRoyalOutcome = null;
   activeRoyalCard = hasPendingRoyalCard(state) ? drawRoyalCard(state) : null;
   renderRoyalCardDialog();
+  if (!dlg.open) dlg.showModal();
+}
+
+function renderWarlordDispatchBanner() {
+  const box = find("warlord-dispatch-banner");
+  if (!box) return;
+  if (!state?.century || gameOutcome(state) !== "ongoing") {
+    box.hidden = true;
+    return;
+  }
+  const dispatch = getActiveWarlordDispatch(world, era(), state);
+  if (!dispatch) {
+    box.hidden = true;
+    return;
+  }
+  const head = make("div", undefined, "warlord-dispatch-head");
+  head.append(make("span", `🕊️ ${dispatch.factionName}·${dispatch.warlordName} 传书`, "memorial-tag"));
+  const btns = make("div", undefined, "warlord-dispatch-actions");
+  for (const ch of dispatch.choices) {
+    const b = make("button", ch.label, ch.id === "challenge" ? "primary" : "quiet");
+    b.type = "button";
+    b.addEventListener("click", () => {
+      const res = answerWarlordDispatch(world, state, dispatch, ch.id);
+      sound?.play("event");
+      mutate(() => res.state, res.summary);
+      if (res.nextAction === "card_clash") {
+        openCardClashDialog({ enemyName: `${dispatch.factionName}·${dispatch.warlordName}` });
+      } else if (res.nextAction === "free_arena") {
+        const enemyOff = era().officers.find((o) => o.key === res.enemyOfficerKey) || null;
+        openDuelArenaDialog({ context: "free_arena", enemyOfficer: enemyOff, enemyName: dispatch.warlordName });
+      }
+    });
+    btns.append(b);
+  }
+  box.replaceChildren(head, make("p", dispatch.quote, "warlord-dispatch-quote"), btns);
+  box.hidden = false;
+}
+
+function renderEncounterDialog() {
+  const body = find("enc-body");
+  if (!body || !activeEncounter) return;
+  const enc = activeEncounter;
+  find("enc-badge-tag").textContent = `${enc.icon} ${enc.badge} · 活态九州奇遇`;
+  find("enc-dialog-title").textContent = enc.title;
+
+  const optsWrap = make("div", undefined, "drama-options");
+  for (const opt of enc.options || []) {
+    const b = make("button", undefined, "drama-option-btn");
+    b.type = "button";
+    b.append(make("strong", opt.label), make("div", opt.hint, "drama-option-hint"));
+    b.addEventListener("click", () => {
+      const res = resolveWorldEncounter(world, state, enc.id, opt.id);
+      find("encounter-dialog")?.close();
+      sound?.play("event");
+      mutate(() => res.state, res.summary);
+      if (res.nextAction === "card_clash") {
+        openCardClashDialog({ enemyName: `「${enc.cityName}」酒肆剑客` });
+      }
+    });
+    optsWrap.append(b);
+  }
+  body.replaceChildren(make("p", enc.prompt, "drama-narration"), optsWrap);
+}
+
+function openEncounterDialog(encounter) {
+  const dlg = find("encounter-dialog");
+  if (!dlg || !encounter || !state) return;
+  activeEncounter = encounter;
+  renderEncounterDialog();
+  if (!dlg.open) dlg.showModal();
+}
+
+function finalizeClashDone() {
+  if (!activeClashSession?.done || activeClashSession._settled) return;
+  activeClashSession._settled = true;
+  const res = applyClashWorldReward(world, state, activeClashSession);
+  activeClashRewardText = res.rewardText || "";
+  if (res.state !== state) {
+    sound?.play(activeClashSession.winner === "player" ? "event" : "order");
+    mutate(() => res.state, activeClashRewardText);
+  }
+}
+
+function renderCardClashDialog() {
+  const body = find("clash-body");
+  if (!body || !activeClashSession || !state) return;
+  const ses = activeClashSession;
+  const autoBtn = find("clash-auto-btn");
+  if (autoBtn) autoBtn.hidden = ses.done;
+
+  const ev = ses.evaluation || { laneScores: [], playerLanesWon: 0, enemyLanesWon: 0, playerTotal: 0, enemyTotal: 0, playerBonds: [] };
+  find("clash-badge-tag").textContent = ses.done
+    ? `兵法终局 · 占路 ${ev.playerLanesWon} : ${ev.enemyLanesWon}`
+    : `第 ${ses.round} / ${ses.maxRounds} 回合 · ⚡ 兵力 ${ses.energy}/${ses.maxEnergy}`;
+  find("clash-dialog-title").textContent = `${ses.playerName} 🃏 对弈 ${ses.enemyName}`;
+
+  const medalsBar = make("div", undefined, "clash-medals-bar");
+  for (const m of evaluateWarlordMedals(state)) {
+    const tag = make("span", `${m.icon} ${m.title} ${m.current}/${m.target}`, m.unlocked ? "memorial-tag clash-medal-on" : "muted clash-medal-off");
+    tag.title = m.desc;
+    medalsBar.append(tag);
+  }
+
+  const infoStrip = make("div", undefined, "clash-info-strip");
+  infoStrip.append(make("span", `⚡ 可用兵力：${ses.energy}/${ses.maxEnergy} · 占路 ${ev.playerLanesWon} : ${ev.enemyLanesWon}（总点 ${ev.playerTotal} : ${ev.enemyTotal}）`));
+  for (const bond of ev.playerBonds || []) {
+    const bt = make("span", `✨ ${bond.name} +${bond.bonus}`, "memorial-tag clash-bond-badge");
+    bt.title = bond.desc;
+    infoStrip.append(bt);
+  }
+
+  const pickedCard = ses.selectedHandIndex >= 0 ? ses.playerHand[ses.selectedHandIndex] : null;
+  const lanesWrap = make("div", undefined, "clash-lanes");
+  for (const lane of ses.lanes) {
+    const sc = ev.laneScores[lane.index] || { playerPower: 0, enemyPower: 0, leader: "tie" };
+    const cap = lane.venue.capOne ? 1 : 4;
+    const canDeploy = Boolean(!ses.done && pickedCard && ses.energy >= pickedCard.cost && lane.playerCards.length < cap);
+
+    const laneEl = make("div", undefined, "clash-lane");
+    laneEl.dataset.leader = sc.leader;
+    laneEl.dataset.canDeploy = String(canDeploy);
+
+    const vHead = make("div", undefined, "clash-venue-head");
+    vHead.append(make("strong", `${lane.venue.icon} ${lane.venue.name}`), make("span", `${sc.playerPower} : ${sc.enemyPower}`, "memorial-tag"));
+    const vRule = make("div", lane.venue.ruleText, "clash-venue-rule");
+
+    const enemySlots = make("div", undefined, "clash-lane-cards");
+    for (const c of lane.enemyCards) {
+      enemySlots.append(make("span", `${c.icon}${c.name}(${c.power})`, "clash-mini-chip enemy"));
+    }
+    if (!lane.enemyCards.length) enemySlots.append(make("small", "敌阵虚位", "muted"));
+
+    const playerSlots = make("div", undefined, "clash-lane-cards");
+    for (const c of lane.playerCards) {
+      playerSlots.append(make("span", `${c.icon}${c.name}(${c.power})`, "clash-mini-chip player"));
+    }
+    if (!lane.playerCards.length) playerSlots.append(make("small", "我军待部署", "muted"));
+
+    laneEl.append(vHead, vRule, enemySlots, make("div", "— 交锋分界 —", "clash-lane-vs"), playerSlots);
+    if (!ses.done) {
+      const deployBtn = make("button", canDeploy ? `部署「${pickedCard.name}」到此阵` : (lane.playerCards.length >= cap ? "阵地已满员" : "兵力/手牌不足"), canDeploy ? "primary clash-deploy-btn" : "quiet clash-deploy-btn");
+      deployBtn.type = "button";
+      deployBtn.disabled = !canDeploy;
+      deployBtn.addEventListener("click", () => {
+        sound?.play("order");
+        activeClashSession = playClashCard(ses, ses.selectedHandIndex, lane.index);
+        renderCardClashDialog();
+      });
+      laneEl.append(deployBtn);
+    }
+    lanesWrap.append(laneEl);
+  }
+
+  const nodes = [medalsBar, infoStrip, lanesWrap];
+
+  if (ses.done) {
+    const finBox = make("div", undefined, "drama-finale");
+    finBox.append(
+      make("strong", ses.winner === "player" ? "🏆 兵法克捷！" : ses.winner === "enemy" ? "💢 惜败一局" : "🤝 双方弈和"),
+      make("p", activeClashRewardText || ses.log[ses.log.length - 1] || ""),
+    );
+    const doneRow = make("div", undefined, "arena-done-actions");
+    const againBtn = make("button", "再开一局", "primary");
+    againBtn.type = "button";
+    againBtn.addEventListener("click", () => {
+      activeClashRewardText = "";
+      activeClashSession = createClashSession({
+        playerName: ses.playerName,
+        enemyName: ses.enemyName,
+        seedBonus: Date.now() % 997,
+      });
+      renderCardClashDialog();
+    });
+    const exitBtn = make("button", "退席还朝", "quiet");
+    exitBtn.type = "button";
+    exitBtn.addEventListener("click", () => find("card-clash-dialog")?.close());
+    doneRow.append(againBtn, exitBtn);
+    nodes.push(finBox, doneRow);
+  } else {
+    const handTitle = make("div", "我方手牌（先选牌，再点三路阵地「部署」）：", "muted");
+    const handWrap = make("div", undefined, "clash-hand");
+    ses.playerHand.forEach((c, idx) => {
+      const cardBtn = make("button", undefined, "clash-card");
+      cardBtn.type = "button";
+      cardBtn.dataset.selected = String(idx === ses.selectedHandIndex);
+      cardBtn.disabled = ses.energy < c.cost;
+      const cHead = make("div", undefined, "clash-card-head");
+      cHead.append(make("span", `⚡${c.cost}`, "clash-cost-pill"), make("strong", `${c.icon}${c.name}`), make("span", `力${c.power}`, "memorial-tag"));
+      cardBtn.append(cHead, make("small", c.desc));
+      cardBtn.addEventListener("click", () => {
+        ses.selectedHandIndex = idx;
+        renderCardClashDialog();
+      });
+      handWrap.append(cardBtn);
+    });
+
+    const roundBar = make("div", undefined, "arena-done-actions");
+    const nextTurnBtn = make("button", ses.round >= ses.maxRounds ? "结束终局并结算胜负！" : `结束第 ${ses.round} 回合（对手布阵 → 下回合）`, "primary");
+    nextTurnBtn.type = "button";
+    nextTurnBtn.addEventListener("click", () => {
+      sound?.play("turn");
+      activeClashSession = endClashTurn(ses);
+      if (activeClashSession.done) finalizeClashDone();
+      renderCardClashDialog();
+    });
+    roundBar.append(nextTurnBtn);
+    nodes.push(handTitle, handWrap, roundBar);
+  }
+
+  const logBox = make("div", undefined, "tb-log");
+  logBox.replaceChildren(...ses.log.slice(-5).map((l) => make("div", l)));
+  nodes.push(logBox);
+  body.replaceChildren(...nodes);
+}
+
+function openCardClashDialog(opts = {}) {
+  const dlg = find("card-clash-dialog");
+  if (!dlg || !state) return;
+  const curEra = era();
+  const rival = opts.enemyName
+    || curEra.factions.find((f) => f.key !== state.player && Object.values(state.cities || {}).some((c) => c?.owner === f.key))?.name
+    || "群雄豪杰";
+  activeClashRewardText = "";
+  activeClashSession = createClashSession({
+    playerName: factionName(curEra, state.player),
+    enemyName: rival,
+    seedBonus: (state.turn ?? 1) + (state.saga?.clashStats?.wins ?? 0),
+  });
+  renderCardClashDialog();
   if (!dlg.open) dlg.showModal();
 }
 
@@ -7376,6 +7621,17 @@ function wireControls() {
     const m = find("hud-more-menu"); if (m) m.hidden = true;
     openRoyalCardDialog();
   });
+  find("open-card-clash")?.addEventListener("click", () => {
+    const m = find("hud-more-menu"); if (m) m.hidden = true;
+    openCardClashDialog();
+  });
+  find("clash-auto-btn")?.addEventListener("click", () => {
+    if (!activeClashSession || activeClashSession.done) return;
+    sound?.play("order");
+    activeClashSession = autoResolveClash(activeClashSession);
+    if (activeClashSession.done) finalizeClashDone();
+    renderCardClashDialog();
+  });
   find("floating-royal-card-btn")?.addEventListener("click", () => openRoyalCardDialog());
   find("arena-auto-btn")?.addEventListener("click", () => {
     if (!activeArenaSession || activeArenaSession.done) return;
@@ -7408,6 +7664,7 @@ function wireControls() {
     else if (k === "d") { ev.preventDefault(); openDramaTheaterDialog(); }
     else if (k === "v") { ev.preventDefault(); openDuelArenaDialog({ context: "free_arena" }); }
     else if (k === "k") { ev.preventDefault(); openRoyalCardDialog(); }
+    else if (k === "b") { ev.preventDefault(); openCardClashDialog(); }
     else if (k === "h") { ev.preventDefault(); setImmersiveMode(document.body.dataset.immersive !== "true"); }
     else if (k === "g") { ev.preventDefault(); runSmartAutoSim(4); }
     else if (k === "/") { ev.preventDefault(); openQuickSearchDialog(); }
@@ -8507,6 +8764,7 @@ async function start() {
     if (row) strategyDesk.open("fronts", row.id);
     else highCommandDesk.open(undefined, id);
   }, (key) => dynastyDesk.open("supply", key), (info) => uxHud?.showHover(info));
+  map.setEncounterHandler((enc) => openEncounterDialog(enc));
   map.setDragHandler({
     preview(fromKey, toKey) {
       if (!state || gameOutcome(state) !== "ongoing") return { ok: false, label: "战局已决" };

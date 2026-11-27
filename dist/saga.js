@@ -86,6 +86,9 @@ export function createSagaState(world, era, state, { historicalEvents = true } =
     dramasPlayed: [],
     royalDecrees: { lastTurn: -1, seen: [], streak: 0 },
     arenaWins: { duel: 0, debate: 0, lastTurn: -1 },
+    clashStats: { wins: 0, streak: 0, bestStreak: 0, lastRewardTurn: -1 },
+    encounters: { turn: -1, resolvedIds: [] },
+    dispatchTurn: -1,
     annals: [],
   };
 }
@@ -520,6 +523,9 @@ export function validSaga(world, state, officers) {
   if (s.dramasPlayed !== undefined && (!Array.isArray(s.dramasPlayed) || s.dramasPlayed.length > 16 || !s.dramasPlayed.every((d) => typeof d === "string"))) return false;
   if (s.royalDecrees !== undefined && (!plain(s.royalDecrees) || typeof s.royalDecrees.lastTurn !== "number" || !Array.isArray(s.royalDecrees.seen))) return false;
   if (s.arenaWins !== undefined && (!plain(s.arenaWins) || !nonneg(s.arenaWins.duel) || !nonneg(s.arenaWins.debate))) return false;
+  if (s.clashStats !== undefined && (!plain(s.clashStats) || !nonneg(s.clashStats.wins) || !nonneg(s.clashStats.streak))) return false;
+  if (s.encounters !== undefined && (!plain(s.encounters) || typeof s.encounters.turn !== "number" || !Array.isArray(s.encounters.resolvedIds))) return false;
+  if (s.dispatchTurn !== undefined && typeof s.dispatchTurn !== "number") return false;
   if (!Array.isArray(s.annals) || s.annals.length > MAX_ANNALS) return false;
   return true;
 }

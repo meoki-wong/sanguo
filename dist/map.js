@@ -71,8 +71,13 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
   const freightLayer = document.createElement("div");
   freightLayer.className = "map-markers dynasty-freight-markers";
   stage.append(freightLayer);
+  const encounterLayer = document.createElement("div");
+  encounterLayer.className = "map-markers world-encounter-layer";
+  stage.append(encounterLayer);
   let frontPins = [];
   let campaignPins = [];
+  let encounterPins = [];
+  let encounterHandler = null;
   const ctx = canvas.getContext("2d");
   const [width, height] = world.view;
   const center = [width / 2, height / 2];
@@ -784,6 +789,16 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
         token.dataset.hazard = String(hazard.cost > 0);
         token.title = entry.name + " · " + hazard.label;
       }
+    }
+    for (const { item, token } of encounterPins) {
+      const [bx, by] = toView(item.position);
+      const px = left + bx * scale;
+      const py = top + by * scale;
+      token.hidden = Boolean(historicalFrame) || Boolean(commandTargets) || layer === "roads"
+        || !visible(px, py) || rect.width < 100 || rect.height < 80;
+      if (token.hidden) continue;
+      token.style.left = clamp(px, 16, rect.width - 16) + "px";
+      token.style.top = clamp(py, 16, rect.height - 16) + "px";
     }
   }
 
@@ -1882,6 +1897,22 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
     },
     setLayer(next) { switchLayer(next); draw(); },
     setDragHandler(handler) { dragHandler = handler || null; },
+    setEncounterHandler(handler) { encounterHandler = handler || null; },
+    setEncounters(items = []) {
+      encounterPins = (items || []).map((item) => {
+        const token = pin(item.title, "world-encounter-pin");
+        token.dataset.kind = item.kind;
+        token.textContent = item.icon;
+        token.title = item.title;
+        token.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          encounterHandler?.(item);
+        });
+        return { item, token };
+      });
+      encounterLayer.replaceChildren(...encounterPins.map(({ token }) => token));
+      if (mapState) draw();
+    },
     locate,
     showTrade(path, blocked) {
       trade = { path, blocked };

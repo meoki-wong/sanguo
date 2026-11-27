@@ -539,12 +539,25 @@ export function reachableTiles(session, unitId) {
   return out;
 }
 
+export function isFlankedByAlly(session, attacker, defender) {
+  if (!session || !attacker || !defender) return false;
+  return (session.units || []).some((u) => (
+    u.hp > 0
+    && u.side === attacker.side
+    && u.id !== attacker.id
+    && manhattan(u.x, u.y, defender.x, defender.y) === 1
+  ));
+}
+
 function estimateDamage(session, attacker, targetUnit = null, targetTile = null) {
   const atkTile = tileAt(session, attacker.x, attacker.y);
   const atkTerrain = TERRAIN_META[atkTile?.terrain || "plain"];
   let raw = attacker.atk * (1 + (atkTerrain.atkBonus || 0));
   if (attacker.type === "cavalry" && attacker.moveDist >= 2) {
     raw *= 1 + attacker.chargeBonus;
+  }
+  if (targetUnit && isFlankedByAlly(session, attacker, targetUnit)) {
+    raw *= 1.28;
   }
   if (targetUnit) {
     const defTile = tileAt(session, targetUnit.x, targetUnit.y);
@@ -574,12 +587,25 @@ export function attackableTargets(session, unitId) {
       const occ = unitAt(session, x, y);
       const tile = tileAt(session, x, y);
       if (occ && occ.side !== unit.side) {
+        const flanked = isFlankedByAlly(session, unit, occ);
+        let knockbackCrash = false;
+        if (unit.side === "player" && session.armedSkill === "knockback") {
+          const dxRaw = x - unit.x;
+          const dyRaw = y - unit.y;
+          const dx = Math.abs(dxRaw) >= Math.abs(dyRaw) ? Math.sign(dxRaw) : 0;
+          const dy = Math.abs(dyRaw) > Math.abs(dxRaw) ? Math.sign(dyRaw) : 0;
+          const kTile = tileAt(session, x + dx, y + dy);
+          const kOcc = unitAt(session, x + dx, y + dy);
+          knockbackCrash = !kTile || (kTile.terrain === "wall" && kTile.wallHp > 0) || Boolean(kOcc) || kTile.terrain === "fire";
+        }
         targets.push({
           kind: "unit",
           id: occ.id,
           x,
           y,
           name: occ.name,
+          flanked,
+          knockbackCrash,
           previewDmg: estimateDamage(session, unit, occ, null),
         });
         continue;
@@ -883,11 +909,12 @@ export function attackTarget(session, unitId, targetX, targetY) {
 
   if (picked.kind === "unit") {
     const defender = unitAt(next, targetX, targetY);
+    const flanked = isFlankedByAlly(next, attacker, defender);
     const dmg = estimateDamage(next, attacker, defender, null);
     defender.hp = Math.max(0, defender.hp - dmg);
-    addSpirit(next, defender.hp <= 0 ? 25 : 15);
-    pushFx(next, targetX, targetY, `-${dmg}`, "dmg");
-    let note = `${attacker.icon} ${attacker.name} 痛击 ${defender.name}，造成 ${dmg} 点杀伤`;
+    addSpirit(next, (defender.hp <= 0 ? 25 : 15) + (flanked && attacker.side === "player" ? 12 : 0));
+    pushFx(next, targetX, targetY, flanked ? `-${dmg} 夹击!` : `-${dmg}`, flanked ? "crit" : "dmg");
+    let note = `${attacker.icon} ${attacker.name} 痛击 ${defender.name}，造成 ${dmg} 点杀伤` + (flanked ? "（夹击暴击 ×1.28！）" : "");
 
     // v26.0 破阵击退 + 撞墙/撞敌/入火连锁伤害
     if (next.armedSkill === "knockback" && attacker.side === "player") {

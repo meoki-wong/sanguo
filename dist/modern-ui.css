@@ -4865,8 +4865,8 @@ body[data-immersive="true"] #feedback {
 /* ===== v26.0 无双演武 · 战意主动技 · 君主闪电密奏 ===== */
 .floating-royal-card-btn {
   position: absolute;
-  top: 0.72rem;
-  right: 0.72rem;
+  top: 4.5rem;
+  right: 0.85rem;
   z-index: 12;
   padding: 0.36rem 0.76rem;
   border-radius: 999px;
@@ -5312,6 +5312,294 @@ body[data-immersive="true"] .floating-royal-card-btn {
     grid-template-columns: 1fr;
   }
   .royal-meters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ===== v27.0 奇谋牌局 · 活态九州 ===== */
+.world-encounter-layer {
+  z-index: 8 !important;
+  pointer-events: none;
+}
+
+.world-encounter-pin {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  z-index: 8;
+  pointer-events: auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1.5px solid rgba(250, 212, 114, 0.92);
+  background: radial-gradient(circle at 35% 30%, #4e3418, #21170d);
+  color: #fff3d2;
+  font-size: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.55), 0 0 0 2px rgba(246, 198, 86, 0.28);
+  cursor: pointer;
+  animation: royalPulse 2.4s ease-in-out infinite;
+}
+
+.warlord-dispatch-banner {
+  position: absolute;
+  top: 4.5rem;
+  left: 0.85rem;
+  z-index: 12;
+  max-width: min(370px, calc(100% - 1.3rem));
+  padding: 0.52rem 0.72rem;
+  border-radius: 10px;
+  background: rgba(24, 19, 14, 0.94);
+  border: 1px solid rgba(226, 178, 84, 0.58);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.32rem;
+}
+
+body[data-immersive="true"] .warlord-dispatch-banner {
+  display: none !important;
+}
+
+.warlord-dispatch-quote {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.42;
+  color: #efe2ca;
+}
+
+.warlord-dispatch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.warlord-dispatch-actions button {
+  font-size: 0.74rem !important;
+  padding: 0.2rem 0.52rem !important;
+  min-height: 1.55rem !important;
+}
+
+.tb-atk-preview {
+  position: absolute;
+  bottom: 2px;
+  right: 3px;
+  z-index: 4;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  background: rgba(112, 24, 18, 0.92);
+  color: #ffd5c8;
+  border: 1px solid rgba(255, 118, 92, 0.65);
+  pointer-events: none;
+}
+
+.tb-atk-preview[data-crit="true"] {
+  background: rgba(128, 62, 12, 0.95);
+  color: #ffea88;
+  border-color: #ffdc64;
+}
+
+#card-clash-dialog {
+  width: min(760px, calc(100vw - 1.25rem));
+  max-width: calc(100vw - 1.25rem);
+  padding: 0;
+  box-sizing: border-box;
+}
+
+#encounter-dialog {
+  width: min(500px, calc(100vw - 1.25rem));
+  max-width: calc(100vw - 1.25rem);
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.clash-dialog-content,
+.encounter-dialog-content {
+  width: 100%;
+  box-sizing: border-box;
+  max-height: min(88dvh, 800px);
+  overflow-y: auto;
+}
+
+.clash-medals-bar,
+.clash-info-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.55rem;
+  padding: 0.42rem 0.58rem;
+  border-radius: 8px;
+  background: rgba(24, 20, 15, 0.9);
+  border: 1px solid rgba(212, 174, 96, 0.28);
+  font-size: 0.78rem;
+  color: #ebdcb8;
+}
+
+.clash-medal-on {
+  border-color: rgba(110, 231, 183, 0.72) !important;
+  color: #bbf7d0 !important;
+}
+
+.clash-bond-badge {
+  border-color: #fde047 !important;
+  color: #fef08a !important;
+}
+
+.clash-lanes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 0.55rem 0;
+}
+
+.clash-lane {
+  padding: 0.55rem 0.58rem;
+  border-radius: 10px;
+  background: rgba(28, 23, 17, 0.94);
+  border: 1px solid rgba(212, 174, 96, 0.32);
+  display: flex;
+  flex-direction: column;
+  gap: 0.34rem;
+}
+
+.clash-lane[data-leader="player"] {
+  border-color: rgba(88, 224, 172, 0.72);
+  box-shadow: inset 0 0 12px rgba(48, 168, 118, 0.16);
+}
+
+.clash-lane[data-leader="enemy"] {
+  border-color: rgba(244, 112, 86, 0.65);
+}
+
+.clash-venue-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.86rem;
+  color: #fae6bc;
+}
+
+.clash-venue-rule {
+  font-size: 0.72rem;
+  color: #c8b89b;
+  min-height: 2.1em;
+}
+
+.clash-lane-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.24rem;
+  min-height: 1.55rem;
+  align-items: center;
+}
+
+.clash-lane-vs {
+  text-align: center;
+  font-size: 0.66rem;
+  color: #9e8e74;
+}
+
+.clash-mini-chip {
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.clash-mini-chip.player {
+  background: rgba(24, 98, 78, 0.88);
+  border: 1px solid rgba(110, 231, 183, 0.6);
+  color: #dcfce7;
+}
+
+.clash-mini-chip.enemy {
+  background: rgba(132, 38, 30, 0.88);
+  border: 1px solid rgba(248, 113, 113, 0.6);
+  color: #fee2e2;
+}
+
+.clash-deploy-btn {
+  margin-top: auto;
+  font-size: 0.74rem !important;
+  padding: 0.24rem 0.42rem !important;
+  min-height: 1.65rem !important;
+}
+
+.clash-hand {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 0.42rem;
+  margin: 0.42rem 0 0.55rem;
+}
+
+.clash-card {
+  text-align: left;
+  padding: 0.46rem 0.54rem;
+  border-radius: 8px;
+  background: rgba(42, 34, 24, 0.94);
+  border: 1px solid rgba(218, 174, 88, 0.36);
+  color: #f8eed8;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  cursor: pointer;
+}
+
+.clash-card[data-selected="true"] {
+  border-color: #fde047;
+  box-shadow: 0 0 0 2px #fde047;
+  background: rgba(64, 50, 32, 0.98);
+}
+
+.clash-card:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.clash-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+}
+
+.clash-cost-pill {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(234, 179, 8, 0.24);
+  color: #fde047;
+  font-weight: 700;
+  font-size: 0.72rem;
+}
+
+.clash-card small {
+  font-size: 0.7rem;
+  color: #c8b89b;
+  line-height: 1.32;
+}
+
+@media (max-width: 960px) {
+  .warlord-dispatch-banner {
+    top: auto;
+    bottom: 9.8rem;
+    left: 0.35rem;
+    right: 6.2rem;
+    max-width: none;
+    padding: 0.38rem 0.52rem;
+  }
+  .warlord-dispatch-quote {
+    font-size: 0.7rem;
+  }
+  .clash-lanes {
+    grid-template-columns: 1fr;
+  }
+  .clash-hand {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

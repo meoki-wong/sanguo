@@ -374,6 +374,8 @@ export function createUxHud(world, api) {
       royalMenuBtn.hidden = !state.century;
       if (state.century) royalMenuBtn.textContent = pendingRoyal ? "📜 君主密奏·待批 (K)" : "📜 君主密奏 (K)";
     }
+    const clashMenuBtn = $("open-card-clash");
+    if (clashMenuBtn) clashMenuBtn.hidden = !state.century;
     const floatRoyalBtn = $("floating-royal-card-btn");
     if (floatRoyalBtn) floatRoyalBtn.hidden = !pendingRoyal;
     syncModeToggleLabel();
