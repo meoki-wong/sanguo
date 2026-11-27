@@ -60,6 +60,8 @@ import { specialtyCombatModifiers, specialtyEconomyModifiers } from "./specialti
 import { scrollCombatModifiers } from "./stratagem-scrolls.js";
 import { destinyCombatModifiers } from "./destiny.js";
 import { trialCombatModifiers, trialEconomyModifiers } from "./trials.js";
+import { megaprojectCombatModifiers, megaprojectEconomyModifiers } from "./megaprojects.js";
+import { siegeEngineCombatModifiers } from "./siege-engines.js";
 import {
   BATTLE_TACTICS, DEFAULT_TACTIC, difficultyConfig, estimateCasualties, evaluateTactic, isOpeningPrepTurn,
   moraleModifier, normalizeTactic, tacticCost, validDifficulty, validTactic,
@@ -145,9 +147,10 @@ export function cityRevenues(state, key) {
   const cfEco = courtFactionModifiers(state, city.owner);
   const spEco = specialtyEconomyModifiers(state, city.owner);
   const trEco = trialEconomyModifiers(state);
+  const mpEco = megaprojectEconomyModifiers(state, city.owner);
   const gross = {
-    treasury: Math.floor((income.treasury * yieldRate.money + yieldRate.extra) * taxRate * bEco.treasuryMult * rEco.treasuryMult * cEco.mult * cfEco.ecoMult * spEco.treasuryMult * trEco.treasuryMult),
-    grain: Math.floor((income.grain * yieldRate.grain + yieldRate.extra * 2) * workforceYield(state, key) * taxRate * techEconomyModifiers(state, city.owner).grainYieldMult * bEco.grainMult * rEco.grainMult * cEco.mult * cfEco.ecoMult * spEco.grainMult * trEco.grainMult),
+    treasury: Math.floor((income.treasury * yieldRate.money + yieldRate.extra) * taxRate * bEco.treasuryMult * rEco.treasuryMult * cEco.mult * cfEco.ecoMult * spEco.treasuryMult * trEco.treasuryMult * mpEco.treasuryMult),
+    grain: Math.floor((income.grain * yieldRate.grain + yieldRate.extra * 2) * workforceYield(state, key) * taxRate * techEconomyModifiers(state, city.owner).grainYieldMult * bEco.grainMult * rEco.grainMult * cEco.mult * cfEco.ecoMult * spEco.grainMult * trEco.grainMult * mpEco.grainMult),
   };
   return taxSplit10(state, key, adjustedHarvest15(state, key, gross));
 }
@@ -1022,6 +1025,9 @@ export function forecastAttack(era, state, order, faction = state.player, condit
   const scFx = scrollCombatModifiers(state, order.to);
   const destFx = destinyCombatModifiers(state, leader);
   const trCb = trialCombatModifiers(state);
+  const attMp = megaprojectCombatModifiers(state, faction, weather.terrain);
+  const defMp = megaprojectCombatModifiers(state, targetHolding?.owner, weather.terrain);
+  const engFx = siegeEngineCombatModifiers(state, { fromKey: order.from, toKey: order.to });
   const relFx = relationshipCombatModifiers(state, { attackerKey: order.officer, attackerFaction: faction, defenderFaction: targetHolding?.owner });
   const coalitionAtkMult = isCoalitionMember(state, faction) && targetHolding?.owner === state.player ? 1.06 : 1;
   const rawTravel = conditions.travel === "water" && weather.terrain === "river" ? 1.12 : 1 - Math.min(.15, weather.cost * .035);
@@ -1029,17 +1035,17 @@ export function forecastAttack(era, state, order, faction = state.player, condit
   const offenseMorale = state?.century ? moraleModifier(state.factions?.[faction]?.morale ?? 75) : 1;
   const offenseAiMult = state?.century && faction !== state.player ? difficultyConfig(state).aiCombatMult : 1;
   const offense = Math.round(order.troops * (1 + officerSkill(state, leader, "command") / 120 + gear)
-    * travel * (conditions.readiness ?? 1) * traitFx.attackMult * tacticFx.attackMult * offenseMorale * offenseAiMult * coalitionAtkMult * attBond.attackMult * attSaga.attackMult * attTech.attackMult * supFx.attackMult * bldFx.attackMult * attRef.attackMult * attCer.attackMult * attCf.combatMult * navFx.attackMult * formFx.attackMult * coordFx.attackMult * attSp.attackMult * destFx.attackMult * trCb.attackMult * relFx.attackMult * (tacFx?.atkMult ?? 1));
+    * travel * (conditions.readiness ?? 1) * traitFx.attackMult * tacticFx.attackMult * offenseMorale * offenseAiMult * coalitionAtkMult * attBond.attackMult * attSaga.attackMult * attTech.attackMult * supFx.attackMult * bldFx.attackMult * attRef.attackMult * attCer.attackMult * attCf.combatMult * navFx.attackMult * formFx.attackMult * coordFx.attackMult * attSp.attackMult * destFx.attackMult * trCb.attackMult * attMp.attackMult * engFx.attackMult * relFx.attackMult * (tacFx?.atkMult ?? 1));
   const terrain = state.war && weather.terrain;
   const rawGround = state?.century
     ? (terrain === "pass" ? 1.24 : terrain === "river" ? (hasTrait(leader, "navy") || conditions.travel === "water" ? 1.04 : 1.16) : 1)
     : (terrain === "pass" ? 1.12 : terrain === "river" ? 1.08 : 1);
   const ground = rawGround > 1 ? 1 + (rawGround - 1) * (1 - tacticFx.terrainReduction) : rawGround;
-  const combinedWallFactor = traitFx.wallFactor * tacticFx.wallFactor * attTech.wallFactor * supFx.wallFactor * bldFx.wallFactor * espFx.wallFactor * scFx.wallFactor;
+  const combinedWallFactor = traitFx.wallFactor * tacticFx.wallFactor * attTech.wallFactor * supFx.wallFactor * bldFx.wallFactor * espFx.wallFactor * scFx.wallFactor * engFx.wallFactor;
   const forceSurrender = Boolean(conditions.surrender || tacFx?.surrender);
   const defense = forceSurrender ? Math.max(0, offense - 1)
     : Math.round((defensiveStrength(era, targetHolding, state, order.to, combinedWallFactor) + (conditions.relief ?? 0))
-      * ground * cpFx.defenseMult * (1 - (conditions.breach ?? 0) / 330) * traitFx.defenseMult * tacticFx.defenseMult * supFx.defenseMult * bldFx.defenseMult * espFx.defenseMult * defRef.defenseMult * defCer.defenseMult * defCf.combatMult * navFx.defenseMult * formFx.defenseMult * coordFx.defenseMult * defSp.defenseMult * scFx.defenseMult * trCb.defenseMult * (tacFx?.defMult ?? 1));
+      * ground * cpFx.defenseMult * (1 - (conditions.breach ?? 0) / 330) * traitFx.defenseMult * tacticFx.defenseMult * supFx.defenseMult * bldFx.defenseMult * espFx.defenseMult * defRef.defenseMult * defCer.defenseMult * defCf.combatMult * navFx.defenseMult * formFx.defenseMult * coordFx.defenseMult * defSp.defenseMult * scFx.defenseMult * trCb.defenseMult * defMp.defenseMult * engFx.defenseMult * (tacFx?.defMult ?? 1));
   const wins = offense > defense;
   const defenders = (targetHolding?.troops ?? 0) + (targetHolding ? holdingArmies(state, targetHolding.owner, order.to)
     .reduce((total, guard) => total + guard.troops, 0) : 0);
@@ -1053,9 +1059,9 @@ export function forecastAttack(era, state, order, faction = state.player, condit
     surrender: forceSurrender,
     century: Boolean(state?.century),
   });
-  const marchGrainMult = techEconomyModifiers(state, faction).marchGrainMult * supFx.grainMult * reformEconomyModifiers(state, faction).marchGrainMult * navFx.grainMult;
+  const marchGrainMult = techEconomyModifiers(state, faction).marchGrainMult * supFx.grainMult * reformEconomyModifiers(state, faction).marchGrainMult * navFx.grainMult * megaprojectEconomyModifiers(state, faction).marchGrainMult;
   const baseGrain = Math.max(1, Math.round((expeditionGrain(order.troops) + tacticFx.extraGrain + cpFx.extraGrain) * marchGrainMult));
-  const v18Tags = [supFx.label, espFx.label, formFx.label, coordFx.label, scFx.label, destFx.label, ...bldFx.notes, ...navFx.notes, ...relFx.notes].filter(Boolean);
+  const v18Tags = [supFx.label, espFx.label, formFx.label, coordFx.label, scFx.label, destFx.label, engFx.label, ...bldFx.notes, ...navFx.notes, ...relFx.notes].filter(Boolean);
   return {
     offense,
     defense,
@@ -1074,7 +1080,7 @@ export function forecastAttack(era, state, order, faction = state.player, condit
     eliteName: attTech.eliteName,
     traitNotes: { attacker: traitFx.attackerTraits, defender: traitFx.defenderTraits },
     bonds: { attacker: attBond.bonds.map((b) => b.name), defender: defBond.bonds.map((b) => b.name) },
-    attBondLossMult: attBond.lossMult * attTech.lossMult * attRef.lossMult * formFx.lossMult * coordFx.lossMult * destFx.lossMult * relFx.lossMult * (tacFx?.lossMult ?? 1),
+    attBondLossMult: attBond.lossMult * attTech.lossMult * attRef.lossMult * formFx.lossMult * coordFx.lossMult * destFx.lossMult * engFx.lossMult * relFx.lossMult * (tacFx?.lossMult ?? 1),
     captureBonus: attTech.captureBonus,
     rumorActive: Boolean(state?.century && (state?.saga?.rumors?.[order.to] ?? 0) > state.turn),
     tacticFx,

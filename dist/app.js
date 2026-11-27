@@ -115,6 +115,11 @@ import { activeSpecialtiesFor, citySpecialty } from "./specialties.js";
 import { castStratagemScroll, STRATAGEM_SCROLLS } from "./stratagem-scrolls.js";
 import { awakenHeroDestiny, evaluateDestinies } from "./destiny.js";
 import { dailyTrialSeed, previewTrialBySeed, startTrialGame } from "./trials.js";
+import { fundMegaprojectStage, listMegaprojectsStatus } from "./megaprojects.js";
+import { craftSiegeEngine, engineInCity, SIEGE_ENGINES } from "./siege-engines.js";
+import { issuePublicEdict, PUBLIC_EDICTS } from "./edicts.js";
+import { dispatchDisasterRelief, listActiveDisasters } from "./relief.js";
+import { archiveCurrentHistory, composeDynastyHistory, listArchivedHistories } from "./annals-book.js";
 
 const find = (id) => document.getElementById(id);
 const labels = { governor: "太守", commander: "守将" };
@@ -3990,9 +3995,41 @@ function renderWarRoomDialog() {
     const active = btn.dataset.wrTab === warRoomTab;
     btn.setAttribute("aria-selected", String(active));
   }
-  for (const id of ["advisor", "roadmap", "briefing", "trends", "mentorship", "saves", "rules"]) {
+  for (const id of ["advisor", "roadmap", "briefing", "trends", "mentorship", "saves", "annalsbook", "rules"]) {
     const panel = find(`wr-panel-${id}`);
     if (panel) panel.hidden = warRoomTab !== id;
+  }
+
+  // 0.7 纪传体《本朝实录》与历代档案室
+  const abEl = find("wr-panel-annalsbook");
+  if (abEl) {
+    const book = composeDynastyHistory(world, currentEra, state);
+    const bar = make("div", undefined, "emp-card-actions");
+    const archBtn = make("button", "归档至历代档案室", "primary");
+    archBtn.type = "button";
+    archBtn.addEventListener("click", () => {
+      const res = archiveCurrentHistory(world, currentEra, state);
+      sound?.play("victory");
+      notify(`已将${res.book.title}归档至历代战局档案室（共 ${res.count} 卷）！`);
+      renderWarRoomDialog();
+    });
+    const copyBtn = make("button", "复制实录全文", "quiet");
+    copyBtn.type = "button";
+    copyBtn.addEventListener("click", async () => {
+      try { await navigator.clipboard?.writeText(book.fullText); } catch {}
+      notify("已复制《本朝实录》全文至剪贴板！");
+    });
+    bar.append(archBtn, copyBtn);
+    const pre = make("pre", book.fullText, "v24-annals-pre");
+    const archives = listArchivedHistories();
+    const archBox = make("div", undefined, "tb-log");
+    archBox.replaceChildren(
+      make("strong", `历代战局档案室（已存 ${archives.length} 卷）`),
+      ...(archives.length
+        ? archives.slice(0, 6).map((a) => make("div", `📜 ${a.title} · ${a.grade}级(${a.score}分) · ${a.cities}城 · ${a.archivedAt}`))
+        : [make("div", "点击上方「归档至历代档案室」即可永久珍藏本局史书。")]),
+    );
+    abEl.replaceChildren(bar, pre, archBox);
   }
 
   // 0.5 霸业路线图（四阶段国策引导与阶梯赏赐）
@@ -4217,9 +4254,9 @@ const EMPIRE_GROUP_DEFAULT_TAB = {
   saga: "adventures",
 };
 const EMPIRE_TAB_TO_GROUP = {
-  ceremony: "domestic", reforms: "domestic", court: "domestic",
-  corps: "military", formations: "military", navy: "military", scrolls: "military",
-  tribes: "external", commerce: "external", vassals: "external",
+  ceremony: "domestic", reforms: "domestic", court: "domestic", megaprojects: "domestic", relief: "domestic",
+  corps: "military", formations: "military", navy: "military", engines: "military", scrolls: "military",
+  tribes: "external", commerce: "external", vassals: "external", edicts: "external",
   adventures: "saga", destiny: "saga", relations: "saga", challenges: "saga", trials: "saga",
 };
 
@@ -4431,6 +4468,130 @@ function renderEmpireDialog() {
       }
     }
     body.replaceChildren(grid);
+    return;
+  }
+
+  // 0b-8. 跨州超级工程（水利与驰道）
+  if (empireTab === "megaprojects") {
+    const grid = make("div", undefined, "emp-grid");
+    for (const p of listMegaprojectsStatus(state)) {
+      const card = make("div", undefined, "emp-card");
+      card.append(
+        make("strong", `${p.icon} ${p.name}（${p.progress}/${p.stages} 期）`),
+        make("p", p.completed ? `✓ 已千秋竣工 · ${p.summary}` : p.summary),
+      );
+      const btn = make("button", p.completed ? "✓ 工程竣工" : `拨款推进一期（${p.costPerStage.treasury}金${p.costPerStage.grain}粮）`, p.completed ? "quiet" : "primary");
+      btn.type = "button";
+      btn.disabled = p.completed;
+      btn.addEventListener("click", () => {
+        const res = fundMegaprojectStage(state, p.id);
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play(res.completed ? "victory" : "order");
+        mutate(() => res.state, res.summary);
+        renderEmpireDialog();
+      });
+      card.append(btn);
+      grid.append(card);
+    }
+    body.replaceChildren(grid);
+    return;
+  }
+
+  // 0b-9. 太医署救灾与动态灾疫
+  if (empireTab === "relief") {
+    const list = listActiveDisasters(state);
+    const grid = make("div", undefined, "emp-grid");
+    if (!list.length) {
+      grid.append(make("div", "当下九州风调雨顺，暂无活跃时疫、旱蝗或水患。", "v18-empty"));
+    } else {
+      for (const d of list) {
+        const card = make("div", undefined, "emp-card");
+        card.append(make("strong", `${d.icon} ${cityName(world, d.cityKey)} · ${d.name}`), make("p", "若不及时救灾，次季将沿道路向邻城蔓延。"));
+        const acts = make("div", undefined, "emp-card-actions");
+        const mBtn = make("button", "太医署防疫（35金）", "primary");
+        mBtn.type = "button";
+        mBtn.addEventListener("click", () => {
+          const res = dispatchDisasterRelief(world, state, d.cityKey, "medical");
+          if (!res.ok) { notify(res.reason, true); return; }
+          sound?.play("victory");
+          mutate(() => res.state, res.summary);
+          renderEmpireDialog();
+        });
+        const gBtn = make("button", "官仓开赈（40粮）", "quiet");
+        gBtn.type = "button";
+        gBtn.addEventListener("click", () => {
+          const res = dispatchDisasterRelief(world, state, d.cityKey, "grain");
+          if (!res.ok) { notify(res.reason, true); return; }
+          sound?.play("victory");
+          mutate(() => res.state, res.summary);
+          renderEmpireDialog();
+        });
+        acts.append(mBtn, gBtn);
+        card.append(acts);
+        grid.append(card);
+      }
+    }
+    body.replaceChildren(grid);
+    return;
+  }
+
+  // 0b-10. 军械司（四大攻城重器配发）
+  if (empireTab === "engines") {
+    const form = make("div", undefined, "emp-form-row");
+    const cSel = make("select");
+    for (const ck of myCities) {
+      const cur = engineInCity(state, ck);
+      cSel.append(new Option(`${cityName(world, ck)}${cur ? `（已配:${cur.icon}${cur.name}）` : ""}`, ck));
+    }
+    const lC = make("label"); lC.append(make("span", "配发目标己方城池"), cSel);
+    form.append(lC);
+
+    const grid = make("div", undefined, "emp-grid");
+    for (const eng of SIEGE_ENGINES) {
+      const card = make("div", undefined, "emp-card");
+      card.append(make("strong", `${eng.icon} ${eng.name}`), make("p", eng.summary));
+      const btn = make("button", `打造列装（${eng.costTreasury}金${eng.costGrain}粮）`, "primary");
+      btn.type = "button";
+      btn.disabled = !cSel.value;
+      btn.addEventListener("click", () => {
+        const res = craftSiegeEngine(world, state, cSel.value, eng.id);
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play("order");
+        mutate(() => res.state, res.summary);
+        renderEmpireDialog();
+      });
+      card.append(btn);
+      grid.append(card);
+    }
+    body.replaceChildren(form, grid);
+    return;
+  }
+
+  // 0b-11. 传檄天下（四大舆论诏令）
+  if (empireTab === "edicts") {
+    const form = make("div", undefined, "emp-form-row");
+    const fSel = make("select");
+    for (const ef of enemyFactions) fSel.append(new Option(ef.name, ef.key));
+    const lF = make("label"); lF.append(make("span", "檄文声讨目标诸侯"), fSel);
+    form.append(lF);
+
+    const grid = make("div", undefined, "emp-grid");
+    for (const ed of PUBLIC_EDICTS) {
+      const card = make("div", undefined, "emp-card");
+      card.append(make("strong", `${ed.icon} ${ed.name}`), make("p", ed.summary));
+      const btn = make("button", `颁行诏令（${ed.costTreasury}金）`, "primary");
+      btn.type = "button";
+      btn.addEventListener("click", () => {
+        const res = issuePublicEdict(world, currentEra, state, ed.id, { targetFaction: fSel.value });
+        if (!res.ok) { notify(res.reason, true); return; }
+        sound?.play("event");
+        mutate(() => res.state, res.summary);
+        renderEmpireDialog();
+      });
+      card.append(btn);
+      grid.append(card);
+    }
+    body.replaceChildren(form, grid);
     return;
   }
 
@@ -6443,6 +6604,15 @@ function wireControls() {
     openQuickSearchDialog();
   });
   find("qs-input")?.addEventListener("input", renderQuickSearchResults);
+  // v24.0 沙盘四战略热力滤镜切换
+  document.querySelectorAll(".v24-filter-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.v24Filter || "standard";
+      window.__v24MapFilter = mode;
+      document.querySelectorAll(".v24-filter-btn").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+      render();
+    });
+  });
   // v21.0 + v23.0 端游级全快捷键（W 军机处 / E 朝堂 / C 群雄谱 / T 兵技 / G 智能推演 / "/" 九州秒搜）
   document.addEventListener("keydown", (ev) => {
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;

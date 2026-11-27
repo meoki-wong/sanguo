@@ -18,6 +18,7 @@ import { chokepointBetween, isCoalitionActive } from "./coalition.js";
 import { supplyLinesForMap } from "./supply.js";
 import { cityVisibility, isFogOfWarEnabled } from "./espionage.js";
 import { listActiveAdventures } from "./adventures.js";
+import { listActiveDisasters } from "./relief.js";
 
 const colors = {
   cao: "#416a91", wei: "#416a91", yuan: "#8c6a25", zhang: "#a55b42", shu: "#a1503a",
@@ -983,6 +984,57 @@ export function createMap(world, stage, onCity, onLayer, onArmy, onTheater, onGa
           ctx.strokeStyle = captured ? `rgba(244, 198, 86, ${(1 - nowPulse) * 0.85})` : `rgba(232, 86, 62, ${(1 - nowPulse) * 0.8})`;
           ctx.lineWidth = 2.2 / z;
           ctx.stroke();
+        }
+      }
+      // v24.0 活跃灾区紫色「灾」字警报 & 沙盘四战略热力滤镜（troops / wealth / defense）
+      for (const dis of listActiveDisasters(mapState)) {
+        const p = cityPositions.get(dis.cityKey);
+        if (!p) continue;
+        ctx.fillStyle = "rgba(154, 62, 196, 0.94)";
+        ctx.beginPath();
+        ctx.arc(p[0] + 9 / z, p[1] + 9 / z, 5.4 / z, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#fff5ff";
+        ctx.font = `700 ${Math.max(6, 7.2 / z)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("灾", p[0] + 9 / z, p[1] + 9.4 / z);
+      }
+      const heatMode = typeof window !== "undefined" ? (window.__v24MapFilter || "standard") : "standard";
+      if (heatMode !== "standard") {
+        for (const c of world.cities) {
+          const h = mapState.cities?.[c.key];
+          const p = cityPositions.get(c.key);
+          if (!h || !p) continue;
+          let ratio = 0;
+          let label = "";
+          let hue = "240, 102, 68";
+          if (heatMode === "troops") {
+            ratio = Math.min(1, (h.troops ?? 0) / 14000);
+            label = h.troops >= 10000 ? `${(h.troops / 10000).toFixed(1)}万` : `${Math.round((h.troops ?? 0) / 1000)}千`;
+            hue = "240, 92, 64";
+          } else if (heatMode === "wealth") {
+            const w = (h.commerce ?? 10) + (h.farming ?? 10);
+            ratio = Math.min(1, w / 46);
+            label = `富${w}`;
+            hue = "236, 186, 68";
+          } else if (heatMode === "defense") {
+            ratio = Math.min(1, (h.defense ?? 10) / 40);
+            label = `防${h.defense ?? 0}`;
+            hue = "82, 178, 224";
+          }
+          const rad = (10 + ratio * 15) / z;
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], rad, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${hue}, ${(0.18 + ratio * 0.36).toFixed(2)})`;
+          ctx.fill();
+          ctx.fillStyle = "rgba(18, 15, 11, 0.85)";
+          ctx.fillRect(p[0] - 13 / z, p[1] + 9 / z, 26 / z, 9 / z);
+          ctx.fillStyle = "#f9ecd0";
+          ctx.font = `600 ${Math.max(5.8, 7 / z)}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(label, p[0], p[1] + 13.5 / z);
         }
       }
       ctx.restore();

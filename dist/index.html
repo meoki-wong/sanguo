@@ -342,6 +342,12 @@
     </aside>
   </main>
 
+  <div class="v24-filter-bar" id="v24-filter-bar" aria-label="沙盘战略热力滤镜">
+    <button type="button" class="quiet v24-filter-btn" data-v24-filter="standard" aria-pressed="true">政区</button>
+    <button type="button" class="quiet v24-filter-btn" data-v24-filter="troops" aria-pressed="false">兵力热力</button>
+    <button type="button" class="quiet v24-filter-btn" data-v24-filter="wealth" aria-pressed="false">富庶钱粮</button>
+    <button type="button" class="quiet v24-filter-btn" data-v24-filter="defense" aria-pressed="false">战备城防</button>
+  </div>
   <div class="bottom-hud" id="bottom-hud" hidden>
     <div class="hud-pill-bar map-lens-bar" role="group" aria-label="地图图层">
       <button type="button" data-map-layer="cities" aria-pressed="true">城池</button>
@@ -2588,12 +2594,14 @@
         <button type="button" class="quiet wr-tab" data-wr-tab="trends" aria-selected="false">天下大势</button>
         <button type="button" class="quiet wr-tab" data-wr-tab="mentorship" aria-selected="false">名将授艺</button>
         <button type="button" class="quiet wr-tab" data-wr-tab="saves" aria-selected="false">存档与MVP</button>
+        <button type="button" class="quiet wr-tab" data-wr-tab="annalsbook" aria-selected="false">本朝实录</button>
         <button type="button" class="quiet wr-tab" data-wr-tab="rules" aria-selected="false">规则与码</button>
       </div>
       <div id="wr-panel-advisor" class="wr-panel"></div>
       <div id="wr-panel-roadmap" class="wr-panel" hidden></div>
       <div id="wr-panel-briefing" class="wr-panel" hidden></div>
       <div id="wr-panel-saves" class="wr-panel" hidden></div>
+      <div id="wr-panel-annalsbook" class="wr-panel" hidden></div>
       <div id="wr-panel-trends" class="wr-panel" hidden>
         <div class="wr-metric-bar">
           <button type="button" class="quiet wr-metric-btn" data-wr-metric="power" aria-pressed="true">综合国力</button>
@@ -2659,13 +2667,17 @@
         <button type="button" class="quiet emp-tab" data-emp-group="domestic" data-emp-tab="ceremony" aria-selected="true">开国大典</button>
         <button type="button" class="quiet emp-tab" data-emp-group="domestic" data-emp-tab="reforms" aria-selected="false">朝堂法度</button>
         <button type="button" class="quiet emp-tab" data-emp-group="domestic" data-emp-tab="court" aria-selected="false">群臣廷议</button>
+        <button type="button" class="quiet emp-tab" data-emp-group="domestic" data-emp-tab="megaprojects" aria-selected="false">超级工程</button>
+        <button type="button" class="quiet emp-tab" data-emp-group="domestic" data-emp-tab="relief" aria-selected="false">太医救灾</button>
         <button type="button" class="quiet emp-tab" data-emp-group="military" data-emp-tab="corps" aria-selected="false" hidden>大军团</button>
         <button type="button" class="quiet emp-tab" data-emp-group="military" data-emp-tab="formations" aria-selected="false" hidden>阵法演武</button>
         <button type="button" class="quiet emp-tab" data-emp-group="military" data-emp-tab="navy" aria-selected="false" hidden>长江水师</button>
+        <button type="button" class="quiet emp-tab" data-emp-group="military" data-emp-tab="engines" aria-selected="false" hidden>军械司</button>
         <button type="button" class="quiet emp-tab" data-emp-group="military" data-emp-tab="scrolls" aria-selected="false" hidden>三十六计</button>
         <button type="button" class="quiet emp-tab" data-emp-group="external" data-emp-tab="tribes" aria-selected="false" hidden>边疆五族</button>
         <button type="button" class="quiet emp-tab" data-emp-group="external" data-emp-tab="commerce" aria-selected="false" hidden>商贸黑市</button>
         <button type="button" class="quiet emp-tab" data-emp-group="external" data-emp-tab="vassals" aria-selected="false" hidden>册封附庸</button>
+        <button type="button" class="quiet emp-tab" data-emp-group="external" data-emp-tab="edicts" aria-selected="false" hidden>传檄天下</button>
         <button type="button" class="quiet emp-tab" data-emp-group="saga" data-emp-tab="adventures" aria-selected="false" hidden>九州奇闻</button>
         <button type="button" class="quiet emp-tab" data-emp-group="saga" data-emp-tab="destiny" aria-selected="false" hidden>名将宿命</button>
         <button type="button" class="quiet emp-tab" data-emp-group="saga" data-emp-tab="relations" aria-selected="false" hidden>结义联姻</button>
