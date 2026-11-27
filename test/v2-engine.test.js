@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { enrichWorld } from "../dist/personnel.js";
-import { formatCalendar, troopCounterEffect } from "../dist/v2/constants.js";
+import { CITY_SPECIALTIES, TROOP_TYPES, edgeKey, formatCalendar, roadTerrain, troopCounterEffect } from "../dist/v2/constants.js";
 import {
-  advanceDekad, availableOfficersInCity, checkSupplyLine, computeThreats,
-  createGameV2, deserializeStateV2, dispatchArmy, dispatchEmergencyReinforce,
-  executeDiplomacy, isHostileV2, layCityTrap, redirectArmy, resolveCaptive, rewardOfficer,
-  serializeStateV2, setCityPolicy, setCitySiegeDefense, setCityTroopType,
+  advanceDekad, availableOfficersInCity, bribeDefection, buildFort, canBuildFort,
+  castStratagem, checkSupplyLine, computeThreats, createGameV2, demolishFort,
+  deserializeStateV2, dispatchArmy, dispatchEmergencyReinforce, evaluateDeal,
+  executeDiplomacy, isHostileV2, layCityTrap, proposeDeal, redirectArmy, repairFort,
+  resolveCaptive, rewardOfficer, serializeStateV2, setCityPolicy, setCitySiegeDefense,
+  setCityTroopType, sowDiscord, stratagemCooldownLeft,
 } from "../dist/v2/engine.js";
+import { evaluateBondBonus } from "../dist/v2/systems.js";
 
 const world = enrichWorld(JSON.parse(readFileSync(new URL("../dist/assets/world.json", import.meta.url), "utf8")));
 
@@ -253,4 +256,168 @@ test("AI 活跃推演 12 旬（含围城、解围、季度天时转换）零异�
     assert.ok(Number.isFinite(st.factions.liu.grain));
   }
   assert.equal(st.turn, 12);
+});
+
+test("二期官道工事：关隘寨堡阻敌、连弩箭楼齐射、前哨粮寨延供与江防水寨限制", () => {
+  let st = createGameV2(world, 199, "cao");
+  st.factions.cao.treasury = 300;
+  st.cities.chenliu.troops = 2600;
+  st.cities.puyang.owner = "yuan";
+  st.cities.puyang.troops = 2400;
+
+  // River-only restriction on inland road
+  assert.equal(canBuildFort(world, st, "cao", "xu", "chenliu", "water_fort").ok, false);
+  // River road (chenliu <-> puyang is RIVER_EDGE_SET) allows water_fort, inland allows gate/tower/depot
+  assert.equal(canBuildFort(world, st, "cao", "chenliu", "puyang", "water_fort").ok, true);
+
+  st = buildFort(world, st, "chenliu", "puyang", "gate");
+  const eK = edgeKey("chenliu", "puyang");
+  assert.equal(st.forts[eK].kind, "gate");
+  assert.equal(st.forts[eK].hp, 240);
+
+  // Inject hostile Yuan army marching across gated road -> blocked at 0.48!
+  const yuanOff = Object.values(st.officers).find((o) => o.faction === "yuan" && !o.armyId);
+  st.armies.push({
+    id: "army-gate-test",
+    faction: "yuan",
+    officer: yuanOff.key,
+    troops: 1100,
+    maxTroops: 1100,
+    troopType: "infantry",
+    morale: 85,
+    grain: 20,
+    route: ["puyang", "chenliu"],
+    step: 0,
+    from: "puyang",
+    to: "chenliu",
+    targetCity: "chenliu",
+    depot: "puyang",
+    progress: 0.45,
+    edgeDekads: 2,
+    stance: "attack",
+    siegeStance: "storm",
+    supplyCut: false,
+    reorgDekads: 0,
+  });
+  st = advanceDekad(world, st, { skipAi: true });
+  const enemyArmy = st.armies.find((a) => a.id === "army-gate-test");
+  assert.ok(enemyArmy.progress <= 0.48, "关隘寨堡强行将敌军拦截在 0.48 关卡处");
+  assert.ok(st.forts[eK].hp < 240, "敌军攻打寨堡造成真实耐久损伤");
+  assert.ok(st.lastTurnEvents.some((e) => e.kind === "fort_blocked"));
+
+  // Test repair & demolish
+  st = repairFort(world, st, eK);
+  assert.equal(st.forts[eK].hp, 240);
+  st = demolishFort(st, eK);
+  assert.equal(st.forts[eK], undefined);
+
+  // Test depot fort extending supply line even if rear depot was temporarily flipped
+  st = buildFort(world, st, "xu", "runan", "depot");
+  const caoOff = availableOfficersInCity(st, "xu", "cao")[0];
+  st = dispatchArmy(world, st, { from: "xu", to: "runan", officer: caoOff.key, troops: 1000, troopType: "infantry" });
+  st.cities.xu.owner = "biao";
+  assert.equal(checkSupplyLine(world, st, st.armies.find((a) => a.officer === caoOff.key)), true, "前哨粮寨保障补给线不断绝");
+});
+
+test("二期天时实战奇计（顺风火攻 / 决水淹城 / 奇袭劫粮）与冷却结算", () => {
+  let st = createGameV2(world, 208, "liu");
+  st.factions.liu.treasury = 300;
+  st.weather = { key: "wind", name: "秋高顺风", icon: "💨", marchMult: 1.05, archerMult: 1.05, fireMult: 1.2, riverMult: 1.02, landRiverMult: 1, grainMult: 0.96 };
+
+  // Find a river-adjacent enemy city using real river edge terrain
+  const riverEnemyCity = Object.values(st.cities).find((c) => isHostileV2(st, "liu", c.owner)
+    && world.cities.find((w) => w.key === c.key).links.some((nb) => roadTerrain(c.key, nb) === "river"));
+  assert.ok(riverEnemyCity);
+  const oldWall = riverEnemyCity.wall;
+  st = castStratagem(world, st, { kind: "flood_attack", targetType: "city", targetId: riverEnemyCity.key });
+  assert.ok(st.cities[riverEnemyCity.key].wall < oldWall, "决水淹城直接削减敌城城防耐久");
+  assert.ok(stratagemCooldownLeft(st, "liu", "flood_attack") > 0);
+
+  // Target enemy field army with fire_attack and raid_supply
+  const caoOff = Object.values(st.officers).find((o) => o.faction === "cao" && !o.armyId);
+  st.armies.push({
+    id: "army-strat-test",
+    faction: "cao",
+    officer: caoOff.key,
+    troops: 1400,
+    maxTroops: 1400,
+    troopType: "infantry",
+    morale: 85,
+    grain: 15,
+    route: ["xiangyang", "jiangling"],
+    step: 0,
+    from: "xiangyang",
+    to: "jiangling",
+    targetCity: "jiangling",
+    depot: "xiangyang",
+    progress: 0.4,
+    edgeDekads: 2,
+    stance: "attack",
+    siegeStance: "storm",
+    supplyCut: false,
+    reorgDekads: 0,
+  });
+
+  st = castStratagem(world, st, { kind: "fire_attack", targetType: "army", targetId: "army-strat-test" });
+  const burnt = st.armies.find((a) => a.id === "army-strat-test");
+  assert.ok(burnt.troops < 1400 && burnt.grain < 15);
+
+  st = castStratagem(world, st, { kind: "raid_supply", targetType: "army", targetId: "army-strat-test" });
+  const raided = st.armies.find((a) => a.id === "army-strat-test");
+  assert.equal(raided.grain, 0);
+  assert.equal(raided.supplyCut, true);
+});
+
+test("二期 44 城地域特产、名将羁绊、细作离间策反、筹码驱虎吞狼与一期存档平滑升级", () => {
+  let st = createGameV2(world, 199, "cao");
+  st.factions.cao.treasury = 400;
+  st.factions.cao.grain = 400;
+
+  // All 44 cities have valid specialties
+  assert.equal(Object.values(st.cities).every((c) => CITY_SPECIALTIES[c.specialty]), true);
+  assert.equal(st.cities.beiping.specialty, "horse");
+  assert.equal(st.cities.xu.specialty, "granary");
+
+  // Reequip discount on horse city (jinyang belongs to yuan; give beiping to cao for test)
+  st.cities.beiping.owner = "cao";
+  st.cities.beiping.troopType = "infantry";
+  const tBefore = st.factions.cao.treasury;
+  st = setCityTroopType(st, "beiping", "cavalry");
+  const expectedCost = Math.round(TROOP_TYPES.cavalry.reequipCost * CITY_SPECIALTIES.horse.costMult);
+  assert.equal(tBefore - st.factions.cao.treasury, expectedCost, "良马牧场整编铁骑减费 40%");
+
+  // Historical bond bonus check on 208 Liu Bei + Guan Yu + Zhang Fei
+  const st208 = createGameV2(world, 208, "liu");
+  const liubei = Object.values(st208.officers).find((o) => o.faction === "liu" && o.name === "刘备");
+  const guanyu = Object.values(st208.officers).find((o) => o.faction === "liu" && o.name === "关羽");
+  const bondFx = evaluateBondBonus(st208, liubei.key, [guanyu.key], []);
+  assert.ok(bondFx.atkMult >= 1.1 && bondFx.labels.includes("桃园结义"));
+
+  // Subversion: sowDiscord lowers loyalty twice then bribeDefection succeeds
+  const yuanCity = Object.values(st.cities).find((c) => c.owner === "yuan");
+  const yuanOff = Object.values(st.officers).find((o) => o.faction === "yuan" && o.city === yuanCity.key && o.name !== "袁绍" && !o.armyId);
+  assert.ok(yuanOff);
+  yuanOff.loyalty = 56;
+  st = sowDiscord(world, st, yuanCity.key, yuanOff.key);
+  assert.ok(st.officers[yuanOff.key].loyalty <= 44);
+  st = bribeDefection(world, st, yuanCity.key, yuanOff.key);
+  assert.equal(st.officers[yuanOff.key].faction, "cao", "忠义大跌后重金策反成功倒戈");
+
+  // Bargaining table + 驱虎吞狼 (instigate_war)
+  const deal = { type: "instigate_war", thirdFactionKey: "yuan", gold: 60, grain: 30 };
+  const evalRes = evaluateDeal(world, st, "gongsun", deal);
+  assert.equal(evalRes.accepted, true);
+  const beforeArmies = st.armies.length;
+  st = proposeDeal(world, st, "gongsun", deal);
+  assert.ok(st.armies.length >= beforeArmies, "驱虎吞狼筹码达成");
+
+  // Backward compatibility: strip forts/stratagemCooldowns/specialty like a Phase 1 save
+  const legacyPhase1 = JSON.parse(serializeStateV2(st));
+  delete legacyPhase1.forts;
+  delete legacyPhase1.stratagemCooldowns;
+  for (const c of Object.values(legacyPhase1.cities)) delete c.specialty;
+  const upgraded = deserializeStateV2(world, JSON.stringify(legacyPhase1));
+  assert.deepEqual(upgraded.forts, {});
+  assert.deepEqual(upgraded.stratagemCooldowns, {});
+  assert.equal(upgraded.cities.xu.specialty, "granary");
 });

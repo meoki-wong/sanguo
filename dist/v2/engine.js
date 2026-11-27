@@ -2,11 +2,20 @@
 // 特性：旬制双轨节奏 / 地图在途军团行军与野战截击 / 跨回合多阶段围城战 / 补给线切断 / 5兵种地形天气相克 / 动态忠义与称号觉醒
 
 import {
-  AWAKENED_TITLES, CITY_POLICIES, DEFENSE_TRAPS, DEKADS_PER_SEASON, DIFFICULTY_MODES,
+  AWAKENED_TITLES, CITY_POLICIES, CITY_SPECIALTIES, DEFENSE_TRAPS, DEKADS_PER_SEASON, DIFFICULTY_MODES,
   FACTION_PREFERRED_TROOP, REGIONAL_DEFAULT_TROOP, SEASON_KEYS, SIEGE_DEFENSE_MODES,
-  SIEGE_STANCES, TROOP_TYPES, WEATHER_CATALOG, formatCalendar, roadTerrain, troopCounterEffect,
+  SIEGE_STANCES, TROOP_TYPES, WEATHER_CATALOG, citySpecialtyV2, edgeKey, formatCalendar,
+  roadTerrain, troopCounterEffect,
 } from "./constants.js";
 import { officerMeta } from "../traits.js";
+import {
+  ensurePhase2State, evaluateBondBonus, planAiPhase2Dekad, resolveFortsOnMove,
+} from "./systems.js";
+export {
+  buildFort, canBuildFort, castStratagem, cityBonds, demolishFort, ensurePhase2State,
+  evaluateDeal, fortOnEdge, bribeDefection, proposeDeal, repairFort, sowDiscord,
+  stratagemCooldownLeft,
+} from "./systems.js";
 
 export const V2_VERSION = 2;
 export const MIN_DISPATCH_TROOPS = 300;
@@ -157,10 +166,6 @@ export function armyWorldPosition(world, army) {
 }
 
 export function checkSupplyLine(world, state, army) {
-  const depot = army.depot || army.route?.[0];
-  if (!depot || !canTransitCity(state, army.faction, depot)) return false;
-  if (!canTransitCity(state, army.faction, army.from)) return false;
-
   // Hostile army sitting on army's current road segment behind army cuts supply immediately
   const curPair = [army.from, army.to].sort().join(":");
   const interceptedBehind = (state.armies || []).some((other) => {
@@ -173,6 +178,16 @@ export function checkSupplyLine(world, state, army) {
     );
   });
   if (interceptedBehind) return false;
+
+  // Forward depot fort on army's current edge sustains supply directly
+  const curFort = state.forts?.[edgeKey(army.from, army.to)];
+  if (curFort?.kind === "depot" && (curFort.faction === army.faction || activeTreaty(state, curFort.faction, army.faction)?.kind === "alliance")) {
+    return true;
+  }
+
+  const depot = army.depot || army.route?.[0];
+  if (!depot || !canTransitCity(state, army.faction, depot)) return false;
+  if (!canTransitCity(state, army.faction, army.from)) return false;
 
   if (depot === army.from) return true;
   const path = findRoadPath(world, state, army.faction, depot, army.from, { allowEnemyEnd: false, maxHops: 10 });
@@ -217,6 +232,7 @@ function assignInitialCityStats(world, era, cityKey, owner) {
     commander: null,
     trap: null,
     siegeDefense: "hold",
+    specialty: citySpecialtyV2(cityKey),
     level: clamp(1 + (h % 2), 1, 3),
   };
 }
@@ -334,6 +350,8 @@ export function createGameV2(world, year, playerFaction, { difficulty = "standar
     officers,
     armies: [],
     sieges: {},
+    forts: {},
+    stratagemCooldowns: {},
     treaties: [],
     captives: [],
     events: [{ turn: 0, kind: "system", text: `建元伊始：${era.title}剧本开启，我方执掌「${factions[player].name}」。每回合以「一旬」推进战局，大军沿官道实景行军与跨旬围城。` }],
@@ -385,7 +403,7 @@ export function forecastDispatch(world, state, { from, to, troops, troopType, of
   };
 }
 
-function createArmyRecord(world, state, {
+export function createArmyRecord(world, state, {
   faction, from, route, officerKey, troops, troopType, stance, siegeStance = "storm",
 }) {
   const id = `army-${state.nextArmySeq++}`;
@@ -452,6 +470,12 @@ export function dispatchArmy(world, state, { from, to, officer, troops, troopTyp
   offObj.city = null;
   next.factions[faction].grain -= fc.grainCost;
 
+  const citySpecId = fromCity.specialty || citySpecialtyV2(from);
+  const specTag = (citySpecId === "horse" && resolvedType === "cavalry")
+    || (citySpecId === "shipyard" && resolvedType === "navy")
+    || (citySpecId === "arsenal" && resolvedType === "siege")
+    ? citySpecId : null;
+
   const army = createArmyRecord(world, next, {
     faction,
     from,
@@ -462,6 +486,7 @@ export function dispatchArmy(world, state, { from, to, officer, troops, troopTyp
     stance: finalStance,
     siegeStance: SIEGE_STANCES[siegeStance] ? siegeStance : "storm",
   });
+  army.specialtyTag = specTag;
   offObj.armyId = army.id;
   next.armies.push(army);
 
@@ -572,14 +597,16 @@ export function setCityPolicy(state, cityKey, policyId) {
 export function setCityTroopType(state, cityKey, troopType) {
   const spec = TROOP_TYPES[troopType];
   if (!spec) throw new Error("未知兵种。");
-  const next = structuredClone(state);
+  const next = ensurePhase2State(structuredClone(state));
   const city = next.cities[cityKey];
   if (!city || city.owner !== next.player) throw new Error("仅可整编己方城池驻军。");
   if (city.troopType === troopType) return next;
-  if (next.factions[next.player].treasury < spec.reequipCost) {
-    throw new Error(`换装「${spec.name}」需国库 ${spec.reequipCost} 钱。`);
+  const citySpec = CITY_SPECIALTIES[city.specialty];
+  const cost = citySpec?.troopBoost === troopType ? Math.max(4, Math.round(spec.reequipCost * (citySpec.costMult ?? 1))) : spec.reequipCost;
+  if (next.factions[next.player].treasury < cost) {
+    throw new Error(`换装「${spec.name}」需国库 ${cost} 钱。`);
   }
-  next.factions[next.player].treasury -= spec.reequipCost;
+  next.factions[next.player].treasury -= cost;
   city.troopType = troopType;
   return next;
 }
@@ -887,7 +914,7 @@ function officerPowerMult(state, off, isSiege = false, isDef = false, terrain = 
   return clamp(m, 0.72, 1.65);
 }
 
-function returnOfficerHome(state, offKey, preferredCityKey) {
+export function returnOfficerHome(state, offKey, preferredCityKey) {
   const off = state.officers[offKey];
   if (!off) return;
   off.armyId = null;
@@ -923,11 +950,23 @@ function resolveFieldBattle(world, state, a, b, events) {
   const cAB = troopCounterEffect(a.troopType, b.troopType, terrain, state.weather);
   const cBA = troopCounterEffect(b.troopType, a.troopType, terrain, state.weather);
 
+  const alliesA = state.armies.filter((x) => x.faction === a.faction && x.id !== a.id && x.troops > 0).map((x) => x.officer);
+  const alliesB = state.armies.filter((x) => x.faction === b.faction && x.id !== b.id && x.troops > 0).map((x) => x.officer);
+  const bondA = evaluateBondBonus(state, a.officer, alliesA, [b.officer]);
+  const bondB = evaluateBondBonus(state, b.officer, alliesB, [a.officer]);
+  const fort = state.forts?.[edgeKey(a.from, a.to)];
+  const wfMultA = fort?.kind === "water_fort" && fort.faction === a.faction && a.troopType === "navy" ? 1.18 : 1;
+  const wfMultB = fort?.kind === "water_fort" && fort.faction === b.faction && b.troopType === "navy" ? 1.18 : 1;
+  const specMultA = (a.specialtyTag === "horse" && a.troopType === "cavalry") || (a.specialtyTag === "shipyard" && a.troopType === "navy") ? 1.12 : 1;
+  const specMultB = (b.specialtyTag === "horse" && b.troopType === "cavalry") || (b.specialtyTag === "shipyard" && b.troopType === "navy") ? 1.12 : 1;
+
   const powA = a.troops * cAB.mult * officerPowerMult(state, offA, false, false, terrain)
-    * (0.72 + a.morale * 0.004) * (a.supplyCut ? 0.72 : 1) * (TROOP_TYPES[a.troopType]?.plainBonus ? 1 : 1)
+    * bondA.atkMult * wfMultA * specMultA
+    * (0.72 + a.morale * 0.004) * (a.supplyCut ? 0.72 : 1)
     * (a.troopType === "siege" ? 0.82 : 1)
     * (a.faction !== state.player ? DIFFICULTY_MODES[state.difficulty || "standard"].aiAtkMult : 1);
   const powB = b.troops * cBA.mult * officerPowerMult(state, offB, false, false, terrain)
+    * bondB.atkMult * wfMultB * specMultB
     * (0.72 + b.morale * 0.004) * (b.supplyCut ? 0.72 : 1)
     * (b.troopType === "siege" ? 0.82 : 1)
     * (b.faction !== state.player ? DIFFICULTY_MODES[state.difficulty || "standard"].aiAtkMult : 1);
@@ -936,12 +975,14 @@ function resolveFieldBattle(world, state, a, b, events) {
   const aWins = powA >= powB;
   const winner = aWins ? a : b;
   const loser = aWins ? b : a;
+  const winBond = aWins ? bondA : bondB;
+  const loseBond = aWins ? bondB : bondA;
   const winPow = aWins ? powA : powB;
   const losePow = aWins ? powB : powA;
   const dom = clamp(winPow / Math.max(1, losePow), 1, 3.2);
 
-  const rawWinLoss = Math.round(winner.troops * (0.12 + 0.14 / dom) * (TROOP_TYPES[winner.troopType]?.lossMult ?? 1));
-  const rawLoseLoss = Math.round(loser.troops * clamp(0.24 * dom, 0.24, 0.65) * (TROOP_TYPES[loser.troopType]?.lossMult ?? 1));
+  const rawWinLoss = Math.round(winner.troops * (0.12 + 0.14 / dom) * (TROOP_TYPES[winner.troopType]?.lossMult ?? 1) * winBond.lossMult);
+  const rawLoseLoss = Math.round(loser.troops * clamp(0.24 * dom, 0.24, 0.65) * (TROOP_TYPES[loser.troopType]?.lossMult ?? 1) * loseBond.lossMult);
 
   const winLoss = clamp(rawWinLoss, 25, Math.max(25, winner.troops - 120));
   const loseLoss = clamp(rawLoseLoss, 40, loser.troops);
@@ -1160,30 +1201,37 @@ function resolveSieges(world, state, events) {
       const share = a.troops / Math.max(1, totalAttTroops);
       const tSpec = TROOP_TYPES[a.troopType] || TROOP_TYPES.infantry;
       const offObj = state.officers[a.officer];
+      const attBond = evaluateBondBonus(state, a.officer, attackers.map((x) => x.officer), [city.commander, city.governor].filter(Boolean));
       const counter = troopCounterEffect(a.troopType, city.troopType, "plain", state.weather);
+      const arsenalBonus = a.specialtyTag === "arsenal" && a.troopType === "siege" ? 1.15 : 1;
       const pow = a.troops * counter.mult * officerPowerMult(state, offObj, true, false, "plain")
-        * (0.72 + a.morale * 0.0038) * (a.supplyCut ? 0.72 : 1) * encircleBonus
+        * attBond.atkMult * (0.72 + a.morale * 0.0038) * (a.supplyCut ? 0.72 : 1) * encircleBonus
         * (a.faction !== state.player ? DIFFICULTY_MODES[state.difficulty || "standard"].aiAtkMult : 1);
 
       weightedAttPow += pow;
-      avgWallDmgMult += st.wallDmgMult * share * tSpec.siegeMult;
+      avgWallDmgMult += st.wallDmgMult * share * tSpec.siegeMult * arsenalBonus;
       maxFoodDrain = Math.max(maxFoodDrain, st.foodDrain);
-      avgAttLossMult += st.attLossMult * share;
+      avgAttLossMult += st.attLossMult * share * attBond.lossMult;
       avgDefLossMult += st.defLossMult * share;
       avgMoraleDrain += st.moraleDrain * share;
       if (a.troopType === "siege") siegeEngineFactor = Math.max(siegeEngineFactor, 1.35);
     }
 
+    const defBond = city.commander
+      ? evaluateBondBonus(state, city.commander, [city.governor].filter(Boolean), attackers.map((x) => x.officer))
+      : { defMult: 1, lossMult: 1 };
     const wallRatioBonus = 1 + (city.wall / Math.max(1, city.wallMax)) * 0.45 + (TROOP_TYPES[city.troopType]?.wallDefBonus ?? 0);
-    const defPow = Math.max(200, city.troops * wallRatioBonus * officerPowerMult(state, defCmd, false, true, "plain") * (0.72 + city.morale * 0.0035));
+    const defPow = Math.max(200, city.troops * wallRatioBonus * officerPowerMult(state, defCmd, false, true, "plain") * defBond.defMult * (0.72 + city.morale * 0.0035));
 
     // Calculate wall, food, morale, and troop attrition for ONE dekad
     const rawWallDmg = clamp(Math.round((42 + (weightedAttPow / Math.max(400, defPow)) * 46) * avgWallDmgMult * (defMode.wallMitigation ?? 1)), 12, 165);
     const attLossesTotal = clamp(Math.round(totalAttTroops * 0.055 * (defPow / Math.max(300, weightedAttPow)) * avgAttLossMult * (defMode.sallyMult ?? 1)), 25, Math.round(totalAttTroops * 0.35));
-    const defLosses = clamp(Math.round(city.troops * 0.068 * (weightedAttPow / Math.max(350, defPow)) * avgDefLossMult * (defMode.lossMitigation ?? 1)), 30, city.troops);
+    const defLosses = clamp(Math.round(city.troops * 0.068 * (weightedAttPow / Math.max(350, defPow)) * avgDefLossMult * defBond.lossMult * (defMode.lossMitigation ?? 1)), 30, city.troops);
 
+    const citySpec = CITY_SPECIALTIES[city.specialty];
+    const foodDrainMult = citySpec?.foodLossMult ?? 1;
     city.wall = Math.max(0, city.wall - rawWallDmg);
-    city.foodReserve = Math.max(0, city.foodReserve - Math.round(maxFoodDrain * (siegeEngineFactor > 1 ? 1.05 : 1)));
+    city.foodReserve = Math.max(0, city.foodReserve - Math.round(maxFoodDrain * foodDrainMult * (siegeEngineFactor > 1 ? 1.05 : 1)));
     const starvationMorale = city.foodReserve === 0 ? 18 : 0;
     city.morale = clamp(city.morale - Math.round(avgMoraleDrain + starvationMorale), 5, 100);
     city.troops = Math.max(0, city.troops - defLosses);
@@ -1240,8 +1288,11 @@ function applyMonthlyGovernance(world, state, events) {
     const underSiege = Boolean(state.sieges[city.key]);
 
     if (!underSiege) {
-      const tGain = Math.round((7 + city.level * 2.5) * pol.treasuryMult * govBonus * ecoMult);
-      const gGain = Math.round((9 + city.level * 3) * pol.grainMult * govBonus * ecoMult);
+      const cSpec = CITY_SPECIALTIES[city.specialty];
+      const specTreasuryMult = 1 + (cSpec?.treasuryBonus ?? 0);
+      const specGrainMult = 1 + (cSpec?.grainBonus ?? 0);
+      const tGain = Math.round((7 + city.level * 2.5) * pol.treasuryMult * govBonus * ecoMult * specTreasuryMult);
+      const gGain = Math.round((9 + city.level * 3) * pol.grainMult * govBonus * ecoMult * specGrainMult);
       fac.treasury += tGain;
       fac.grain += gGain;
 
@@ -1399,11 +1450,14 @@ export function checkOutcome(state) {
  */
 export function advanceDekad(world, state, { skipAi = false } = {}) {
   if (state.outcome !== "ongoing") return state;
-  const next = structuredClone(state);
+  const next = ensurePhase2State(structuredClone(state));
   next.turn += 1;
   const events = [];
 
-  if (!skipAi) planAiDekad(world, next);
+  if (!skipAi) {
+    planAiDekad(world, next);
+    planAiPhase2Dekad(world, next);
+  }
 
   // 1. Update positions, advance marching armies & check supply lines
   for (const a of next.armies) {
@@ -1447,6 +1501,10 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
       const req = edgeDekadsRequired(world, a.from, a.to, a.troopType, next.weather, next.officers[a.officer]);
       a.edgeDekads = req;
       a.progress = Math.min(1, a.progress + 1 / req);
+    }
+    resolveFortsOnMove(world, next, a, events);
+    if (a.troops <= 0) {
+      returnOfficerHome(next, a.officer, null);
     }
   }
 
@@ -1767,5 +1825,5 @@ export function deserializeStateV2(world, raw) {
   if (!parsed.factions[parsed.player]) {
     throw new Error("存档玩家势力无效。");
   }
-  return parsed;
+  return ensurePhase2State(parsed);
 }

@@ -1,6 +1,6 @@
 // 经略三国 2.0 — 入口与旬制主循环编排
 
-import { TROOP_TYPES } from "./constants.js";
+import { CITY_SPECIALTIES, TROOP_TYPES } from "./constants.js";
 import {
   advanceDekad, armyEtaDekads, cityNameV2, computeThreats, createGameV2,
   deserializeStateV2, factionNameV2, forecastDispatch, serializeStateV2,
@@ -58,6 +58,10 @@ async function boot() {
       sound?.play?.("click");
       ui?.selectArmy(armyId, false);
     },
+    onSelectEdge(edgeKey, aKey, bKey) {
+      sound?.play?.("click");
+      ui?.selectEdge(edgeKey, aKey, bKey);
+    },
     onPreviewDispatch(fromKey, toKey) {
       const city = state.cities[fromKey];
       if (!city) return null;
@@ -87,7 +91,8 @@ async function boot() {
       if (info.type === "city") {
         const c = state.cities[info.key];
         const sp = TROOP_TYPES[c.troopType] || TROOP_TYPES.infantry;
-        tooltip.innerHTML = `<strong>${cityNameV2(world, info.key)}</strong>（${factionNameV2(world, state, c.owner)}）<br>${sp.icon} ${sp.name} ${c.troops.toLocaleString()} · 城防 ${c.wall}/${c.wallMax}`;
+        const spec = CITY_SPECIALTIES[c.specialty];
+        tooltip.innerHTML = `<strong>${cityNameV2(world, info.key)}</strong>（${factionNameV2(world, state, c.owner)}）${spec ? `<br>${spec.icon} ${spec.name}` : ""}<br>${sp.icon} ${sp.name} ${c.troops.toLocaleString()} · 城防 ${c.wall}/${c.wallMax}`;
       } else if (info.type === "army") {
         const a = state.armies.find((x) => x.id === info.armyId);
         if (!a) {

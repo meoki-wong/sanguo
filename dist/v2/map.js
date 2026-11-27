@@ -1,7 +1,8 @@
 // 经略三国 2.0 — 九州实时战略沙盘舆图与动态战局演播引擎
 
 import {
-  DEFENSE_TRAPS, SIEGE_STANCES, TERRAIN_LABELS, TROOP_TYPES, factionColor, roadTerrain,
+  DEFENSE_TRAPS, FORT_CATALOG, HISTORICAL_PASSES, SIEGE_STANCES,
+  TERRAIN_LABELS, TROOP_TYPES, edgeDisplayName, edgeKey, factionColor, roadTerrain,
 } from "./constants.js";
 import {
   armyEtaDekads, armyWorldPosition, checkSupplyLine, computeThreats, eraByYearV2,
@@ -22,6 +23,7 @@ export function createMapV2(world, stage, callbacks = {}) {
   const {
     onSelectCity,
     onSelectArmy,
+    onSelectEdge,
     onDragDispatch,
     onPreviewDispatch,
     onHover,
@@ -77,7 +79,8 @@ export function createMapV2(world, stage, callbacks = {}) {
   let state = null;
   let selectedCity = null;
   let selectedArmyId = null;
-  let overlayMode = "standard"; // "standard" | "supply" | "troops"
+  let selectedEdgeKey = null;
+  let overlayMode = "standard"; // "standard" | "supply" | "troops" | "forts"
 
   // Live animations during/after advanceDekad
   let armyAnim = null; // { start, duration, fromMap: Map<id,[x,y]> }
@@ -94,6 +97,7 @@ export function createMapV2(world, stage, callbacks = {}) {
   // Reusable DOM pins inside markerLayer
   const cityPins = new Map();
   const armyPins = new Map();
+  const fortPins = new Map();
 
   for (const c of world.cities) {
     const btn = document.createElement("button");
@@ -340,6 +344,82 @@ export function createMapV2(world, stage, callbacks = {}) {
       if (!activeIds.has(id)) {
         pin.btn.remove();
         armyPins.delete(id);
+      }
+    }
+  }
+
+  function syncFortPins(rect, fit) {
+    if (!state) return;
+    const shownKeys = new Set();
+    for (const [a, b] of roadEdges) {
+      const eKey = edgeKey(a, b);
+      const fort = state.forts?.[eKey];
+      const isPass = Boolean(HISTORICAL_PASSES[eKey]);
+      const ownAdj = state.cities[a]?.owner === state.player || state.cities[b]?.owner === state.player;
+      const showAnchor = overlayMode === "forts" && (isPass || ownAdj);
+      const showZoomPass = isPass && camera.zoom >= 1.5;
+      if (!fort && !showAnchor && !showZoomPass && selectedEdgeKey !== eKey) continue;
+
+      shownKeys.add(eKey);
+      let pin = fortPins.get(eKey);
+      if (!pin) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "v2-fort-pin";
+        btn.dataset.edgeKey = eKey;
+        btn.innerHTML = `<span class="v2-fort-icon"></span><span class="v2-fort-name"></span><span class="v2-fort-hp" hidden><i></i></span>`;
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          onHover?.(null);
+          onSelectEdge?.(eKey, a, b);
+        });
+        markerLayer.append(btn);
+        pin = {
+          btn,
+          icon: btn.querySelector(".v2-fort-icon"),
+          name: btn.querySelector(".v2-fort-name"),
+          hpWrap: btn.querySelector(".v2-fort-hp"),
+          hpBar: btn.querySelector(".v2-fort-hp i"),
+        };
+        fortPins.set(eKey, pin);
+      }
+
+      const pa = cityPositions.get(a);
+      const pb = cityPositions.get(b);
+      const midWorld = [(pa[0] + pb[0]) * 0.5, (pa[1] + pb[1]) * 0.5];
+      const [vx, vy] = toView(midWorld);
+      const px = fit.left + vx * fit.scale;
+      const py = fit.top + vy * fit.scale;
+      const out = px < 10 || px > rect.width - 10 || py < 10 || py > rect.height - 10;
+      pin.btn.hidden = out;
+      if (out) continue;
+
+      pin.btn.style.left = `${px}px`;
+      pin.btn.style.top = `${py}px`;
+      pin.btn.dataset.selected = String(selectedEdgeKey === eKey);
+      pin.btn.dataset.built = String(Boolean(fort));
+
+      if (fort) {
+        const fSpec = FORT_CATALOG[fort.kind] || FORT_CATALOG.gate;
+        pin.icon.textContent = fSpec.icon;
+        pin.name.textContent = HISTORICAL_PASSES[eKey] ? HISTORICAL_PASSES[eKey].split("·")[0] : fSpec.name.slice(0, 2);
+        pin.btn.style.setProperty("--force", factionColor(fort.faction));
+        pin.hpWrap.hidden = false;
+        pin.hpBar.style.width = `${Math.max(6, Math.round((fort.hp / Math.max(1, fort.hpMax)) * 100))}%`;
+        pin.btn.setAttribute("aria-label", `${edgeDisplayName(world, a, b)} ${fSpec.name}`);
+      } else {
+        pin.icon.textContent = "⚒️";
+        pin.name.textContent = HISTORICAL_PASSES[eKey] ? HISTORICAL_PASSES[eKey].split("·")[0] : "筑堡";
+        pin.btn.style.removeProperty("--force");
+        pin.hpWrap.hidden = true;
+        pin.btn.setAttribute("aria-label", `${edgeDisplayName(world, a, b)} 关隘要冲`);
+      }
+    }
+
+    for (const [k, pin] of fortPins.entries()) {
+      if (!shownKeys.has(k)) {
+        pin.btn.remove();
+        fortPins.delete(k);
       }
     }
   }
@@ -665,6 +745,7 @@ export function createMapV2(world, stage, callbacks = {}) {
 
     syncCityPins(rect, fit);
     syncArmyPins(rect, fit);
+    syncFortPins(rect, fit);
   }
 
   function ensurePulseLoop() {
@@ -803,11 +884,24 @@ export function createMapV2(world, stage, callbacks = {}) {
   window.addEventListener("resize", () => draw());
 
   return {
-    render(nextState, { city, armyId, overlay } = {}) {
+    render(nextState, { city, armyId, edgeKey: eKey, overlay } = {}) {
       state = nextState;
       if (city !== undefined) selectedCity = city;
       if (armyId !== undefined) selectedArmyId = armyId;
+      if (eKey !== undefined) selectedEdgeKey = eKey;
       if (overlay !== undefined) overlayMode = overlay;
+      ensurePulseLoop();
+      draw();
+    },
+    flashEvents(events = []) {
+      const now = performance.now();
+      for (const ev of events) {
+        if (!ev.pos) continue;
+        if (ev.kind === "stratagem_fire") fxList.push({ pos: ev.pos, color: "#ff7238", text: "🔥 顺风火攻!", start: now, duration: 1700 });
+        else if (ev.kind === "stratagem_flood") fxList.push({ pos: ev.pos, color: "#4cb8f0", text: "🌊 决水淹城!", start: now, duration: 1750 });
+        else if (ev.kind === "stratagem_raid") fxList.push({ pos: ev.pos, color: "#ffd252", text: "⚡ 奇袭劫粮!", start: now, duration: 1700 });
+        else if (ev.kind === "defection") fxList.push({ pos: ev.pos, color: "#76f2a2", text: "🏳️ 阵前倒戈!", start: now, duration: 1850 });
+      }
       ensurePulseLoop();
       draw();
     },
@@ -834,6 +928,12 @@ export function createMapV2(world, stage, callbacks = {}) {
           fxList.push({ pos: ev.pos, color: "#ff9b54", text: `城防 -${ev.wallDmg}`, start: now, duration: 1350 });
         } else if (ev.kind === "supply_cut") {
           fxList.push({ pos: ev.pos, color: "#ff5c5c", text: "⚡ 断粮危机!", start: now, duration: 1600 });
+        } else if (ev.kind === "fort_fire") {
+          fxList.push({ pos: ev.pos, color: "#f6c968", text: "🏹 箭楼截杀!", start: now, duration: 1450 });
+        } else if (ev.kind === "fort_blocked") {
+          fxList.push({ pos: ev.pos, color: "#ffb878", text: "🧱 关隘受阻!", start: now, duration: 1500 });
+        } else if (ev.kind === "fort_destroyed") {
+          fxList.push({ pos: ev.pos, color: "#ff6648", text: "💥 寨堡拔除!", start: now, duration: 1650 });
         }
       }
 

@@ -289,3 +289,155 @@ export const FACTION_PREFERRED_TROOP = {
   shu: "archer",
   zhang: "archer",
 };
+
+// ===== 二期扩展常量：官道名关工事 / 天时战策 / 44城地域特产 / 名将羁绊宿敌 =====
+
+export function edgeKey(a, b) {
+  return [a, b].sort().join(":");
+}
+
+export const HISTORICAL_PASSES = {
+  "changan:luoyang": "潼关·函谷",
+  "luoyang:wan": "伊阙关",
+  "changan:tianshui": "陈仓·街亭",
+  "nanzheng:zitong": "剑阁·阳平关",
+  "jiangling:yufu": "夷陵·三峡",
+  "chaisang:jiangxia": "赤壁江津",
+  "lujiang:moling": "濡须口",
+  "moling:shouchun": "合肥江津",
+  "chenliu:puyang": "官渡·白马津",
+  "luoyang:ye": "孟津渡",
+  "nanzheng:shangyong": "子午道",
+  "jiangzhou:yufu": "白帝江关",
+  "beiping:xiangping": "山海榆关",
+  "guzang:tianshui": "凉州隘口",
+};
+
+export function edgeDisplayName(world, aKey, bKey) {
+  const eKey = edgeKey(aKey, bKey);
+  if (HISTORICAL_PASSES[eKey]) return HISTORICAL_PASSES[eKey];
+  const nA = world?.cities?.find((c) => c.key === aKey)?.name || aKey;
+  const nB = world?.cities?.find((c) => c.key === bKey)?.name || bKey;
+  return `${nA}—${nB}官道`;
+}
+
+export const FORT_CATALOG = {
+  gate: {
+    id: "gate",
+    name: "关隘寨堡",
+    icon: "🧱",
+    cost: 24,
+    hpMax: 240,
+    blocksTransit: true,
+    requiresRiver: false,
+    summary: "卡死官道咽喉！敌军行至寨前会被迫强停攻堡，未破寨前绝不可越雷池一步。",
+  },
+  tower: {
+    id: "tower",
+    name: "连弩箭楼",
+    icon: "🏹",
+    cost: 20,
+    hpMax: 160,
+    arrowDmgPct: 0.085,
+    requiresRiver: false,
+    summary: "险道射台：每旬自动向途经官道的敌对军团齐射箭雨，损兵折气。",
+  },
+  depot: {
+    id: "depot",
+    name: "前哨粮寨",
+    icon: "🌾",
+    cost: 18,
+    hpMax: 150,
+    grainBoost: 4,
+    requiresRiver: false,
+    summary: "延伸随军补给中继点，确保深远征伐不断粮，并为路过己军补粮提振士气。",
+  },
+  water_fort: {
+    id: "water_fort",
+    name: "江防水寨",
+    icon: "⚓",
+    cost: 22,
+    hpMax: 200,
+    navyBonus: 0.18,
+    requiresRiver: true,
+    summary: "限江渡官道筑造：大幅增强水师渡江战力(+18%)并截杀涉江陆军。",
+  },
+};
+
+export const STRATAGEM_CATALOG = {
+  fire_attack: {
+    id: "fire_attack",
+    name: "顺风火攻",
+    icon: "🔥",
+    cost: 16,
+    cooldown: 2,
+    summary: "焚烧在途敌军或敌方官道工事（秋风/夏炎威力大增，雨雪减效）。",
+  },
+  flood_attack: {
+    id: "flood_attack",
+    name: "决水淹城",
+    icon: "🌊",
+    cost: 20,
+    cooldown: 3,
+    summary: "决堤灌冲临江敌城城防或滞留渡河敌军（夏汛威力暴涨）。",
+  },
+  raid_supply: {
+    id: "raid_supply",
+    name: "奇袭劫粮",
+    icon: "⚡",
+    cost: 14,
+    cooldown: 2,
+    summary: "遣精骑绕后烧毁敌军随军辎重（立刻断粮并大挫士气）。",
+  },
+};
+
+export const CITY_SPECIALTIES = {
+  horse: { id: "horse", name: "良马牧场", icon: "🐎", troopBoost: "cavalry", atkBonus: 0.12, costMult: 0.6, desc: "铁骑整编减费 40%，由此出征的铁骑野战突击 +12%" },
+  shipyard: { id: "shipyard", name: "楼船水坞", icon: "⛵", troopBoost: "navy", atkBonus: 0.12, costMult: 0.6, desc: "水师整编减费 40%，由此出征的水师渡战 +12%" },
+  granary: { id: "granary", name: "天府粮仓", icon: "🌾", grainBonus: 0.4, foodLossMult: 0.8, desc: "月度军粮产出 +40%，被围时城内余粮消耗减缓 20%" },
+  arsenal: { id: "arsenal", name: "军械名都", icon: "🪨", troopBoost: "siege", siegeBonus: 0.15, costMult: 0.55, desc: "攻城械整编减费 45%，由此造出的攻城械破墙 +15%" },
+  trade: { id: "trade", name: "商贸通衢", icon: "💰", treasuryBonus: 0.45, desc: "商贾云集之地，月度国库税收额外 +45%" },
+};
+
+const SPECIALTY_GROUPS = {
+  horse: ["guzang", "tianshui", "anding", "jinyang", "beiping", "xiangping", "ji", "nanpi"],
+  shipyard: ["moling", "wu", "shanyin", "chaisang", "lujiang", "jiangxia", "jiangling", "xiangyang"],
+  granary: ["chengdu", "zitong", "nanzheng", "xu", "chenliu", "ye", "pingyuan", "runan", "xinye", "jiangzhou"],
+  arsenal: ["luoyang", "changan", "shouchun", "xiapi", "xiaopei", "puyang", "wan", "yufu", "shangyong"],
+  trade: ["panyu", "jiaozhi", "beihai", "linxiang", "guiyang", "quanling", "linyuan", "jianning", "yunnan"],
+};
+
+const CITY_SPECIALTY_LOOKUP = Object.fromEntries(
+  Object.entries(SPECIALTY_GROUPS).flatMap(([specId, keys]) => keys.map((k) => [k, specId])),
+);
+
+export function citySpecialtyV2(cityKey) {
+  return CITY_SPECIALTY_LOOKUP[cityKey] || "trade";
+}
+
+export const OFFICER_BONDS_V2 = [
+  { id: "taoyuan", name: "桃园结义", members: ["刘备", "关羽", "张飞"], atkBonus: 0.12, defBonus: 0.08, lossMult: 0.88 },
+  { id: "wuhu", name: "五虎上将", members: ["关羽", "张飞", "赵云", "马超", "黄忠"], atkBonus: 0.1, defBonus: 0.06, lossMult: 0.9 },
+  { id: "wuzi", name: "五子良将", members: ["张辽", "乐进", "于禁", "张郃", "徐晃"], atkBonus: 0.1, defBonus: 0.09, lossMult: 0.9 },
+  { id: "wolong_fengchu", name: "卧龙凤雏", members: ["诸葛亮", "庞统", "徐庶"], atkBonus: 0.11, defBonus: 0.1, lossMult: 0.88 },
+  { id: "jiangdong_twins", name: "江东双璧", members: ["孙策", "周瑜", "太史慈"], atkBonus: 0.12, defBonus: 0.06, lossMult: 0.9 },
+  { id: "wu_marshals", name: "江东柱石", members: ["周瑜", "鲁肃", "吕蒙", "陆逊"], atkBonus: 0.09, defBonus: 0.11, lossMult: 0.89 },
+  { id: "wei_kin", name: "魏氏宗亲", members: ["曹操", "夏侯惇", "夏侯渊", "曹仁", "曹洪"], atkBonus: 0.08, defBonus: 0.1, lossMult: 0.91 },
+  { id: "wei_strategists", name: "曹魏谋主", members: ["荀彧", "荀攸", "郭嘉", "贾诩", "程昱"], atkBonus: 0.08, defBonus: 0.11, lossMult: 0.9 },
+  { id: "yuan_pillars", name: "河北名将", members: ["颜良", "文丑", "张郃", "高览", "田丰"], atkBonus: 0.09, defBonus: 0.07, lossMult: 0.92 },
+  { id: "xiliang", name: "西凉铁骑", members: ["马腾", "马超", "韩遂", "庞德"], atkBonus: 0.11, defBonus: 0.05, lossMult: 0.92 },
+  { id: "later_shu", name: "蜀汉后柱", members: ["诸葛亮", "姜维", "魏延", "王平"], atkBonus: 0.09, defBonus: 0.09, lossMult: 0.91 },
+  { id: "jin_marshals", name: "晋室中枢", members: ["司马懿", "司马昭", "羊祜", "杜预", "文鸯"], atkBonus: 0.1, defBonus: 0.1, lossMult: 0.9 },
+];
+
+export const OFFICER_RIVALS_V2 = [
+  ["曹操", "刘备"],
+  ["诸葛亮", "司马懿"],
+  ["周瑜", "诸葛亮"],
+  ["关羽", "吕蒙"],
+  ["关羽", "曹仁"],
+  ["张飞", "吕布"],
+  ["曹操", "吕布"],
+  ["张辽", "孙权"],
+];
+
