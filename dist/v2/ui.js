@@ -1,4 +1,4 @@
-// 经略三国 4.0 — 军机处中枢决断 / 朝堂六卿官职 / 郡国农商基建 / 战役大势指挥舱
+// 经略三国 5.0 — 军团都督委任 / 地方州牧施政 / 军机处中枢决断 / 朝堂六卿官职 / 郡国农商基建
 
 import {
   AWAKENED_TITLES, CITY_POLICIES, CITY_SPECIALTIES, DEFENSE_TRAPS, DIFFICULTY_MODES,
@@ -7,21 +7,27 @@ import {
   formatCalendar, roadTerrain,
 } from "./constants.js";
 import {
-  CITY_BUILDINGS_V4, COURT_OFFICES_V4, EMPEROR_EDICTS_V3, MIN_DISPATCH_TROOPS,
-  MIN_GARRISON_LEAVE, OPENING_DEV_DEKADS, TAX_LEVELS_V4, activeTreaty, appointCourtOffice,
-  appointOfficer, approveAllCabinet, approveCabinetProposal, armyEtaDekads, availableOfficersInCity,
-  batchSetCityPolicy, bribeDefection, buildCabinetBriefings, buildFort, buildingBuildDekads,
-  buildingUpgradeCost, canBuildFort, castStratagem, checkSupplyLine, cityBonds, cityByKey, cityNameV2, cityTierInfo,
-  clearSupplyLink, computeCourtBonuses, computeThreats, createGameV2, demolishFort,
-  deserializeStateV2, dismissCabinetProposal, dispatchArmy, dispatchEmergencyReinforce,
-  enactDecree, eraByYearV2, estimateFactionEconomy, evaluateDeal, executeDiplomacy, factionNameV2,
-  factionSummary, forecastDispatch, hasDecree, isHostileV2, issueImperialEdict,
-  launchCoordinatedAttack, layCityTrap, officerBattleArt, planCoordinatedAttack, proposeDeal,
-  rankProgressForFaction, recruitWanderingOfficer, redirectArmy, renderDiploMatrixHtml,
-  renderPowerChartSvg, renderReplayMapSvg, repairFort, resolveCaptive, resolveEventChoice,
-  rewardOfficer, serializeStateV2, setAutoGovernance, setCityPolicy, setCitySiegeDefense,
-  setCityTroopType, setSupplyLink, setTaxLevel, sowDiscord, stratagemCooldownLeft,
-  transferOfficer, triggerArmyArt, upgradeCityBuilding,
+  AUTO_PAUSE_MODES, CITY_BUILDINGS_V4, CORPS_MISSIONS, COURT_OFFICES_V4, EMPEROR_EDICTS_V3,
+  GOVERNOR_DIRECTIVES, MIN_DISPATCH_TROOPS, MIN_GARRISON_LEAVE, OPENING_DEV_DEKADS,
+  PRESTIGE_RANKS_V4, TAX_LEVELS_V4, activeTreaty, appointCourtOffice, appointOfficer,
+  appointRegionalGovernor, approveAllCabinet, approveCabinetProposal, armyEtaDekads,
+  assignCityToCorps, availableOfficersInCity, batchSetCityPolicy, bribeDefection,
+  buildCabinetBriefings, buildFort, buildingBuildDekads, buildingUpgradeCost, canBuildFort,
+  castStratagem, checkSupplyLine, cityBonds, cityByKey, cityNameV2, cityTierInfo,
+  clearSupplyLink, computeCourtBonuses, computeRegionalGovernorBonus, computeThreats,
+  createCorps, createGameV2, demolishFort, deserializeStateV2, disbandCorps,
+  dismissCabinetProposal, dispatchArmy, dispatchEmergencyReinforce, enactDecree, eraByYearV2,
+  estimateFactionEconomy, evaluateDeal, executeDiplomacy, factionNameV2, factionSummary,
+  forecastDispatch, getCorpsForCity, getOfficersInCorps, getPlayerRegions, hasDecree,
+  isHostileV2, issueImperialEdict, launchCoordinatedAttack, layCityTrap, officerBattleArt,
+  planCoordinatedAttack, prestigeRankForFaction, previewCityRecruit, previewSmartDispatch,
+  proposeDeal, rankProgressForFaction, recallOfficerFromCorps, recruitCityTroops,
+  recruitWanderingOfficer, redirectArmy, renderDiploMatrixHtml, renderPowerChartSvg,
+  renderReplayMapSvg, repairFort, resolveCaptive, resolveEventChoice, rewardOfficer,
+  sendOfficerToCorps, serializeStateV2, setAutoGovernance, setAutoPauseMode, setCityPolicy,
+  setCitySiegeDefense, setCityTroopType, setSupplyLink, setTaxLevel, smartAutoDispatch,
+  sowDiscord, stratagemCooldownLeft, transferOfficer, triggerArmyArt, updateCorps,
+  upgradeCityBuilding,
 } from "./engine.js";
 
 const $ = (id) => document.getElementById(id);
@@ -93,6 +99,17 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
   let replayIndex = -1;
   let edictTarget = null;
   let transferDraft = { officer: null, to: null };
+  let smartRatio = 0.75;
+  let advancedDispatchOpen = false;
+  let corpsDraft = {
+    name: "",
+    commanderKey: "",
+    mission: "conquer_city",
+    targetCity: "",
+    targetFaction: "",
+    supplyToCity: "",
+    cityKeys: [],
+  };
 
   let menuScenarioYear = null;
   let menuFaction = null;
@@ -513,6 +530,9 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
     const wallPct = Math.round((city.wall / Math.max(1, city.wallMax)) * 100);
     const cmdOff = city.commander ? state.officers[city.commander] : null;
     const govOff = city.governor ? state.officers[city.governor] : null;
+    const cityCorps = isOwn ? getCorpsForCity(state, cityKey) : null;
+    const regName = city.region || cMeta.region;
+    const regGovInfo = isOwn ? computeRegionalGovernorBonus(state, { ...city, region: regName }) : null;
 
     if (handleSummary) {
       handleSummary.textContent = `${cMeta.name}（${ownerName}）· ${spec.icon}${city.troops.toLocaleString()} · 城防${wallPct}%`;
@@ -527,6 +547,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
         <div style="display:flex;flex-wrap:wrap;gap:0.35rem">
           ${state.emperorCity === cityKey ? `<span class="v2-specialty-pill">👑 汉帝行在（天子驻跸）</span>` : ""}
           ${citySpec ? `<span class="v2-specialty-pill" title="${esc(citySpec.desc)}">${citySpec.icon} ${esc(citySpec.name)}</span>` : ""}
+          ${regGovInfo?.officer ? `<span class="v2-specialty-pill">🏛️ ${esc(regName)}州牧：${esc(regGovInfo.officer.name)}</span>` : ""}
           ${activeBonds.map((b) => `<span class="v2-bond-pill" title="${esc(b.matched.join(" / "))}">🤝 ${esc(b.name)}</span>`).join("")}
         </div>
         ${citySpec ? `<p class="v2-muted" style="font-size:0.72rem">${esc(citySpec.desc)}</p>` : ""}
@@ -549,6 +570,14 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
           </div>
         </div>
         <p class="v2-muted">太守：${esc(govOff?.name || "虚位")} ｜ 守将：${esc(cmdOff?.name || "虚位")}${city.trap && DEFENSE_TRAPS[city.trap.id] ? ` ｜ 暗伏：${DEFENSE_TRAPS[city.trap.id].icon}${DEFENSE_TRAPS[city.trap.id].name}` : ""}</p>
+        ${isOwn ? `
+          <div class="v2-recruit-row">
+            <span class="v2-muted" style="font-size:0.75rem">${cityCorps ? `🚩 归属「${esc(cityCorps.name)}」` : "👑 主公直辖"}</span>
+            <select class="v2-select" id="city-assign-corps" style="width:auto;max-width:62%;padding:0.24rem 1.7rem 0.24rem 0.45rem;font-size:0.74rem">
+              <option value="" ${!cityCorps ? "selected" : ""}>👑 归主公直辖</option>
+              ${(state.corps || []).map((co) => `<option value="${esc(co.id)}" ${cityCorps?.id === co.id ? "selected" : ""}>🚩 划入【${esc(co.name)}】</option>`).join("")}
+            </select>
+          </div>` : ""}
       </div>`;
 
     if (isBesieged) {
@@ -615,6 +644,65 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
           return hostA - hostB || a.troops - b.troops;
         });
 
+      const recPrev = previewCityRecruit(state, cityKey, state.player);
+      const tier = cityTierInfo(city);
+      const orderVal = Number.isFinite(city.publicOrder) ? city.publicOrder : 78;
+      const treasury = state.factions[state.player]?.treasury ?? 0;
+      const con = city.construction;
+      const conDef = con ? CITY_BUILDINGS_V4[con.trackId] : null;
+
+      html += `
+        <div class="v2-card">
+          <div class="v2-card-head">
+            <h3>🏗️ 郡国农商基建 · 征兵 · 治安</h3>
+            <span class="v2-badge">${esc(tier.title)} (${tier.totalDev}/20)</span>
+          </div>
+          <div class="v2-stat-box">
+            <small>公共秩序 (${orderVal}/100${orderVal < 30 ? " · ⚠️ 恐生民变" : ""})</small>
+            <div class="v2-bar order"><i style="width:${orderVal}%"></i></div>
+          </div>
+          ${con && conDef ? `
+            <div class="v2-forecast-line">
+              🔨 正在施工：<strong>${conDef.icon} ${esc(conDef.name)} Lv.${con.targetLevel}</strong>（尚余 <strong>${con.remainingDekads}/${con.totalDekads} 旬</strong> 竣工${isBesieged ? " · 围城暂缓" : ""}）
+            </div>` : ""}
+          <div class="v2-building-grid">
+            ${Object.values(CITY_BUILDINGS_V4).map((b) => {
+              const lv = city.buildings?.[b.id] ?? 0;
+              const maxd = lv >= 5;
+              const cost = maxd ? 0 : buildingUpgradeCost(state, state.player, b.id, lv + 1);
+              const dur = maxd ? 0 : buildingBuildDekads(lv + 1);
+              const blocked = maxd || isBesieged || Boolean(con) || treasury < cost;
+              return `
+                <button type="button" class="v2-building-cell" data-upgrade-building="${esc(b.id)}" ${blocked ? "disabled" : ""} title="${esc(b.summary)}">
+                  <div class="v2-row-top">
+                    <strong style="font-size:0.78rem">${b.icon} ${esc(b.name)}</strong>
+                    <span class="v2-badge">Lv.${lv}/5</span>
+                  </div>
+                  <span class="v2-muted" style="font-size:0.7rem">${maxd ? "✅ 已至满级" : con ? "另有工程在建" : isBesieged ? "围城停工" : `动工 Lv.${lv + 1} · ${cost}钱/${dur}旬`}</span>
+                </button>`;
+            }).join("")}
+          </div>
+          <div class="v2-recruit-row">
+            <span class="v2-muted" style="font-size:0.74rem">兵源上限 ${recPrev.cap.toLocaleString()} 人</span>
+            <button type="button" class="v2-btn secondary" id="btn-city-recruit" ${recPrev.ok ? "" : "disabled"} title="${esc(recPrev.reason || "耗费钱粮即刻募兵补员")}">
+              ⚔️ 立即征兵 (${recPrev.ok ? `+${recPrev.amount}人 · ${recPrev.goldCost}钱/${recPrev.grainCost}粮` : esc(recPrev.reason.slice(0, 14))})
+            </button>
+          </div>
+          <div class="v2-field">
+            <label>月度自动治城方针</label>
+            <div class="v2-chip-grid">
+              ${Object.values(CITY_POLICIES).map((p) => `
+                <button type="button" class="v2-chip ${city.policy === p.id ? "active" : ""}" data-city-policy="${p.id}" title="${esc(p.desc)}">${p.icon} ${esc(p.name)}</button>`).join("")}
+            </div>
+          </div>
+        </div>`;
+
+      const smartPrev = dispatchDraft.to ? previewSmartDispatch(world, state, {
+        from: cityKey,
+        to: dispatchDraft.to,
+        troopRatio: smartRatio,
+      }) : { ok: false, reason: "请选择出兵目标城池。" };
+
       const canSend = draftInfo && draftInfo.avail.length > 0 && draftInfo.maxSend >= MIN_DISPATCH_TROOPS && dispatchDraft.to;
       const fc = canSend ? forecastDispatch(world, state, {
         from: cityKey,
@@ -626,15 +714,15 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
       }) : null;
       const depChoices = draftInfo.avail.filter((o) => o.key !== dispatchDraft.officer);
       const selectedForm = FORMATIONS_V2[dispatchDraft.formation] || FORMATIONS_V2.heyi;
+      const targetCityObj = dispatchDraft.to ? state.cities[dispatchDraft.to] : null;
+      const isFriendlyTarget = targetCityObj && (targetCityObj.owner === state.player || activeTreaty(state, state.player, targetCityObj.owner)?.kind === "alliance");
 
       html += `
         <div class="v2-card">
           <div class="v2-card-head">
-            <h3>⚔️ 派军出征 / 驰援前线</h3>
+            <h3>⚡ 极简一键出征 / 驰援</h3>
             <span class="v2-muted" style="font-size:0.72rem">拖拽或右键地图目标城快选</span>
           </div>
-          ${draftInfo.avail.length === 0 ? `<p class="v2-muted">⚠️ 当前城内暂无空闲武将，可自「任免」或别城调派。</p>` : ""}
-          ${draftInfo.maxSend < MIN_DISPATCH_TROOPS ? `<p class="v2-muted">⚠️ 驻军需保留 ${MIN_GARRISON_LEAVE} 留守，当前兵力暂不足出征（需至少 ${MIN_GARRISON_LEAVE + MIN_DISPATCH_TROOPS} 人）。</p>` : ""}
           <div class="v2-field">
             <label>出兵目标城池</label>
             <select class="v2-select" id="dispatch-to">
@@ -645,109 +733,83 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
               }).join("")}
             </select>
           </div>
-          <div class="v2-field">
-            <label>领兵主将</label>
-            <select class="v2-select" id="dispatch-officer">
-              ${draftInfo.avail.map((o) => `<option value="${esc(o.key)}" ${dispatchDraft.officer === o.key ? "selected" : ""}>${esc(o.name)}（统${o.command} 武${o.might} 忠${o.loyalty}）</option>`).join("")}
-            </select>
+          <div class="v2-chip-grid">
+            ${[
+              { pct: 0.5, label: "半编 (50%)" },
+              { pct: 0.75, label: "精锐 (75%)" },
+              { pct: 0.95, label: "倾巢 (95%)" },
+            ].map((item) => `
+              <button type="button" class="v2-chip ${Math.abs(smartRatio - item.pct) < 0.02 ? "active" : ""}" data-smart-pct="${item.pct}">${item.label}</button>`).join("")}
           </div>
-          <div class="v2-field">
-            <label>随军副将（激活名将羁绊与作战加成）</label>
-            <select class="v2-select" id="dispatch-deputy">
-              <option value="">-- 无副将 --</option>
-              ${depChoices.map((o) => `<option value="${esc(o.key)}" ${dispatchDraft.deputy === o.key ? "selected" : ""}>${esc(o.name)}（统${o.command} 武${o.might}）</option>`).join("")}
-            </select>
-          </div>
-          <div class="v2-field">
-            <label>出征主力兵种</label>
-            <div class="v2-chip-grid">
-              ${Object.values(TROOP_TYPES).map((t) => `
-                <button type="button" class="v2-chip ${dispatchDraft.troopType === t.id ? "active" : ""}" data-draft-troop="${t.id}" title="${esc(t.detail)}">${t.icon} ${esc(t.name)}</button>`).join("")}
-            </div>
-          </div>
-          <div class="v2-field">
-            <label><span>出动兵力</span><strong id="dispatch-troops-val">${dispatchDraft.troops.toLocaleString()} 人</strong></label>
-            <input type="range" id="dispatch-troops" min="${MIN_DISPATCH_TROOPS}" max="${Math.max(MIN_DISPATCH_TROOPS, draftInfo.maxSend)}" step="50" value="${dispatchDraft.troops}" ${draftInfo.maxSend < MIN_DISPATCH_TROOPS ? "disabled" : ""}>
-            <div class="v2-chip-grid">
-              <button type="button" class="v2-chip" data-troop-pct="0.5">半编 (50%)</button>
-              <button type="button" class="v2-chip" data-troop-pct="0.75">精锐 (75%)</button>
-              <button type="button" class="v2-chip" data-troop-pct="1">倾巢出动</button>
-            </div>
-          </div>
-          <div class="v2-field">
-            <label>行军战阵</label>
-            <div class="v2-chip-grid">
-              ${Object.values(FORMATIONS_V2).map((fm) => `
-                <button type="button" class="v2-chip ${dispatchDraft.formation === fm.id ? "active" : ""}" data-draft-form="${fm.id}" title="${esc(fm.summary)}">${fm.icon} ${esc(fm.name)}</button>`).join("")}
-            </div>
-            <p class="v2-muted">${esc(selectedForm.summary)}</p>
-          </div>
-          <div class="v2-field">
-            <label>临城默认围攻方略</label>
-            <div class="v2-chip-grid">
-              ${Object.values(SIEGE_STANCES).map((st) => `
-                <button type="button" class="v2-chip ${dispatchDraft.siegeStance === st.id ? "active" : ""}" data-draft-stance="${st.id}" title="${esc(st.summary)}">${st.icon} ${esc(st.name)}</button>`).join("")}
-            </div>
-          </div>
-          ${fc ? (fc.ok ? `
-            <div class="v2-forecast-line ${fc.counter.relation}">
-              🛣️ 约 <strong>${fc.dekads} 旬</strong> 抵达 · 耗粮 <strong id="dispatch-grain-val">${fc.grainCost} 石</strong> · ${TERRAIN_LABELS[fc.terrain]}
-              ${fc.counter.label ? `<br>⚔️ ${esc(fc.counter.label)}` : ""}
-            </div>` : `<div class="v2-forecast-line countered">${esc(fc.reason)}</div>`) : ""}
-          <button type="button" class="v2-btn primary" id="btn-dispatch" ${canSend && fc?.ok ? "" : "disabled"}>
-            ${fc?.isFriendlyDest ? "🛡️ 挥师驰援" : "⚔️ 誓师出征"}
+          ${smartPrev.ok ? `
+            <div class="v2-forecast-line ${smartPrev.forecast.counter.relation}">
+              自动择将：<strong>${esc(smartPrev.officer.name)}</strong>${smartPrev.deputy ? ` + 副将 <strong>${esc(smartPrev.deputy.name)}</strong>` : ""} · <strong>${smartPrev.troops.toLocaleString()} 人</strong> · ${smartPrev.forecast.dekads} 旬抵达 · 耗粮 ${smartPrev.forecast.grainCost} 石
+            </div>` : `<div class="v2-forecast-line countered">${esc(smartPrev.reason || "暂不可出征")}</div>`}
+          <button type="button" class="v2-btn primary" id="btn-smart-dispatch" ${smartPrev.ok ? "" : "disabled"}>
+            ${isFriendlyTarget ? "🛡️ 委任将领驰援" : "⚡ 委任将领出征"}
           </button>
+
+          <details class="v2-collapse" id="advanced-dispatch-details" ${advancedDispatchOpen ? "open" : ""}>
+            <summary><span>⚙️ 高级手动编组（自选将领 / 兵种 / 阵型）</span><span>展开 ▾</span></summary>
+            <div class="v2-collapse-body">
+              <div class="v2-field">
+                <label>领兵主将</label>
+                <select class="v2-select" id="dispatch-officer">
+                  ${draftInfo.avail.map((o) => `<option value="${esc(o.key)}" ${dispatchDraft.officer === o.key ? "selected" : ""}>${esc(o.name)}（统${o.command} 武${o.might} 忠${o.loyalty}）</option>`).join("")}
+                </select>
+              </div>
+              <div class="v2-field">
+                <label>随军副将（激活名将羁绊与作战加成）</label>
+                <select class="v2-select" id="dispatch-deputy">
+                  <option value="">-- 无副将 --</option>
+                  ${depChoices.map((o) => `<option value="${esc(o.key)}" ${dispatchDraft.deputy === o.key ? "selected" : ""}>${esc(o.name)}（统${o.command} 武${o.might}）</option>`).join("")}
+                </select>
+              </div>
+              <div class="v2-field">
+                <label>出征主力兵种</label>
+                <div class="v2-chip-grid">
+                  ${Object.values(TROOP_TYPES).map((t) => `
+                    <button type="button" class="v2-chip ${dispatchDraft.troopType === t.id ? "active" : ""}" data-draft-troop="${t.id}" title="${esc(t.detail)}">${t.icon} ${esc(t.name)}</button>`).join("")}
+                </div>
+              </div>
+              <div class="v2-field">
+                <label><span>出动兵力</span><strong id="dispatch-troops-val">${dispatchDraft.troops.toLocaleString()} 人</strong></label>
+                <input type="range" id="dispatch-troops" min="${MIN_DISPATCH_TROOPS}" max="${Math.max(MIN_DISPATCH_TROOPS, draftInfo.maxSend)}" step="50" value="${dispatchDraft.troops}" ${draftInfo.maxSend < MIN_DISPATCH_TROOPS ? "disabled" : ""}>
+                <div class="v2-chip-grid">
+                  <button type="button" class="v2-chip" data-troop-pct="0.5">50%</button>
+                  <button type="button" class="v2-chip" data-troop-pct="0.75">75%</button>
+                  <button type="button" class="v2-chip" data-troop-pct="1">100%</button>
+                </div>
+              </div>
+              <div class="v2-field">
+                <label>行军战阵</label>
+                <div class="v2-chip-grid">
+                  ${Object.values(FORMATIONS_V2).map((fm) => `
+                    <button type="button" class="v2-chip ${dispatchDraft.formation === fm.id ? "active" : ""}" data-draft-form="${fm.id}" title="${esc(fm.summary)}">${fm.icon} ${esc(fm.name)}</button>`).join("")}
+                </div>
+                <p class="v2-muted">${esc(selectedForm.summary)}</p>
+              </div>
+              <div class="v2-field">
+                <label>临城默认围攻方略</label>
+                <div class="v2-chip-grid">
+                  ${Object.values(SIEGE_STANCES).map((st) => `
+                    <button type="button" class="v2-chip ${dispatchDraft.siegeStance === st.id ? "active" : ""}" data-draft-stance="${st.id}" title="${esc(st.summary)}">${st.icon} ${esc(st.name)}</button>`).join("")}
+                </div>
+              </div>
+              ${fc ? (fc.ok ? `
+                <div class="v2-forecast-line ${fc.counter.relation}">
+                  🛣️ 约 <strong>${fc.dekads} 旬</strong> 抵达 · 耗粮 <strong id="dispatch-grain-val">${fc.grainCost} 石</strong> · ${TERRAIN_LABELS[fc.terrain]}
+                  ${fc.counter.label ? `<br>⚔️ ${esc(fc.counter.label)}` : ""}
+                </div>` : `<div class="v2-forecast-line countered">${esc(fc.reason)}</div>`) : ""}
+              <button type="button" class="v2-btn secondary" id="btn-dispatch" ${canSend && fc?.ok ? "" : "disabled"}>
+                ${fc?.isFriendlyDest ? "🛡️ 手动誓师驰援" : "⚔️ 手动誓师出征"}
+              </button>
+            </div>
+          </details>
         </div>
 
-        ${(() => {
-          const tier = cityTierInfo(city);
-          const orderVal = Number.isFinite(city.publicOrder) ? city.publicOrder : 78;
-          const treasury = state.factions[state.player]?.treasury ?? 0;
-          const con = city.construction;
-          const conDef = con ? CITY_BUILDINGS_V4[con.trackId] : null;
-          return `
-            <div class="v2-card">
-              <div class="v2-card-head">
-                <h3>🏗️ 郡国农商基建与治安</h3>
-                <span class="v2-badge">${esc(tier.title)} (${tier.totalDev}/20)</span>
-              </div>
-              <div class="v2-stat-box">
-                <small>公共秩序 (${orderVal}/100${orderVal < 30 ? " · ⚠️ 恐生民变" : ""})</small>
-                <div class="v2-bar order"><i style="width:${orderVal}%"></i></div>
-              </div>
-              ${con && conDef ? `
-                <div class="v2-forecast-line">
-                  🔨 正在施工：<strong>${conDef.icon} ${esc(conDef.name)} Lv.${con.targetLevel}</strong>（尚余 <strong>${con.remainingDekads}/${con.totalDekads} 旬</strong> 竣工${isBesieged ? " · 围城暂缓" : ""}）
-                </div>` : ""}
-              <div class="v2-building-grid">
-                ${Object.values(CITY_BUILDINGS_V4).map((b) => {
-                  const lv = city.buildings?.[b.id] ?? 0;
-                  const maxd = lv >= 5;
-                  const cost = maxd ? 0 : buildingUpgradeCost(state, state.player, b.id, lv + 1);
-                  const dur = maxd ? 0 : buildingBuildDekads(lv + 1);
-                  const blocked = maxd || isBesieged || Boolean(con) || treasury < cost;
-                  return `
-                    <button type="button" class="v2-building-cell" data-upgrade-building="${esc(b.id)}" ${blocked ? "disabled" : ""} title="${esc(b.summary)}">
-                      <div class="v2-row-top">
-                        <strong style="font-size:0.78rem">${b.icon} ${esc(b.name)}</strong>
-                        <span class="v2-badge">Lv.${lv}/5</span>
-                      </div>
-                      <span class="v2-muted" style="font-size:0.7rem">${maxd ? "✅ 已至满级" : con ? "另有工程在建" : isBesieged ? "围城停工" : `动工 Lv.${lv + 1} · ${cost}钱/${dur}旬`}</span>
-                    </button>`;
-                }).join("")}
-              </div>
-            </div>`;
-        })()}
-
         <div class="v2-card">
-          <div class="v2-card-head"><h3>🏛️ 治城方针 · 整编 · 设伏</h3></div>
-          <div class="v2-field">
-            <label>月度自动治城方针</label>
-            <div class="v2-chip-grid">
-              ${Object.values(CITY_POLICIES).map((p) => `
-                <button type="button" class="v2-chip ${city.policy === p.id ? "active" : ""}" data-city-policy="${p.id}" title="${esc(p.desc)}">${p.icon} ${esc(p.name)}</button>`).join("")}
-            </div>
-          </div>
+          <div class="v2-card-head"><h3>🛡️ 整编 · 设伏 · 临机驰援</h3></div>
           <div class="v2-field">
             <label>驻军常备兵种整编${citySpec?.costMult ? "（本城特产享折扣）" : ""}</label>
             <div class="v2-chip-grid">
@@ -799,9 +861,10 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
 
       const idlePool = Object.values(state.officers).filter((o) => o.faction === state.player && !o.armyId && !o.capturedBy && !o.transferringTo);
       const idleLocal = idlePool.filter((o) => o.city === cityKey);
+      const availableCorps = state.corps || [];
       html += `
         <div class="v2-card">
-          <div class="v2-card-head"><h3>📜 城池官署任免与驿传调防</h3></div>
+          <div class="v2-card-head"><h3>📜 城池官署任免 · 调防 · 输送军团</h3></div>
           <div class="v2-field">
             <label>太守（加成月度钱粮/征兵）</label>
             <select class="v2-select" id="city-set-gov">
@@ -816,6 +879,19 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
               ${idlePool.slice().sort((a, b) => b.command - a.command).map((o) => `<option value="${esc(o.key)}" ${city.commander === o.key ? "selected" : ""}>${esc(o.name)}（统${o.command} 武${o.might}）</option>`).join("")}
             </select>
           </div>
+          ${idleLocal.length && availableCorps.length ? `
+            <div class="v2-field" style="padding-top:0.35rem;border-top:1px solid rgba(255,255,255,0.06)">
+              <label>🚀 直接输送本城将领给委任军团</label>
+              <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:0.32rem">
+                <select class="v2-select" id="city-send-off">
+                  ${idleLocal.map((o) => `<option value="${esc(o.key)}">${esc(o.name)}</option>`).join("")}
+                </select>
+                <select class="v2-select" id="city-send-corps">
+                  ${availableCorps.map((co) => `<option value="${esc(co.id)}">拨入【${esc(co.name)}】</option>`).join("")}
+                </select>
+                <button type="button" class="v2-btn secondary" id="btn-city-send-corps">输送</button>
+              </div>
+            </div>` : ""}
           ${idleLocal.length && otherPlayerCities.length ? `
             <div class="v2-field" style="padding-top:0.35rem;border-top:1px solid rgba(255,255,255,0.06)">
               <label>将领驿传快速调防（1~2 旬直达前线）</label>
@@ -1087,6 +1163,34 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
       });
     });
 
+    $("city-assign-corps")?.addEventListener("change", (ev) => {
+      applyCommand((s) => assignCityToCorps(world, s, cityKey, ev.target.value || null));
+    });
+    $("btn-city-recruit")?.addEventListener("click", () => {
+      applyCommand((s) => recruitCityTroops(world, s, cityKey));
+    });
+    inspectorBody.querySelectorAll("[data-smart-pct]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        smartRatio = Number(btn.dataset.smartPct);
+        renderInspector(getState());
+      });
+    });
+    $("btn-smart-dispatch")?.addEventListener("click", () => {
+      applyCommand((s) => smartAutoDispatch(world, s, {
+        from: cityKey,
+        to: dispatchDraft.to,
+        troopRatio: smartRatio,
+      }), `${cityNameV2(world, dispatchDraft.to)}征伐大军已由委任将领带队出发！`);
+    });
+    $("advanced-dispatch-details")?.addEventListener("toggle", (ev) => {
+      advancedDispatchOpen = ev.target.open;
+    });
+    $("btn-city-send-corps")?.addEventListener("click", () => {
+      const offK = $("city-send-off")?.value;
+      const cid = $("city-send-corps")?.value;
+      if (offK && cid) applyCommand((s) => sendOfficerToCorps(world, s, offK, cid));
+    });
+
     $("city-set-gov")?.addEventListener("change", (ev) => {
       applyCommand((s) => appointOfficer(s, cityKey, "governor", ev.target.value || null), "已调整太守任命");
     });
@@ -1166,7 +1270,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
 
         <div class="v2-card">
           <div class="v2-card-head">
-            <h3>⚖️ 国家税赋与重臣理政托管</h3>
+            <h3>⚖️ 国家税赋 · 理政托管 · 推演节奏</h3>
             <button type="button" class="v2-btn primary" id="btn-approve-all" ${proposals.length ? "" : "disabled"}>✨ 一键全批推荐项 (${proposals.length})</button>
           </div>
           <div class="v2-chip-grid">
@@ -1179,6 +1283,15 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
             <button type="button" class="v2-auto-toggle" data-auto-gov="autoEconomy" aria-pressed="${Boolean(autoGov.autoEconomy)}">🌾 自理农商基建</button>
             <button type="button" class="v2-auto-toggle" data-auto-gov="autoPersonnel" aria-pressed="${Boolean(autoGov.autoPersonnel)}">📜 自理礼贤招降</button>
             <button type="button" class="v2-auto-toggle" data-auto-gov="autoDefense" aria-pressed="${Boolean(autoGov.autoDefense)}">⚔️ 自理危城急援</button>
+          </div>
+          <div class="v2-auto-bar">
+            <span class="v2-muted" style="font-size:0.74rem">推演暂停时机：</span>
+            ${Object.values(AUTO_PAUSE_MODES).map((pm) => `
+              <button type="button" class="v2-chip ${(state.autoPauseMode || "major") === pm.id ? "active" : ""}" data-pause-mode="${esc(pm.id)}" title="${esc(pm.summary)}">${esc(pm.name)}</button>`).join("")}
+          </div>
+          <div class="v2-recruit-row">
+            <span class="v2-muted" style="font-size:0.74rem">已有 ${(state.corps || []).length} 支委任军团 · ${Object.keys(state.governors || {}).length} 位地方州牧</span>
+            <button type="button" class="v2-btn secondary" id="btn-open-delegation-from-cabinet">🚩 委任军团与地方州牧</button>
           </div>
         </div>
 
@@ -1237,6 +1350,17 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
         const ok = applyCommand((s) => setAutoGovernance(s, key, nextVal));
         if (ok) renderCabinetDialog();
       });
+    });
+    body.querySelectorAll("[data-pause-mode]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const mode = btn.dataset.pauseMode;
+        const ok = applyCommand((s) => setAutoPauseMode(s, mode), `推演暂停策略已设为「${AUTO_PAUSE_MODES[mode]?.name || mode}」`);
+        if (ok) renderCabinetDialog();
+      });
+    });
+    $("btn-open-delegation-from-cabinet")?.addEventListener("click", () => {
+      closeDialogSafe(dialog);
+      openCourtDialog("delegation");
     });
     body.querySelectorAll("[data-cab-approve]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1398,6 +1522,333 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
         btn.addEventListener("click", () => {
           const id = btn.dataset.enactDecree;
           const ok = applyCommand((s) => enactDecree(world, s, id), `已颁布国家方略「${NATIONAL_DECREES_V2[id].name}」！`);
+          if (ok) renderCourtDialog();
+        });
+      });
+    } else if (courtTab === "delegation") {
+      const corpsList = state.corps || [];
+      const ownCities = Object.values(state.cities)
+        .filter((c) => c.owner === state.player)
+        .sort((a, b) => b.troops - a.troops);
+      const assignedCitySet = new Set(corpsList.flatMap((c) => c.cities || []));
+      const unassignedCities = ownCities.filter((c) => !assignedCitySet.has(c.key));
+      const usedCommanders = new Set(corpsList.map((c) => c.commanderKey).filter(Boolean));
+      const allOfficers = Object.values(state.officers)
+        .filter((o) => o.faction === state.player && !o.capturedBy)
+        .sort((a, b) => (b.command * 1.2 + b.might + b.governance * 0.4) - (a.command * 1.2 + a.might + a.governance * 0.4));
+      const cmdCandidates = allOfficers.filter((o) => !usedCommanders.has(o.key));
+      const enemyCities = Object.values(state.cities)
+        .filter((c) => isHostileV2(state, state.player, c.owner))
+        .sort((a, b) => a.troops - b.troops);
+      const hostileFactions = Object.values(state.factions).filter(
+        (f) => f.key !== state.player && isHostileV2(state, state.player, f.key)
+          && Object.values(state.cities).some((c) => c.owner === f.key),
+      );
+
+      if (!corpsDraft.commanderKey || !cmdCandidates.some((o) => o.key === corpsDraft.commanderKey)) {
+        corpsDraft.commanderKey = cmdCandidates[0]?.key || "";
+      }
+      corpsDraft.cityKeys = corpsDraft.cityKeys.filter((ck) => state.cities[ck]?.owner === state.player);
+      if (!corpsDraft.cityKeys.length && ownCities.length) {
+        corpsDraft.cityKeys = [unassignedCities[0]?.key || ownCities[0].key];
+      }
+      if (!corpsDraft.targetCity || !enemyCities.some((c) => c.key === corpsDraft.targetCity)) {
+        corpsDraft.targetCity = enemyCities[0]?.key || "";
+      }
+      if (!corpsDraft.targetFaction || !hostileFactions.some((f) => f.key === corpsDraft.targetFaction)) {
+        corpsDraft.targetFaction = hostileFactions[0]?.key || "";
+      }
+      if (!corpsDraft.supplyToCity || state.cities[corpsDraft.supplyToCity]?.owner !== state.player) {
+        corpsDraft.supplyToCity = ownCities[0]?.key || "";
+      }
+
+      const corpsTargetSelect = (idAttr, dataAttr, missionId, curCity, curFac, curSup) => {
+        if (missionId === "conquer_city") {
+          return `<select class="v2-select" ${idAttr ? `id="${idAttr}"` : ""} ${dataAttr ? `${dataAttr}` : ""}>
+            ${enemyCities.map((c) => `<option value="${esc(c.key)}" ${curCity === c.key ? "selected" : ""}>攻打 ${esc(cityNameV2(world, c.key))}（${esc(factionNameV2(world, state, c.owner))}·${c.troops}人）</option>`).join("")}
+          </select>`;
+        }
+        if (missionId === "conquer_faction") {
+          return `<select class="v2-select" ${idAttr ? `id="${idAttr}"` : ""} ${dataAttr ? `${dataAttr}` : ""}>
+            ${hostileFactions.map((f) => `<option value="${esc(f.key)}" ${curFac === f.key ? "selected" : ""}>征讨「${esc(f.name)}」</option>`).join("")}
+          </select>`;
+        }
+        if (missionId === "logistics") {
+          return `<select class="v2-select" ${idAttr ? `id="${idAttr}"` : ""} ${dataAttr ? `${dataAttr}` : ""}>
+            ${ownCities.map((c) => `<option value="${esc(c.key)}" ${curSup === c.key ? "selected" : ""}>输血「${esc(cityNameV2(world, c.key))}」（${c.troops}人）</option>`).join("")}
+          </select>`;
+        }
+        return `<span class="v2-muted" style="font-size:0.75rem">自主固守防线与驰援受围城池</span>`;
+      };
+
+      const corpsCardsHtml = corpsList.length ? corpsList.map((co) => {
+        const cmd = co.commanderKey ? state.officers[co.commanderKey] : null;
+        const mSpec = CORPS_MISSIONS[co.mission] || CORPS_MISSIONS.defend;
+        const roster = getOfficersInCorps(state, co.id);
+        const coCitySet = new Set(co.cities || []);
+        const totalTroops = (co.cities || []).reduce((s, ck) => s + (state.cities[ck]?.troops || 0), 0);
+        const sendable = allOfficers.filter((o) => !o.armyId && !o.transferringTo && !coCitySet.has(o.city));
+        return `
+          <div class="v2-corps-card">
+            <div class="v2-row-top">
+              <strong>🚩 ${esc(co.name)} · 都督 ${esc(cmd?.name || "虚位")}${cmd ? `（统${cmd.command} 武${cmd.might}）` : ""}</strong>
+              <div style="display:flex;gap:0.35rem;align-items:center">
+                <span class="v2-badge">${mSpec.icon} 辖 ${(co.cities || []).length} 城 · ${totalTroops.toLocaleString()}兵</span>
+                <button type="button" class="v2-btn quiet" data-disband-corps="${esc(co.id)}" style="padding:0.2rem 0.45rem;font-size:0.72rem">解散</button>
+              </div>
+            </div>
+            <div class="v2-inline-form">
+              <select class="v2-select" data-corps-mission="${esc(co.id)}">
+                ${Object.values(CORPS_MISSIONS).map((m) => `<option value="${esc(m.id)}" ${co.mission === m.id ? "selected" : ""}>${m.icon} ${esc(m.name)}</option>`).join("")}
+              </select>
+              ${corpsTargetSelect("", `data-corps-target="${esc(co.id)}"`, co.mission, co.targetCity, co.targetFaction, co.supplyToCity)}
+              <button type="button" class="v2-btn secondary" data-save-corps="${esc(co.id)}" style="padding:0.32rem 0.6rem">保存方针</button>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center">
+              <span class="v2-muted" style="font-size:0.72rem">辖区：</span>
+              ${(co.cities || []).map((ck) => `
+                <button type="button" class="v2-chip-remove" data-remove-corps-city="${esc(co.id)}:${esc(ck)}" title="点击移出并归主公直辖">
+                  ${esc(cityNameV2(world, ck))} (${state.cities[ck]?.troops || 0}) ×
+                </button>`).join("")}
+            </div>
+            ${unassignedCities.length ? `
+              <div class="v2-inline-form">
+                <select class="v2-select" data-add-corps-city-select="${esc(co.id)}">
+                  ${unassignedCities.map((uc) => `<option value="${esc(uc.key)}">${esc(cityNameV2(world, uc.key))}（${uc.troops}人）</option>`).join("")}
+                </select>
+                <button type="button" class="v2-btn quiet" data-add-corps-city-btn="${esc(co.id)}">+ 划入辖区</button>
+              </div>` : ""}
+            <div style="display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center">
+              <span class="v2-muted" style="font-size:0.72rem">统辖武将 (${roster.all.length})：</span>
+              ${roster.all.length ? roster.all.map((o) => o.armyId
+                ? `<span class="v2-dev-pip">⚔️ ${esc(o.name)}·在途</span>`
+                : `<button type="button" class="v2-chip-remove" data-recall-corps-off="${esc(o.key)}" title="调回主公直辖城池">${esc(o.name)}(统${o.command}) ↩召回</button>`).join("")
+                : `<span class="v2-muted" style="font-size:0.72rem">暂无驻将，请从下方输送</span>`}
+            </div>
+            ${sendable.length ? `
+              <div class="v2-inline-form">
+                <select class="v2-select" data-send-corps-off-select="${esc(co.id)}">
+                  ${sendable.map((o) => `<option value="${esc(o.key)}">${esc(o.name)}（统${o.command} 武${o.might} · 现于${esc(cityNameV2(world, o.city))}）</option>`).join("")}
+                </select>
+                <button type="button" class="v2-btn secondary" data-send-corps-off-btn="${esc(co.id)}">🚀 输送武将给军团</button>
+              </div>` : ""}
+          </div>`;
+      }).join("") : `<p class="v2-muted">暂未设立任何委任军团。主公可组建前线军团拜将都督，自主攻略敌城或守御防线。</p>`;
+
+      const createCorpsHtml = `
+        <div class="v2-card">
+          <div class="v2-card-head">
+            <h3>➕ 组建新委任军团</h3>
+            <span class="v2-badge">${unassignedCities.length} 座直辖待编城</span>
+          </div>
+          <div class="v2-inline-form">
+            <input type="text" class="v2-input" id="new-corps-name" placeholder="军团名号（如：北伐军团，留空则自动命名）" value="${esc(corpsDraft.name)}">
+            <select class="v2-select" id="new-corps-cmd">
+              ${cmdCandidates.length ? cmdCandidates.map((o) => `<option value="${esc(o.key)}" ${corpsDraft.commanderKey === o.key ? "selected" : ""}>都督：${esc(o.name)}（统${o.command} 武${o.might}）</option>`).join("") : `<option value="">-- 无空闲都督 --</option>`}
+            </select>
+          </div>
+          <div class="v2-inline-form">
+            <select class="v2-select" id="new-corps-mission">
+              ${Object.values(CORPS_MISSIONS).map((m) => `<option value="${esc(m.id)}" ${corpsDraft.mission === m.id ? "selected" : ""}>${m.icon} ${esc(m.name)}</option>`).join("")}
+            </select>
+            ${corpsTargetSelect("new-corps-target", "", corpsDraft.mission, corpsDraft.targetCity, corpsDraft.targetFaction, corpsDraft.supplyToCity)}
+          </div>
+          <p class="v2-muted" style="font-size:0.73rem">${esc(CORPS_MISSIONS[corpsDraft.mission]?.summary || "")}</p>
+          <div class="v2-field">
+            <label>勾选划归该军团的城池（已选 ${corpsDraft.cityKeys.length} 座）：</label>
+            <div class="v2-chip-grid">
+              ${ownCities.map((c) => {
+                const active = corpsDraft.cityKeys.includes(c.key);
+                const prevCorps = getCorpsForCity(state, c.key);
+                return `<button type="button" class="v2-chip ${active ? "active" : ""}" data-new-corps-city="${esc(c.key)}">${active ? "☑" : "☐"} ${esc(cityNameV2(world, c.key))}${prevCorps ? `(${esc(prevCorps.name)})` : ""}</button>`;
+              }).join("")}
+            </div>
+          </div>
+          <button type="button" class="v2-btn primary" id="btn-create-corps" ${cmdCandidates.length && corpsDraft.cityKeys.length ? "" : "disabled"}>🚩 拜将授印 · 组建委任军团</button>
+        </div>`;
+
+      const regions = getPlayerRegions(world, state);
+      const govOfficers = allOfficers.slice().sort((a, b) => (b.governance * 1.3 + b.intellect * 0.5) - (a.governance * 1.3 + a.intellect * 0.5));
+      const regionsHtml = `
+        <div class="v2-card">
+          <div class="v2-card-head">
+            <h3>🏛️ 地方州牧委任（按州郡宏观农商 · 募兵）</h3>
+            <span class="v2-badge">${regions.filter((r) => r.officerObj).length}/${regions.length} 州已设牧</span>
+          </div>
+          <p class="v2-muted">受印州牧每月自动依国库余钱（留足战备底银后）推进全州基建、维持治安并视方针补兵，主公无需逐城微操。</p>
+          <div style="display:flex;flex-direction:column;gap:0.55rem">
+            ${regions.map((r) => {
+              const curDir = r.governorRec?.directive || "balanced";
+              const curReserve = r.governorRec?.budgetReserve ?? 60;
+              const tPct = Math.round((r.bonus.treasuryMult - 1) * 100);
+              const recPct = Math.round((r.bonus.recruitMult - 1) * 100);
+              return `
+                <div class="v2-region-card">
+                  <div class="v2-row-top">
+                    <strong>🏛️ ${esc(r.region)}（辖 ${r.cities.length} 城 · ${r.totalTroops.toLocaleString()}兵 · 均治${r.avgOrder}）</strong>
+                    <span class="v2-badge">${r.officerObj ? `农商+${tPct}% · 募兵+${recPct}% · 治安+${r.bonus.orderBonus}` : "中枢直理"}</span>
+                  </div>
+                  <div class="v2-muted" style="font-size:0.73rem">辖城：${r.cities.map((c) => esc(cityNameV2(world, c.key))).join("、")}</div>
+                  <div class="v2-inline-form">
+                    <select class="v2-select" data-region-gov="${esc(r.region)}">
+                      <option value="">-- 虚位（中枢直理） --</option>
+                      ${govOfficers.map((o) => `<option value="${esc(o.key)}" ${r.officerObj?.key === o.key ? "selected" : ""}>州牧：${esc(o.name)}（政${o.governance} 统${o.command}）</option>`).join("")}
+                    </select>
+                    <select class="v2-select" data-region-reserve="${esc(r.region)}" ${r.officerObj ? "" : "disabled"} style="max-width:130px">
+                      ${[40, 60, 120].map((v) => `<option value="${v}" ${curReserve === v ? "selected" : ""}>留备 ${v} 钱</option>`).join("")}
+                    </select>
+                  </div>
+                  <div class="v2-chip-grid">
+                    ${Object.values(GOVERNOR_DIRECTIVES).map((d) => `
+                      <button type="button" class="v2-chip ${curDir === d.id ? "active" : ""}" data-region-dir="${esc(r.region)}:${esc(d.id)}" title="${esc(d.summary)}">${d.icon} ${esc(d.name)}</button>`).join("")}
+                  </div>
+                </div>`;
+            }).join("")}
+          </div>
+        </div>`;
+
+      renderBody(`
+        <div class="v2-card">
+          <div class="v2-card-head">
+            <h3>🚩 委任军团都督府 (${corpsList.length} 军团)</h3>
+            <span class="v2-badge">宏观执简驭繁</span>
+          </div>
+          ${corpsCardsHtml}
+        </div>
+        ${createCorpsHtml}
+        ${regionsHtml}
+      `);
+
+      $("new-corps-name")?.addEventListener("input", (ev) => { corpsDraft.name = ev.target.value; });
+      $("new-corps-cmd")?.addEventListener("change", (ev) => { corpsDraft.commanderKey = ev.target.value; });
+      $("new-corps-mission")?.addEventListener("change", (ev) => {
+        corpsDraft.mission = ev.target.value;
+        renderCourtDialog();
+      });
+      $("new-corps-target")?.addEventListener("change", (ev) => {
+        if (corpsDraft.mission === "conquer_city") corpsDraft.targetCity = ev.target.value;
+        else if (corpsDraft.mission === "conquer_faction") corpsDraft.targetFaction = ev.target.value;
+        else if (corpsDraft.mission === "logistics") corpsDraft.supplyToCity = ev.target.value;
+      });
+      body.querySelectorAll("[data-new-corps-city]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const ck = btn.dataset.newCorpsCity;
+          if (corpsDraft.cityKeys.includes(ck)) corpsDraft.cityKeys = corpsDraft.cityKeys.filter((x) => x !== ck);
+          else corpsDraft.cityKeys = [...corpsDraft.cityKeys, ck];
+          renderCourtDialog();
+        });
+      });
+      $("btn-create-corps")?.addEventListener("click", () => {
+        const ok = applyCommand((s) => createCorps(world, s, {
+          name: corpsDraft.name,
+          commanderKey: corpsDraft.commanderKey,
+          cityKeys: corpsDraft.cityKeys,
+          mission: corpsDraft.mission,
+          targetCity: corpsDraft.targetCity,
+          targetFaction: corpsDraft.targetFaction,
+          supplyToCity: corpsDraft.supplyToCity,
+        }));
+        if (ok) {
+          corpsDraft.name = "";
+          corpsDraft.cityKeys = [];
+          renderCourtDialog();
+        }
+      });
+
+      body.querySelectorAll("[data-corps-mission]").forEach((sel) => {
+        sel.addEventListener("change", (ev) => {
+          const cid = sel.dataset.corpsMission;
+          const m = ev.target.value;
+          const ok = applyCommand((s) => updateCorps(world, s, cid, {
+            mission: m,
+            targetCity: m === "conquer_city" ? (enemyCities[0]?.key || null) : null,
+            targetFaction: m === "conquer_faction" ? (hostileFactions[0]?.key || null) : null,
+            supplyToCity: m === "logistics" ? (ownCities[0]?.key || null) : null,
+          }));
+          if (ok) renderCourtDialog();
+        });
+      });
+      body.querySelectorAll("[data-save-corps]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const cid = btn.dataset.saveCorps;
+          const m = body.querySelector(`[data-corps-mission="${cid}"]`)?.value || "defend";
+          const tVal = body.querySelector(`[data-corps-target="${cid}"]`)?.value || null;
+          const ok = applyCommand((s) => updateCorps(world, s, cid, {
+            mission: m,
+            targetCity: m === "conquer_city" ? tVal : null,
+            targetFaction: m === "conquer_faction" ? tVal : null,
+            supplyToCity: m === "logistics" ? tVal : null,
+          }));
+          if (ok) renderCourtDialog();
+        });
+      });
+      body.querySelectorAll("[data-disband-corps]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const ok = applyCommand((s) => disbandCorps(s, btn.dataset.disbandCorps));
+          if (ok) renderCourtDialog();
+        });
+      });
+      body.querySelectorAll("[data-remove-corps-city]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const [, ck] = btn.dataset.removeCorpsCity.split(":");
+          const ok = applyCommand((s) => assignCityToCorps(world, s, ck, null));
+          if (ok) renderCourtDialog();
+        });
+      });
+      body.querySelectorAll("[data-add-corps-city-btn]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const cid = btn.dataset.addCorpsCityBtn;
+          const ck = body.querySelector(`[data-add-corps-city-select="${cid}"]`)?.value;
+          if (ck) {
+            const ok = applyCommand((s) => assignCityToCorps(world, s, ck, cid));
+            if (ok) renderCourtDialog();
+          }
+        });
+      });
+      body.querySelectorAll("[data-send-corps-off-btn]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const cid = btn.dataset.sendCorpsOffBtn;
+          const offK = body.querySelector(`[data-send-corps-off-select="${cid}"]`)?.value;
+          if (offK) {
+            const ok = applyCommand((s) => sendOfficerToCorps(world, s, offK, cid));
+            if (ok) renderCourtDialog();
+          }
+        });
+      });
+      body.querySelectorAll("[data-recall-corps-off]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const ok = applyCommand((s) => recallOfficerFromCorps(world, s, btn.dataset.recallCorpsOff));
+          if (ok) renderCourtDialog();
+        });
+      });
+      body.querySelectorAll("[data-region-gov]").forEach((sel) => {
+        sel.addEventListener("change", (ev) => {
+          const reg = sel.dataset.regionGov;
+          const curRec = getState().governors?.[reg];
+          const ok = applyCommand((s) => appointRegionalGovernor(world, s, reg, ev.target.value || null, curRec?.directive || "balanced", curRec?.budgetReserve ?? 60));
+          if (ok) renderCourtDialog();
+        });
+      });
+      body.querySelectorAll("[data-region-dir]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const [reg, dir] = btn.dataset.regionDir.split(":");
+          const curState = getState();
+          const curRec = curState.governors?.[reg];
+          const offKey = curRec?.officer || govOfficers[0]?.key || null;
+          if (!offKey) {
+            showTicker("请先为该州择定一位州牧");
+            return;
+          }
+          const ok = applyCommand((s) => appointRegionalGovernor(world, s, reg, offKey, dir, curRec?.budgetReserve ?? 60));
+          if (ok) renderCourtDialog();
+        });
+      });
+      body.querySelectorAll("[data-region-reserve]").forEach((sel) => {
+        sel.addEventListener("change", (ev) => {
+          const reg = sel.dataset.regionReserve;
+          const curRec = getState().governors?.[reg];
+          if (!curRec?.officer) return;
+          const ok = applyCommand((s) => appointRegionalGovernor(world, s, reg, curRec.officer, curRec.directive || "balanced", Number(ev.target.value)));
           if (ok) renderCourtDialog();
         });
       });

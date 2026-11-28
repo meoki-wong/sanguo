@@ -1487,6 +1487,103 @@ dialog.v2-dialog::backdrop {
   background: linear-gradient(135deg, rgba(84, 58, 22, 0.42), rgba(44, 24, 18, 0.85));
 }
 
+.v2-collapse {
+  border: 1px solid rgba(204, 168, 96, 0.2);
+  border-radius: 8px;
+  background: rgba(18, 15, 11, 0.55);
+  padding: 0.35rem 0.55rem;
+}
+
+.v2-collapse > summary {
+  cursor: pointer;
+  font-size: 0.76rem;
+  color: var(--ink-muted);
+  font-weight: 600;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.v2-collapse > summary::-webkit-details-marker {
+  display: none;
+}
+
+.v2-collapse[open] > summary {
+  color: var(--gold);
+  margin-bottom: 0.45rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.v2-collapse-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.v2-recruit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.v2-corps-card,
+.v2-region-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.48rem;
+  padding: 0.72rem 0.82rem;
+  border-radius: 10px;
+  border: 1px solid rgba(204, 168, 96, 0.3);
+  background: linear-gradient(135deg, rgba(38, 32, 24, 0.92), rgba(24, 20, 15, 0.95));
+}
+
+.v2-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.16rem 0.42rem;
+  border-radius: 6px;
+  border: 1px solid rgba(204, 168, 96, 0.34);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.v2-chip-remove:hover {
+  border-color: #d97766;
+  color: #f6b2a6;
+}
+
+.v2-inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+  align-items: center;
+}
+
+.v2-inline-form > .v2-select,
+.v2-inline-form > .v2-input {
+  flex: 1 1 130px;
+  min-width: 0;
+}
+
+.v2-input {
+  width: 100%;
+  padding: 0.36rem 0.55rem;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: rgba(16, 13, 10, 0.88);
+  color: var(--ink);
+  font-size: 0.8rem;
+}
+
 /* ===== H5 移动端精细适配 (390×844 零遮挡、零溢出) ===== */
 @media (max-width: 900px) {
   :root {

@@ -7,21 +7,26 @@ import {
   edgeKey, formatCalendar, imperialRankForCities, roadTerrain, troopCounterEffect,
 } from "../dist/v2/constants.js";
 import {
-  CITY_BUILDINGS_V4, COURT_OFFICES_V4, EMPEROR_EDICTS_V3, OPENING_DEV_DEKADS,
-  PRESTIGE_RANKS_V4, TAX_LEVELS_V4, WANDERING_HEROES_V3, activeTreaty, advanceDekad,
-  aiPersonalityFor, appointCourtOffice, approveAllCabinet, approveCabinetProposal,
-  availableOfficersInCity, batchSetCityPolicy, bribeDefection, buildCabinetBriefings, buildFort,
-  buildingBuildDekads, buildingUpgradeCost, canBuildFort, castStratagem, checkSupplyLine, cityTierInfo,
-  clearSupplyLink, computeCourtBonuses, computeFactionPrestige, computeThreats, createGameV2,
-  demolishFort, deserializeStateV2, dismissCabinetProposal, dispatchArmy,
-  dispatchEmergencyReinforce, enactDecree, estimateFactionEconomy, evaluateDeal, executeDiplomacy,
-  findRoadPath, hasDecree, isHostileV2, issueImperialEdict, launchCoordinatedAttack, layCityTrap,
-  officerBattleArt, planCoordinatedAttack, prestigeRankForFaction, proposeDeal,
-  rankProgressForFaction, recruitWanderingOfficer, redirectArmy, refreshCabinetInbox, renderDiploMatrixHtml,
-  renderPowerChartSvg, renderReplayMapSvg, repairFort, resolveCaptive, resolveEventChoice,
-  rewardOfficer, serializeStateV2, setAutoGovernance, setCityPolicy, setCitySiegeDefense,
-  setCityTroopType, setSupplyLink, setTaxLevel, sowDiscord, stratagemCooldownLeft,
-  transferOfficer, triggerArmyArt, upgradeCityBuilding,
+  AUTO_PAUSE_MODES, CITY_BUILDINGS_V4, CORPS_MISSIONS, COURT_OFFICES_V4, EMPEROR_EDICTS_V3,
+  GOVERNOR_DIRECTIVES, OPENING_DEV_DEKADS, PRESTIGE_RANKS_V4, TAX_LEVELS_V4, WANDERING_HEROES_V3,
+  activeTreaty, advanceDekad, aiPersonalityFor, appointCourtOffice, appointRegionalGovernor,
+  approveAllCabinet, approveCabinetProposal, assignCityToCorps, availableOfficersInCity,
+  batchSetCityPolicy, bribeDefection, buildCabinetBriefings, buildFort, buildingBuildDekads,
+  buildingUpgradeCost, canBuildFort, castStratagem, checkSupplyLine, cityTierInfo,
+  clearSupplyLink, computeCourtBonuses, computeFactionPrestige, computeRegionalGovernorBonus,
+  computeThreats, createCorps, createGameV2, demolishFort, deserializeStateV2, disbandCorps,
+  dismissCabinetProposal, dispatchArmy, dispatchEmergencyReinforce, enactDecree,
+  estimateFactionEconomy, evaluateDeal, executeDiplomacy, findRoadPath, getCorpsForCity,
+  getOfficersInCorps, getPlayerRegions, hasDecree, isHostileV2, issueImperialEdict,
+  launchCoordinatedAttack, layCityTrap, officerBattleArt, planCoordinatedAttack,
+  prestigeRankForFaction, previewCityRecruit, previewSmartDispatch, proposeDeal,
+  rankProgressForFaction, recallOfficerFromCorps, recruitCityTroops, recruitWanderingOfficer,
+  redirectArmy, refreshCabinetInbox, renderDiploMatrixHtml, renderPowerChartSvg,
+  renderReplayMapSvg, repairFort, resolveCaptive, resolveEventChoice, rewardOfficer,
+  sendOfficerToCorps, serializeStateV2, setAutoGovernance, setAutoPauseMode, setCityPolicy,
+  setCitySiegeDefense, setCityTroopType, setSupplyLink, setTaxLevel, smartAutoDispatch,
+  sowDiscord, stratagemCooldownLeft, transferOfficer, triggerArmyArt, updateCorps,
+  upgradeCityBuilding,
 } from "../dist/v2/engine.js";
 import { spawnWanderingHeroes } from "../dist/v2/arts.js";
 import { maybeTriggerEvent } from "../dist/v2/events.js";
@@ -1063,4 +1068,161 @@ test("4.0 开局 9 旬农商休养蓄势期 AI 行为、突发事件节流与旧
   assert.equal(restored.cities.xu.construction, null);
   assert.equal(restored.nextEventAllowedTurn, 0);
   assert.ok(Array.isArray(restored.cabinetInbox));
+});
+
+test("5.0 城池直接征兵与极简一键委任出征 (recruitCityTroops / smartAutoDispatch)", () => {
+  let st = createGameV2(world, 199, "cao");
+  st.factions.cao.treasury = 300;
+  st.factions.cao.grain = 300;
+  st.cities.xu.troops = 1400;
+
+  const prev = previewCityRecruit(st, "xu", "cao");
+  assert.equal(prev.ok, true);
+  assert.ok(prev.amount >= 250);
+
+  const goldBefore = st.factions.cao.treasury;
+  const grainBefore = st.factions.cao.grain;
+  const orderBefore = st.cities.xu.publicOrder;
+  st = recruitCityTroops(world, st, "xu");
+  assert.equal(st.cities.xu.troops, 1400 + prev.amount);
+  assert.equal(st.factions.cao.treasury, goldBefore - prev.goldCost);
+  assert.equal(st.factions.cao.grain, grainBefore - prev.grainCost);
+  assert.equal(st.cities.xu.publicOrder, orderBefore - 3);
+
+  // Reject low publicOrder or siege
+  const lowOrder = structuredClone(st);
+  lowOrder.cities.xu.publicOrder = 20;
+  assert.throws(() => recruitCityTroops(world, lowOrder, "xu"), /治安/);
+
+  const besieged = structuredClone(st);
+  besieged.sieges.xu = { city: "xu", attackerFaction: "yuan", startedTurn: 1, attackerArmyIds: [], fireRaidUsed: false };
+  assert.throws(() => recruitCityTroops(world, besieged, "xu"), /围困/);
+
+  // Smart 1-click auto dispatch picks strongest commander and launches army
+  const enemyTarget = world.cities.find((c) => c.key === "xiapi")?.links.find((nb) => isHostileV2(st, "cao", st.cities[nb]?.owner)) || "beihai";
+  st.cities.xiapi.troops = 2600;
+  const smartPrev = previewSmartDispatch(world, st, { from: "xiapi", to: enemyTarget, troopRatio: 0.75 });
+  assert.equal(smartPrev.ok, true);
+  assert.ok(smartPrev.officer);
+  const launched = smartAutoDispatch(world, st, { from: "xiapi", to: enemyTarget, troopRatio: 0.75 });
+  assert.equal(launched.armies.length, 1);
+  assert.equal(launched.armies[0].targetCity, enemyTarget);
+  assert.equal(launched.armies[0].officer, smartPrev.officer.key);
+});
+
+test("5.0 军团都督委任、输送/召回武将与自主攻城/驰援/后勤闭环", () => {
+  assert.equal(Object.keys(CORPS_MISSIONS).length, 4);
+  let st = createGameV2(world, 199, "cao");
+  st.factions.cao.grain = 400;
+  st.factions.cao.treasury = 400;
+  st.cities.xiapi.troops = 3200;
+  st.cities.xiaopei.troops = 2600;
+
+  const targetEnemy = "beihai";
+  const allCao = Object.values(st.officers).filter((o) => o.faction === "cao" && !o.capturedBy && o.name !== "曹操");
+  const cmd = allCao.sort((a, b) => (b.command + b.might) - (a.command + a.might))[0];
+  const sender = allCao.find((o) => o.key !== cmd.key && o.city !== "xiapi");
+  assert.ok(cmd && sender);
+
+  st = createCorps(world, st, {
+    name: "东征军团",
+    commanderKey: cmd.key,
+    cityKeys: ["xiapi"],
+    mission: "conquer_city",
+    targetCity: targetEnemy,
+  });
+  assert.equal(st.corps.length, 1);
+  const corpsId = st.corps[0].id;
+  assert.equal(getCorpsForCity(st, "xiapi")?.id, corpsId);
+
+  // Send officer to corps & verify roster membership, then recall one idle officer back
+  st = sendOfficerToCorps(world, st, sender.key, corpsId, "xiapi");
+  assert.equal(st.officers[sender.key].city, "xiapi");
+  assert.ok(getOfficersInCorps(st, corpsId).stationed.some((o) => o.key === sender.key));
+
+  st = recallOfficerFromCorps(world, st, sender.key);
+  assert.notEqual(st.officers[sender.key].city, "xiapi");
+
+  // Re-send and assign another city, then advance 1 dekad -> corps auto-launches conquer_city army
+  st = sendOfficerToCorps(world, st, sender.key, corpsId, "xiapi");
+  st = assignCityToCorps(world, st, "xiaopei", corpsId);
+  assert.ok(st.corps[0].cities.includes("xiaopei"));
+
+  st = advanceDekad(world, st, { skipAi: true });
+  const corpsAtk = st.armies.find((a) => a.faction === "cao" && a.corpsId === corpsId && a.stance === "attack");
+  assert.ok(corpsAtk, "委任军团应自主集结并向目标敌城发兵");
+  assert.equal(corpsAtk.targetCity, targetEnemy);
+
+  // Test logistics mission monthly convoy
+  let logSt = createGameV2(world, 199, "cao");
+  logSt.factions.cao.grain = 300;
+  logSt.cities.xu.troops = 2600;
+  logSt.cities.xiapi.troops = 1100;
+  const logCmd = Object.values(logSt.officers).find((o) => o.faction === "cao" && o.name !== "曹操");
+  logSt = createCorps(world, logSt, {
+    name: "辎重兵团",
+    commanderKey: logCmd.key,
+    cityKeys: ["xu"],
+    mission: "logistics",
+    supplyToCity: "xiapi",
+  });
+  logSt.turn = 2; // next dekad = 3 (monthly)
+  logSt = advanceDekad(world, logSt, { skipAi: true });
+  assert.ok(logSt.armies.some((a) => a.faction === "cao" && a.stance === "reinforce" && a.targetCity === "xiapi"));
+
+  // Disband corps cleans up cleanly
+  const disbanded = disbandCorps(st, corpsId);
+  assert.equal(disbanded.corps.length, 0);
+  assert.equal(getCorpsForCity(disbanded, "xiapi"), null);
+});
+
+test("5.0 地方州牧委任加成、月度自动农商基建/征兵与旧档兼容", () => {
+  assert.equal(Object.keys(GOVERNOR_DIRECTIVES).length, 3);
+  assert.equal(Object.keys(AUTO_PAUSE_MODES).length, 3);
+
+  let st = createGameV2(world, 199, "cao");
+  const regions = getPlayerRegions(world, st);
+  assert.ok(regions.length >= 1);
+  const topRegion = regions[0].region;
+
+  const baseEcon = estimateFactionEconomy(st, "cao");
+  const bestGov = Object.values(st.officers)
+    .filter((o) => o.faction === "cao" && o.name !== "曹操")
+    .sort((a, b) => b.governance - a.governance)[0];
+  st = appointRegionalGovernor(world, st, topRegion, bestGov.key, "develop", 60);
+  const buffedEcon = estimateFactionEconomy(st, "cao");
+  assert.ok(buffedEcon.grossTreasury > baseEcon.grossTreasury && buffedEcon.grossGrain > baseEcon.grossGrain);
+  const sampleRegCity = regions[0].cities[0].key;
+  assert.ok(computeRegionalGovernorBonus(st, st.cities[sampleRegCity]).orderBonus >= 2);
+
+  // Switch directive to balanced & fund treasury so governor both builds & recruits on monthly tick
+  st = appointRegionalGovernor(world, st, topRegion, bestGov.key, "balanced", 60);
+  st.factions.cao.treasury = 360;
+  st.factions.cao.grain = 260;
+  st.cities[sampleRegCity].troops = 1200;
+  for (let i = 0; i < 3; i += 1) {
+    st = advanceDekad(world, st, { skipAi: true, skipCorps: true });
+  }
+  const hasGovBuild = Object.values(st.cities).some((c) => c.owner === "cao" && c.region === topRegion && c.construction);
+  assert.ok(hasGovBuild || st.cities[sampleRegCity].troops > 1200, "州牧应在月结时自主推动辖区基建或征兵");
+  assert.ok(st.factions.cao.treasury >= 60, "州牧施政应尊重国库战备留银底线");
+  assert.ok(st.events.some((e) => e.text.includes("州牧")));
+
+  // Auto pause mode setting & legacy save compatibility
+  st = setAutoPauseMode(st, "never");
+  assert.equal(st.autoPauseMode, "never");
+
+  const raw = JSON.parse(serializeStateV2(st));
+  delete raw.corps;
+  delete raw.nextCorpsSeq;
+  delete raw.governors;
+  delete raw.autoPauseMode;
+  for (const c of Object.values(raw.cities)) {
+    delete c.region;
+  }
+  const restored = deserializeStateV2(world, JSON.stringify(raw));
+  assert.ok(Array.isArray(restored.corps) && restored.corps.length === 0);
+  assert.deepEqual(restored.governors, {});
+  assert.equal(restored.autoPauseMode, "major");
+  assert.equal(typeof restored.cities.xu.region, "string");
 });

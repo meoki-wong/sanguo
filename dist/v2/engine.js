@@ -30,14 +30,22 @@ import {
 import {
   CITY_BUILDINGS_V4, CITY_TIERS_V4, COURT_OFFICES_V4, PRESTIGE_RANKS_V4, TAX_LEVELS_V4,
   appointCourtOffice, buildingBuildDekads, buildingUpgradeCost, checkThreeKingdomsClimax,
-  cityTierInfo, computeCourtBonuses, computeFactionPrestige, ensureV4State, estimateFactionEconomy,
-  prestigeRankForFaction, setTaxLevel, tickCityConstructions, upgradeCityBuilding,
+  cityTierInfo, computeCourtBonuses, computeFactionPrestige, computeRegionalGovernorBonus,
+  ensureV4State, estimateFactionEconomy, prestigeRankForFaction, setTaxLevel,
+  tickCityConstructions, upgradeCityBuilding,
 } from "./court.js";
 import {
   OPENING_DEV_DEKADS, approveAllRecommended, buildCabinetBriefings,
   dismissCabinetProposal, executeCabinetProposal, refreshCabinetInbox, runAutoGovernanceMonthly,
   setAutoGovernance,
 } from "./cabinet.js";
+import {
+  AUTO_PAUSE_MODES, CORPS_MISSIONS, GOVERNOR_DIRECTIVES, appointRegionalGovernor,
+  assignCityToCorps, createCorps, disbandCorps, getCorpsForCity, getOfficersInCorps,
+  getPlayerRegions, previewCityRecruit, previewSmartDispatch, recallOfficerFromCorps,
+  recruitCityTroops, runPlayerCorpsDekad, runRegionalGovernorsMonthly, sendOfficerToCorps,
+  setAutoPauseMode, smartAutoDispatch as smartAutoDispatchCore, updateCorps,
+} from "./delegation.js";
 
 export {
   MIN_DISPATCH_TROOPS, MIN_GARRISON_LEAVE, activeTreaty, armyWorldPosition,
@@ -67,13 +75,19 @@ export {
 export {
   CITY_BUILDINGS_V4, CITY_TIERS_V4, COURT_OFFICES_V4, PRESTIGE_RANKS_V4, TAX_LEVELS_V4,
   appointCourtOffice, buildingBuildDekads, buildingUpgradeCost, cityTierInfo, computeCourtBonuses,
-  computeFactionPrestige, estimateFactionEconomy, prestigeRankForFaction, setTaxLevel,
-  upgradeCityBuilding,
+  computeFactionPrestige, computeRegionalGovernorBonus, estimateFactionEconomy,
+  prestigeRankForFaction, setTaxLevel, upgradeCityBuilding,
 } from "./court.js";
 export {
   OPENING_DEV_DEKADS, buildCabinetBriefings, dismissCabinetProposal, refreshCabinetInbox,
   setAutoGovernance,
 } from "./cabinet.js";
+export {
+  AUTO_PAUSE_MODES, CORPS_MISSIONS, GOVERNOR_DIRECTIVES, appointRegionalGovernor,
+  assignCityToCorps, createCorps, disbandCorps, getCorpsForCity, getOfficersInCorps,
+  getPlayerRegions, previewCityRecruit, previewSmartDispatch, recallOfficerFromCorps,
+  recruitCityTroops, sendOfficerToCorps, setAutoPauseMode, updateCorps,
+} from "./delegation.js";
 
 export const V2_VERSION = 2;
 
@@ -129,6 +143,7 @@ function assignInitialCityStats(world, era, cityKey, owner) {
   const troopType = pref && (h % 3 !== 0) ? pref : regional;
   return {
     key: cityKey,
+    region: cityMeta?.region || "中原与淮北",
     owner,
     troops: isCapital ? baseTroops + 150 : baseTroops,
     troopType,
@@ -296,6 +311,10 @@ export function createGameV2(world, year, playerFaction, { difficulty = "standar
   refreshCabinetInbox(world, state);
   recordHistorySnapshot(world, state);
   return state;
+}
+
+export function smartAutoDispatch(world, state, opts) {
+  return smartAutoDispatchCore(world, state, opts, dispatchArmy);
 }
 
 export function dispatchArmy(world, state, { from, to, officer, deputy = null, formation = "heyi", troops, troopType, stance, siegeStance = "storm" }) {
@@ -1135,6 +1154,23 @@ function transferCityOwnership(world, state, cityKey, winnerFaction, besiegerArm
   city.troops = Math.max(350, city.troops + totalAdded);
   delete state.sieges[cityKey];
 
+  if (Array.isArray(state.corps)) {
+    if (prevOwner === state.player) {
+      for (const co of state.corps) {
+        co.cities = (co.cities || []).filter((ck) => ck !== cityKey);
+      }
+    }
+    if (winnerFaction === state.player && lead?.corpsId) {
+      for (const co of state.corps) {
+        if (co.id === lead.corpsId) {
+          if (!co.cities.includes(cityKey)) co.cities.push(cityKey);
+        } else {
+          co.cities = (co.cities || []).filter((ck) => ck !== cityKey);
+        }
+      }
+    }
+  }
+
   for (const defOff of [oldCmd, oldGov]) {
     if (defOff && state.officers[defOff]) {
       attemptCaptureOrReturn(state, defOff, winnerFaction, cityKey, lead?.ambushHitBonus ?? 0, events);
@@ -1374,11 +1410,12 @@ function applyMonthlyGovernance(world, state, events) {
 
     const tax = TAX_LEVELS_V4[fac.taxLevel || "normal"] || TAX_LEVELS_V4.normal;
     const court = computeCourtBonuses(state, city.owner);
+    const regGov = computeRegionalGovernorBonus(state, city);
     const gov = city.governor ? state.officers[city.governor] : null;
     const govBonus = 1 + ((gov?.governance ?? 55) - 55) * 0.004 + (gov?.traits?.includes("farming") ? 0.08 : 0);
     const underSiege = Boolean(state.sieges[city.key]);
 
-    const orderShift = tax.orderDelta + (b.academy || 0) * CITY_BUILDINGS_V4.academy.orderPerLv + court.orderBonus + (underSiege ? -8 : 0);
+    const orderShift = tax.orderDelta + (b.academy || 0) * CITY_BUILDINGS_V4.academy.orderPerLv + court.orderBonus + regGov.orderBonus + (underSiege ? -8 : 0);
     city.publicOrder = clamp((Number.isFinite(city.publicOrder) ? city.publicOrder : 78) + orderShift, 0, 100);
 
     if (!underSiege) {
@@ -1389,7 +1426,7 @@ function applyMonthlyGovernance(world, state, events) {
       const cap = 2400 + tier.level * 480 + (b.farm || 0) * CITY_BUILDINGS_V4.farm.troopCapPerLv;
       const workshopRecMult = 1 + (b.workshop || 0) * CITY_BUILDINGS_V4.workshop.recruitPerLv;
       if (city.troops < cap) {
-        const rec = Math.round(92 * pol.recruitRate * govBonus * workshopRecMult * court.recruitMult * standingMult);
+        const rec = Math.round(92 * pol.recruitRate * govBonus * workshopRecMult * court.recruitMult * regGov.recruitMult * standingMult);
         city.troops = Math.min(cap, city.troops + rec);
       }
       city.wall = Math.min(city.wallMax, city.wall + Math.round(pol.wallRepair * ironWallRepairMult));
@@ -1625,9 +1662,14 @@ export function checkOutcome(state) {
 /**
  * 核心推进函数：推进一旬
  */
-export function advanceDekad(world, state, { skipAi = false } = {}) {
+export function advanceDekad(world, state, { skipAi = false, skipCorps = false } = {}) {
   if (state.outcome !== "ongoing") return state;
   let next = ensurePhase2State(structuredClone(state));
+  for (const ck of Object.keys(next.cities || {})) {
+    if (!next.cities[ck].region) {
+      next.cities[ck].region = cityByKey(world, ck)?.region || "中原与淮北";
+    }
+  }
   next.turn += 1;
   next.edictCooldown = Math.max(0, (next.edictCooldown || 0) - 1);
   const events = [];
@@ -1638,6 +1680,9 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
   if (!skipAi) {
     planAiDekad(world, next);
     planAiPhase2Dekad(world, next);
+  }
+  if (!skipCorps) {
+    runPlayerCorpsDekad(world, next, events);
   }
 
   // 1. Update positions, advance marching armies & check supply lines
@@ -1915,6 +1960,7 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
     next.dismissedCabinetIds = [];
     applyMonthlyGovernance(world, next, events);
     next = runAutoGovernanceMonthly(world, next, events, { dispatchEmergencyReinforce, resolveCaptive });
+    runRegionalGovernorsMonthly(world, next, events);
     processSupplyLinksMonthly(world, next, events);
     spawnWanderingHeroes(world, next, events);
     updateAntiHegemonCoalition(world, next, events);
@@ -2048,5 +2094,11 @@ export function deserializeStateV2(world, raw) {
   if (!parsed.factions[parsed.player]) {
     throw new Error("存档玩家势力无效。");
   }
-  return ensurePhase2State(parsed);
+  const restored = ensurePhase2State(parsed);
+  for (const ck of Object.keys(restored.cities || {})) {
+    if (!restored.cities[ck].region) {
+      restored.cities[ck].region = cityByKey(world, ck)?.region || "中原与淮北";
+    }
+  }
+  return restored;
 }

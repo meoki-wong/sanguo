@@ -230,6 +230,23 @@ export function computeCourtBonuses(state, factionKey) {
   };
 }
 
+export function computeRegionalGovernorBonus(state, city) {
+  const reg = city?.region;
+  const govRec = (city?.owner === state?.player && reg) ? state?.governors?.[reg] : null;
+  const off = govRec?.officer ? state?.officers?.[govRec.officer] : null;
+  if (!off || off.faction !== state.player || off.capturedBy) {
+    return { officer: null, directive: null, treasuryMult: 1, grainMult: 1, recruitMult: 1, orderBonus: 0 };
+  }
+  const stat = clamp((off.governance ?? 65) - 55, 0, 45);
+  const cmdStat = clamp((off.command ?? 65) - 55, 0, 45);
+  const dir = govRec.directive || "balanced";
+  const treasuryMult = dir === "develop" ? 1 + 0.1 + stat * 0.0022 : dir === "balanced" ? 1 + 0.06 + stat * 0.0015 : 1 + 0.03;
+  const grainMult = dir === "develop" ? 1 + 0.1 + stat * 0.0022 : dir === "balanced" ? 1 + 0.06 + stat * 0.0015 : 1 + 0.04;
+  const recruitMult = dir === "recruit" ? 1 + 0.14 + cmdStat * 0.0025 : dir === "balanced" ? 1 + 0.07 + cmdStat * 0.0015 : 1 + 0.03;
+  const orderBonus = dir === "develop" ? Math.round(3 + stat * 0.06) : Math.round(2 + stat * 0.05);
+  return { officer: off, directive: dir, treasuryMult, grainMult, recruitMult, orderBonus };
+}
+
 export function computeFactionPrestige(state, factionKey) {
   if (!state?.cities) return 0;
   let cityCount = 0;
@@ -308,10 +325,32 @@ export function ensureV4State(state) {
   state.threeKingdoms ??= null;
   state.nextEventAllowedTurn ??= 0;
   if (state.cabinetInbox === undefined || state.cabinetInbox === null) state.cabinetInbox = [];
+  state.corps ??= [];
+  state.nextCorpsSeq ??= 1;
+  state.governors ??= {};
+  if (!["major", "all", "never"].includes(state.autoPauseMode)) {
+    state.autoPauseMode = "major";
+  }
 
   if (state.cities) {
     for (const c of Object.values(state.cities)) {
       ensureCityV4Fields(c);
+    }
+  }
+  if (state.governors) {
+    for (const [reg, rec] of Object.entries(state.governors)) {
+      const off = rec?.officer ? state.officers?.[rec.officer] : null;
+      if (!off || off.faction !== state.player || off.capturedBy) {
+        delete state.governors[reg];
+      }
+    }
+  }
+  if (Array.isArray(state.corps)) {
+    for (const c of state.corps) {
+      if (c.commanderKey && (!state.officers?.[c.commanderKey] || state.officers[c.commanderKey].faction !== state.player || state.officers[c.commanderKey].capturedBy)) {
+        c.commanderKey = null;
+      }
+      c.cities = (c.cities || []).filter((ck) => state.cities?.[ck]?.owner === state.player);
     }
   }
   if (state.factions) {
@@ -540,9 +579,10 @@ export function estimateFactionEconomy(state, factionKey) {
 
     const farmMult = 1 + (b.farm || 0) * CITY_BUILDINGS_V4.farm.grainBonusPerLv;
     const marketMult = 1 + (b.market || 0) * CITY_BUILDINGS_V4.market.treasuryBonusPerLv;
+    const regGov = computeRegionalGovernorBonus(state, city);
 
-    const cT = Math.round((8 + tier.level * 2.5) * marketMult * pol.treasuryMult * govBonus * ecoMult * specTM * tax.treasuryMult * court.treasuryMult);
-    const cG = Math.round((9 + tier.level * 2.8) * farmMult * pol.grainMult * govBonus * ecoMult * specGM * tax.grainMult * tuntianMult * court.grainMult);
+    const cT = Math.round((8 + tier.level * 2.5) * marketMult * pol.treasuryMult * govBonus * ecoMult * specTM * tax.treasuryMult * court.treasuryMult * regGov.treasuryMult);
+    const cG = Math.round((9 + tier.level * 2.8) * farmMult * pol.grainMult * govBonus * ecoMult * specGM * tax.grainMult * tuntianMult * court.grainMult * regGov.grainMult);
     grossTreasury += cT;
     grossGrain += cG;
   }

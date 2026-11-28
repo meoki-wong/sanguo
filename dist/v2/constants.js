@@ -811,7 +811,7 @@ export function forecastDispatch(world, state, { from, to, troops, troopType, of
 }
 
 export function createArmyRecord(world, state, {
-  faction, from, route, officerKey = null, deputyKey = null, escortName = null,
+  faction, from, route, officerKey = null, deputyKey = null, escortName = null, corpsId = null,
   troops, troopType, stance, siegeStance = "storm", formation = "heyi", delayDekads = 0,
 }) {
   const id = `army-${state.nextArmySeq++}`;
@@ -821,6 +821,7 @@ export function createArmyRecord(world, state, {
   return {
     id,
     faction,
+    corpsId: corpsId || null,
     officer: officerKey || null,
     deputy: deputyKey || null,
     escortName: escortName || null,

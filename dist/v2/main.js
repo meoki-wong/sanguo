@@ -3,7 +3,7 @@
 import { CITY_SPECIALTIES, TROOP_TYPES } from "./constants.js";
 import {
   advanceDekad, armyEtaDekads, cityNameV2, computeThreats, createGameV2,
-  deserializeStateV2, factionNameV2, forecastDispatch, serializeStateV2,
+  deserializeStateV2, factionNameV2, forecastDispatch, getCorpsForCity, serializeStateV2,
 } from "./engine.js";
 import { createMapV2 } from "./map.js";
 import { createUiV2 } from "./ui.js";
@@ -114,7 +114,14 @@ async function boot() {
         const sp = TROOP_TYPES[c.troopType] || TROOP_TYPES.infantry;
         const spec = CITY_SPECIALTIES[c.specialty];
         const empMark = state.emperorCity === info.key ? " 👑汉帝" : "";
-        tooltip.innerHTML = `<strong>${cityNameV2(world, info.key)}</strong>（${factionNameV2(world, state, c.owner)}）${empMark}${spec ? `<br>${spec.icon} ${spec.name}` : ""}<br>${sp.icon} ${sp.name} ${c.troops.toLocaleString()} · 城防 ${c.wall}/${c.wallMax}`;
+        const corps = c.owner === state.player ? getCorpsForCity(state, info.key) : null;
+        const reg = c.region || info.region;
+        const govRec = (c.owner === state.player && reg) ? state.governors?.[reg] : null;
+        const govOff = govRec?.officer ? state.officers?.[govRec.officer] : null;
+        const delLine = (corps || govOff)
+          ? `<br>${corps ? `🚩${corps.name}` : ""}${corps && govOff ? " · " : ""}${govOff ? `🏛️州牧:${govOff.name}` : ""}`
+          : "";
+        tooltip.innerHTML = `<strong>${cityNameV2(world, info.key)}</strong>（${factionNameV2(world, state, c.owner)}）${empMark}${spec ? `<br>${spec.icon} ${spec.name}` : ""}<br>${sp.icon} ${sp.name} ${c.troops.toLocaleString()} · 城防 ${c.wall}/${c.wallMax}${delLine}`;
       } else if (info.type === "army") {
         const a = state.armies.find((x) => x.id === info.armyId);
         if (!a) {
@@ -179,17 +186,27 @@ async function boot() {
         return;
       }
       const evs = stepOneDekad();
-      const playerHot = evs.some((e) => (
-        e.kind === "dilemma"
-        || (["capture", "field_battle", "trap", "siege_start", "supply_cut", "battle_art"].includes(e.kind)
-          && (e.faction === state.player || e.participants?.includes(state.player)))
-      ));
       if (state.outcome !== "ongoing" || state.pendingEvent) {
         stopFlow(state.pendingEvent ? `📜 时局重大抉择：「${state.pendingEvent.title}」` : "");
         return;
       }
-      if (playerHot) {
-        stopFlow(`⚠️ 军情紧急自动暂停：${evs[0]?.text || "请主公定夺"}`);
+      const pauseMode = state.autoPauseMode || "major";
+      let hotEv = null;
+      if (pauseMode === "all") {
+        hotEv = evs.find((e) => (
+          e.kind === "dilemma"
+          || (["capture", "field_battle", "trap", "siege_start", "supply_cut", "battle_art"].includes(e.kind)
+            && (e.faction === state.player || e.participants?.includes(state.player)))
+        ));
+      } else if (pauseMode === "major") {
+        hotEv = evs.find((e) => (
+          e.kind === "dilemma"
+          || (e.kind === "capture" && (e.faction === state.player || e.participants?.includes(state.player)))
+          || (e.kind === "siege_start" && state.cities[e.city]?.owner === state.player)
+        ));
+      }
+      if (hotEv) {
+        stopFlow(`⚠️ 自动暂停：${hotEv.text}`);
         return;
       }
       scheduleNextFlowTick();
