@@ -27,6 +27,16 @@ import {
 import {
   aiPersonalityFor, processSupplyLinksMonthly, updateAntiHegemonCoalition,
 } from "./theater.js";
+import {
+  CITY_BUILDINGS_V4, CITY_TIERS_V4, COURT_OFFICES_V4, PRESTIGE_RANKS_V4, TAX_LEVELS_V4,
+  appointCourtOffice, buildingUpgradeCost, checkThreeKingdomsClimax, cityTierInfo,
+  computeCourtBonuses, computeFactionPrestige, ensureV4State, estimateFactionEconomy,
+  prestigeRankForFaction, setTaxLevel, upgradeCityBuilding,
+} from "./court.js";
+import {
+  OPENING_DEV_DEKADS, approveAllRecommended, buildCabinetBriefings,
+  dismissCabinetProposal, executeCabinetProposal, runAutoGovernanceMonthly, setAutoGovernance,
+} from "./cabinet.js";
 
 export {
   MIN_DISPATCH_TROOPS, MIN_GARRISON_LEAVE, activeTreaty, armyWorldPosition,
@@ -53,6 +63,15 @@ export {
 export {
   renderDiploMatrixHtml, renderPowerChartSvg, renderReplayMapSvg,
 } from "./chronicle.js";
+export {
+  CITY_BUILDINGS_V4, CITY_TIERS_V4, COURT_OFFICES_V4, PRESTIGE_RANKS_V4, TAX_LEVELS_V4,
+  appointCourtOffice, buildingUpgradeCost, cityTierInfo, computeCourtBonuses,
+  computeFactionPrestige, estimateFactionEconomy, prestigeRankForFaction, setTaxLevel,
+  upgradeCityBuilding,
+} from "./court.js";
+export {
+  OPENING_DEV_DEKADS, buildCabinetBriefings, dismissCabinetProposal, setAutoGovernance,
+} from "./cabinet.js";
 
 export const V2_VERSION = 2;
 
@@ -122,6 +141,13 @@ function assignInitialCityStats(world, era, cityKey, owner) {
     siegeDefense: "hold",
     specialty: citySpecialtyV2(cityKey),
     level: clamp(1 + (h % 2), 1, 3),
+    buildings: {
+      farm: 1,
+      market: 1,
+      workshop: (h % 3 === 0) ? 1 : 0,
+      academy: (h % 4 === 0) ? 1 : 0,
+    },
+    publicOrder: 78,
   };
 }
 
@@ -261,6 +287,7 @@ export function createGameV2(world, year, playerFaction, { difficulty = "standar
     outcome: "ongoing",
   };
   state.sealFaction = initialSealFaction(state, year);
+  ensureV4State(state);
   spawnWanderingHeroes(world, state, []);
   recordHistorySnapshot(world, state);
   return state;
@@ -348,7 +375,29 @@ export function dispatchArmy(world, state, { from, to, officer, deputy = null, f
 
 export function rankProgressForFaction(state, faction = state.player) {
   const cityCount = Object.values(state.cities || {}).filter((c) => c.owner === faction).length;
-  return { cityCount, ...imperialRankForCities(cityCount) };
+  const pRank = prestigeRankForFaction(state, faction);
+  return {
+    cityCount,
+    ...imperialRankForCities(cityCount),
+    prestige: pRank.prestige,
+    prestigeRank: pRank.current,
+    nextPrestigeRank: pRank.nextRank,
+    rankIndex: pRank.rankIndex,
+  };
+}
+
+export function approveCabinetProposal(world, state, proposalId) {
+  return executeCabinetProposal(world, state, proposalId, {
+    dispatchEmergencyReinforce,
+    resolveCaptive,
+  });
+}
+
+export function approveAllCabinet(world, state) {
+  return approveAllRecommended(world, state, {
+    dispatchEmergencyReinforce,
+    resolveCaptive,
+  });
 }
 
 export function redirectArmy(world, state, armyId, { targetCity, stance, siegeStance }) {
@@ -851,14 +900,18 @@ function resolveFieldBattle(world, state, a, b, events, { allowEngage = true } =
   const wfMultB = fort?.kind === "water_fort" && fort.faction === b.faction && b.troopType === "navy" ? 1.18 : 1;
   const specMultA = (a.specialtyTag === "horse" && a.troopType === "cavalry") || (a.specialtyTag === "shipyard" && a.troopType === "navy") ? 1.12 : 1;
   const specMultB = (b.specialtyTag === "horse" && b.troopType === "cavalry") || (b.specialtyTag === "shipyard" && b.troopType === "navy") ? 1.12 : 1;
+  const courtMultA = computeCourtBonuses(state, a.faction).combatMult
+    * (1 + Math.min(0.25, (state.cities[a.depot || a.from]?.buildings?.workshop || 0) * 0.05));
+  const courtMultB = computeCourtBonuses(state, b.faction).combatMult
+    * (1 + Math.min(0.25, (state.cities[b.depot || b.from]?.buildings?.workshop || 0) * 0.05));
 
   const powA = Math.max(1, a.troops) * cAB.mult * officerPowerMult(state, offA, false, false, terrain)
-    * depMultA * formA.atkMult * bondA.atkMult * wfMultA * specMultA * decMultA * flankMultA
+    * depMultA * formA.atkMult * bondA.atkMult * wfMultA * specMultA * decMultA * flankMultA * courtMultA
     * (0.72 + a.morale * 0.004) * (a.supplyCut ? 0.72 : 1)
     * (a.troopType === "siege" ? 0.82 : 1)
     * (a.faction !== state.player ? DIFFICULTY_MODES[state.difficulty || "standard"].aiAtkMult : 1);
   const powB = Math.max(1, b.troops) * cBA.mult * officerPowerMult(state, offB, false, false, terrain)
-    * depMultB * formB.atkMult * bondB.atkMult * wfMultB * specMultB * decMultB * flankMultB
+    * depMultB * formB.atkMult * bondB.atkMult * wfMultB * specMultB * decMultB * flankMultB * courtMultB
     * (0.72 + b.morale * 0.004) * (b.supplyCut ? 0.72 : 1)
     * (b.troopType === "siege" ? 0.82 : 1)
     * (b.faction !== state.player ? DIFFICULTY_MODES[state.difficulty || "standard"].aiAtkMult : 1);
@@ -1049,6 +1102,7 @@ function transferCityOwnership(world, state, cityKey, winnerFaction, besiegerArm
   city.wall = Math.max(160, Math.round(city.wallMax * 0.42));
   city.foodReserve = 68;
   city.morale = 64;
+  city.publicOrder = 62;
 
   const sorted = besiegerArmies.slice().sort((a, b) => b.troops - a.troops);
   const lead = sorted[0];
@@ -1228,6 +1282,7 @@ function resolveSieges(world, state, events) {
       const thunderMult = hasDecree(state, a.faction, "thunder_siege") ? 1 + (NATIONAL_DECREES_V2.thunder_siege.siegeMult ?? 0.22) : 1;
       const pow = a.troops * counter.mult * officerPowerMult(state, offObj, true, false, "plain")
         * depMult * attBond.atkMult * (0.72 + a.morale * 0.0038) * (a.supplyCut ? 0.72 : 1) * encircleBonus
+        * computeCourtBonuses(state, a.faction).combatMult
         * (a.faction !== state.player ? DIFFICULTY_MODES[state.difficulty || "standard"].aiAtkMult : 1);
 
       weightedAttPow += pow;
@@ -1243,7 +1298,9 @@ function resolveSieges(world, state, events) {
       ? evaluateBondBonus(state, city.commander, [city.governor].filter(Boolean), attackers.flatMap((x) => [x.officer, x.deputy]).filter(Boolean))
       : { defMult: 1, lossMult: 1 };
     const wallRatioBonus = 1 + (city.wall / Math.max(1, city.wallMax)) * 0.45 + (TROOP_TYPES[city.troopType]?.wallDefBonus ?? 0);
-    const defPow = Math.max(200, city.troops * wallRatioBonus * officerPowerMult(state, defCmd, false, true, "plain") * defBond.defMult * (0.72 + city.morale * 0.0035));
+    const workshopDefMult = 1 + (city.buildings?.workshop || 0) * CITY_BUILDINGS_V4.workshop.combatBonusPerLv;
+    const courtDefMult = computeCourtBonuses(state, city.owner).combatMult;
+    const defPow = Math.max(200, city.troops * wallRatioBonus * workshopDefMult * courtDefMult * officerPowerMult(state, defCmd, false, true, "plain") * defBond.defMult * (0.72 + city.morale * 0.0035));
 
     // Calculate wall, food, morale, and troop attrition for ONE dekad
     const ironWallMitigation = hasDecree(state, city.owner, "iron_walls") ? (NATIONAL_DECREES_V2.iron_walls.wallMitigation ?? 0.88) : 1;
@@ -1301,54 +1358,101 @@ function resolveSieges(world, state, events) {
 }
 
 function applyMonthlyGovernance(world, state, events) {
+  // 1. Update each city's recruitment, wall repair, reserve food & public order
   for (const city of Object.values(state.cities)) {
     const pol = CITY_POLICIES[city.policy || "balanced"] || CITY_POLICIES.balanced;
     const fac = state.factions[city.owner];
     if (!fac) continue;
+    const b = city.buildings || { farm: 1, market: 1, workshop: 0, academy: 0 };
+    const tier = cityTierInfo(city);
+    city.level = tier.level;
+
+    const tax = TAX_LEVELS_V4[fac.taxLevel || "normal"] || TAX_LEVELS_V4.normal;
+    const court = computeCourtBonuses(state, city.owner);
     const gov = city.governor ? state.officers[city.governor] : null;
     const govBonus = 1 + ((gov?.governance ?? 55) - 55) * 0.004 + (gov?.traits?.includes("farming") ? 0.08 : 0);
-    const ecoMult = city.owner === state.player ? DIFFICULTY_MODES[state.difficulty || "standard"].playerEconomy : 1.02;
     const underSiege = Boolean(state.sieges[city.key]);
 
+    const orderShift = tax.orderDelta + (b.academy || 0) * CITY_BUILDINGS_V4.academy.orderPerLv + court.orderBonus + (underSiege ? -8 : 0);
+    city.publicOrder = clamp((Number.isFinite(city.publicOrder) ? city.publicOrder : 78) + orderShift, 0, 100);
+
     if (!underSiege) {
-      const cSpec = CITY_SPECIALTIES[city.specialty];
-      const specTreasuryMult = 1 + (cSpec?.treasuryBonus ?? 0);
-      const specGrainMult = 1 + (cSpec?.grainBonus ?? 0);
-      const tuntianMult = hasDecree(state, city.owner, "tuntian") ? (1 + (NATIONAL_DECREES_V2.tuntian.grainMult ?? 0.25)) : 1;
       const standingMult = hasDecree(state, city.owner, "standing_army") ? (1 + (NATIONAL_DECREES_V2.standing_army.recruitMult ?? 0.3)) : 1;
       const ironWallRepairMult = hasDecree(state, city.owner, "iron_walls") ? (1 + (NATIONAL_DECREES_V2.iron_walls.wallRepairMult ?? 0.35)) : 1;
       const moraleFloor = hasDecree(state, city.owner, "imperial_edict") ? (NATIONAL_DECREES_V2.imperial_edict.moraleFloor ?? 75) : 40;
 
-      const tGain = Math.round((7 + city.level * 2.5) * pol.treasuryMult * govBonus * ecoMult * specTreasuryMult);
-      const gGain = Math.round((9 + city.level * 3) * pol.grainMult * govBonus * ecoMult * specGrainMult * tuntianMult);
-      fac.treasury += tGain;
-      fac.grain += gGain;
-
-      const cap = 2600 + city.level * 550;
+      const cap = 2400 + tier.level * 480 + (b.farm || 0) * CITY_BUILDINGS_V4.farm.troopCapPerLv;
+      const workshopRecMult = 1 + (b.workshop || 0) * CITY_BUILDINGS_V4.workshop.recruitPerLv;
       if (city.troops < cap) {
-        const rec = Math.round(95 * pol.recruitRate * govBonus * standingMult);
+        const rec = Math.round(92 * pol.recruitRate * govBonus * workshopRecMult * court.recruitMult * standingMult);
         city.troops = Math.min(cap, city.troops + rec);
       }
       city.wall = Math.min(city.wallMax, city.wall + Math.round(pol.wallRepair * ironWallRepairMult));
-      city.foodReserve = Math.min(100, city.foodReserve + pol.foodRefill);
+      city.foodReserve = Math.min(100, city.foodReserve + pol.foodRefill + (b.farm || 0) * CITY_BUILDINGS_V4.farm.foodRefillPerLv);
       city.morale = Math.max(moraleFloor, clamp(city.morale + 2, 40, 100));
+
+      if (city.publicOrder < 25 && city.troops > 450) {
+        const loss = Math.max(60, Math.round(city.troops * 0.12));
+        city.troops = Math.max(300, city.troops - loss);
+        city.publicOrder = 45;
+        if (city.owner === state.player) {
+          events.push({
+            turn: state.turn,
+            kind: "trap",
+            faction: city.owner,
+            city: city.key,
+            pos: cityByKey(world, city.key)?.position,
+            text: `🔥 治安告急！「${cityNameV2(world, city.key)}」怨声载道爆发流民骚乱，折损守军 ${loss.toLocaleString()} 人（建议下调税率或兴建郡学）！`,
+          });
+        }
+      }
     }
   }
+
+  // 2. Apply tax yield minus troop upkeep & corruption per faction
   for (const fk of Object.keys(state.factions)) {
     const fac = state.factions[fk];
-    if (fac && hasDecree(state, fk, "imperial_edict")) {
+    if (!fac) continue;
+    const econ = estimateFactionEconomy(state, fk);
+    if (!econ.cityCount) continue;
+
+    fac.treasury = Math.max(0, fac.treasury + econ.netTreasury);
+    fac.grain = Math.max(0, fac.grain + econ.netGrain);
+    if (fac.key === state.player && ((fac.treasury === 0 && econ.netTreasury < 0) || (fac.grain === 0 && econ.netGrain < 0))) {
+      fac.morale = clamp(fac.morale - 4, 20, 100);
+      events.push({
+        turn: state.turn,
+        kind: "economy",
+        faction: fk,
+        text: `⚠️ 【府库/军粮入不敷出】大军维持耗费过重，建议调整税率、兴建农商或适度裁兵！`,
+      });
+    }
+    if (hasDecree(state, fk, "imperial_edict")) {
       fac.morale = Math.max(fac.morale, NATIONAL_DECREES_V2.imperial_edict.moraleFloor ?? 75);
     }
   }
+
+  // 3. Apply monthly officer loyalty adjustments (Heir + Nine Ranks + Tax)
   for (const off of Object.values(state.officers)) {
-    if (!off.capturedBy && hasDecree(state, off.faction, "nine_ranks")) {
-      off.loyalty = clamp(off.loyalty + (NATIONAL_DECREES_V2.nine_ranks.monthlyLoyalty ?? 2), 0, 100);
+    if (off.capturedBy) continue;
+    const fac = state.factions[off.faction];
+    if (!fac) continue;
+    const court = computeCourtBonuses(state, off.faction);
+    const tax = TAX_LEVELS_V4[fac.taxLevel || "normal"] || TAX_LEVELS_V4.normal;
+    const nineRanksDelta = hasDecree(state, off.faction, "nine_ranks") ? (NATIONAL_DECREES_V2.nine_ranks.monthlyLoyalty ?? 2) : 0;
+    const totalLoyaltyDelta = nineRanksDelta + court.heirLoyaltyMonthly + tax.loyaltyDelta;
+    if (totalLoyaltyDelta !== 0) {
+      off.loyalty = clamp(off.loyalty + totalLoyaltyDelta, 0, 100);
     }
   }
+
+  const pEcon = estimateFactionEconomy(state, state.player);
+  const signT = pEcon.netTreasury >= 0 ? `+${pEcon.netTreasury}` : `${pEcon.netTreasury}`;
+  const signG = pEcon.netGrain >= 0 ? `+${pEcon.netGrain}` : `${pEcon.netGrain}`;
   events.push({
     turn: state.turn,
     kind: "economy",
-    text: `【月度税赋结算】未遭围困各城已依治城方针及国家政令自动征粮聚财、休整守军并修缮城防。`,
+    text: `【月度税赋与军饷结算】国库净 ${signT} 钱（扣军饷 ${pEcon.upkeepTreasury}/腐败 ${pEcon.corruptionLoss}），军粮净 ${signG} 石，平均治安 ${pEcon.avgOrder}。`,
   });
 }
 
@@ -1361,6 +1465,32 @@ function planAiDekad(world, state) {
     if (!ownedCities.length) continue;
     const pers = aiPersonalityFor(fk);
     const aggMult = diff.aiAggression * (pers.aggression ?? 1) * (state.coalitionAlertLevel > 0 ? 1.14 : 1);
+
+    // 0. AI infrastructure development (farm/market/academy/workshop)
+    const devCadence = state.turn <= OPENING_DEV_DEKADS ? 2 : 3;
+    if ((state.turn + hashStr(fk)) % devCadence === 0 && (state.factions[fk]?.treasury ?? 0) >= 48) {
+      const econ = estimateFactionEconomy(state, fk);
+      const track = econ.netGrain < 45 || state.factions[fk].grain < 120 ? "farm"
+        : econ.avgOrder < 62 ? "academy"
+          : (state.factions[fk].treasury < 110 || econ.netTreasury < 30 ? "market"
+            : ((state.turn % 2 === 0) ? "farm" : "workshop"));
+      const buildCity = ownedCities
+        .filter((c) => !state.sieges?.[c.key] && (c.buildings?.[track] ?? 0) < 5)
+        .sort((a, b) => (a.buildings?.[track] ?? 0) - (b.buildings?.[track] ?? 0) || b.troops - a.troops)[0];
+      if (buildCity) {
+        const nextLv = (buildCity.buildings?.[track] ?? 0) + 1;
+        const cost = buildingUpgradeCost(state, fk, track, nextLv);
+        if (state.factions[fk].treasury >= cost) {
+          try {
+            const built = upgradeCityBuilding(world, state, buildCity.key, track, { actorFaction: fk, silent: true });
+            state.cities[buildCity.key] = built.cities[buildCity.key];
+            state.factions[fk].treasury = built.factions[fk].treasury;
+          } catch {
+            // Skip invalid build state
+          }
+        }
+      }
+    }
 
     // 1. Update besieging AI stances intelligently
     const myArmies = state.armies.filter((a) => a.faction === fk && a.troops > 0);
@@ -1427,9 +1557,10 @@ function planAiDekad(world, state) {
     }
     if (dispatchedThisTurn) continue;
 
-    // 3. Opportunistic AI border offensive shaped by ruler personality
+    // 3. Opportunistic AI border offensive shaped by ruler personality (wait out opening dev phase)
+    if (state.turn <= OPENING_DEV_DEKADS) continue;
     if (((state.turn + hashStr(fk)) % (aggMult > 1.1 ? 2 : 3)) !== 0) continue;
-    if (state.factions[fk].grain < 18) continue;
+    if (state.factions[fk].grain < 28) continue;
 
     let bestAttack = null;
     for (const c of ownedCities) {
@@ -1491,7 +1622,7 @@ export function checkOutcome(state) {
  */
 export function advanceDekad(world, state, { skipAi = false } = {}) {
   if (state.outcome !== "ongoing") return state;
-  const next = ensurePhase2State(structuredClone(state));
+  let next = ensurePhase2State(structuredClone(state));
   next.turn += 1;
   next.edictCooldown = Math.max(0, (next.edictCooldown || 0) - 1);
   const events = [];
@@ -1773,12 +1904,15 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
     recordHistorySnapshot(world, next);
   }
 
-  // 5. Monthly governance, logistics links, hero spawns, coalition & historical events (every 3 dekads)
+  // 5. Monthly governance, auto-governance, logistics links, hero spawns, coalition & Three Kingdoms climax (every 3 dekads)
   if (next.turn % 3 === 0) {
+    next.dismissedCabinetIds = [];
     applyMonthlyGovernance(world, next, events);
+    next = runAutoGovernanceMonthly(world, next, events, { dispatchEmergencyReinforce, resolveCaptive });
     processSupplyLinksMonthly(world, next, events);
     spawnWanderingHeroes(world, next, events);
     updateAntiHegemonCoalition(world, next, events);
+    checkThreeKingdomsClimax(world, next, events);
     recordHistorySnapshot(world, next);
     if (!skipAi) {
       maybeTriggerEvent(world, next, events);

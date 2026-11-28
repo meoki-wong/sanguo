@@ -8,6 +8,7 @@ import {
   roadTerrain,
 } from "./constants.js";
 import { aiPersonalityFor } from "./theater.js";
+import { computeCourtBonuses, ensureV4State } from "./court.js";
 
 function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
@@ -60,7 +61,7 @@ export function ensurePhase2State(state) {
       a.escortName ??= null;
     }
   }
-  return state;
+  return ensureV4State(state);
 }
 
 export function hasDecree(state, faction, decreeId) {
@@ -637,6 +638,12 @@ export function evaluateDeal(world, state, targetFaction, deal = {}) {
   if (hasDecree(state, state.player, "imperial_edict")) {
     score += 18;
     reasons.push("挟天子令威望 (+18)");
+  }
+
+  const chanDealBonus = computeCourtBonuses(state, state.player).dealBonus;
+  if (chanDealBonus > 0) {
+    score += chanDealBonus;
+    reasons.push(`丞相折冲 (+${chanDealBonus})`);
   }
 
   if (gold > 0) {

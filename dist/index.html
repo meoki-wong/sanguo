@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#161410">
-  <meta name="description" content="经略三国 3.0 — 实时流逝行军、历史大事件抉择、名将战法与大战略统一">
-  <title>经略三国 3.0</title>
+  <meta name="description" content="经略三国 4.0 — 郡国农商基建、朝堂六卿官职、军机处中枢决策与三足鼎立">
+  <title>经略三国 4.0</title>
   <link rel="stylesheet" href="./v2/style.css">
   <script type="module" src="./v2/main.js"></script>
 </head>
@@ -16,7 +16,7 @@
       <div class="v2-title-meta">
         <div class="v2-title-row">
           <h1>经略三国</h1>
-          <span class="v2-ver-pill">3.0</span>
+          <span class="v2-ver-pill">4.0</span>
           <button type="button" class="v2-weather-pill" id="v2-weather" title="当前时令天时"></button>
         </div>
         <div class="v2-date-line" id="v2-date">199年1月上旬</div>
@@ -31,7 +31,8 @@
     </dl>
 
     <div class="v2-actions">
-      <button type="button" class="v2-btn quiet" id="open-court" title="名将、军团、外交与奏报 (C)">朝堂</button>
+      <button type="button" class="v2-btn secondary" id="open-cabinet" title="军机处：审阅重臣建言、税率调控与理政托管 (B)">军机处<span class="v2-dot-badge" id="cabinet-badge" hidden>0</span></button>
+      <button type="button" class="v2-btn quiet" id="open-court" title="朝堂六卿、郡国农商、外交与大势 (C)">朝堂</button>
       <button type="button" class="v2-btn quiet" id="open-log" title="战局大事纪要 (L)">奏报</button>
       <button type="button" class="v2-btn quiet" id="toggle-immersive" aria-pressed="false" title="全屏专注沙盘 (H)">全屏</button>
       <button type="button" class="v2-btn quiet" id="open-menu" title="剧本、势力、存档与音效">菜单</button>
@@ -83,16 +84,26 @@
         <button type="button" class="v2-btn quiet" data-close="court-dialog">关闭</button>
       </header>
       <nav class="v2-tabs" id="court-tabs" role="tablist">
-        <button type="button" class="v2-tab" data-tab="officers" aria-selected="true">麾下名将</button>
-        <button type="button" class="v2-tab" data-tab="cities" aria-selected="false">疆域城政</button>
-        <button type="button" class="v2-tab" data-tab="armies" aria-selected="false">在途军团</button>
+        <button type="button" class="v2-tab" data-tab="offices" aria-selected="true">朝堂官职</button>
+        <button type="button" class="v2-tab" data-tab="cities" aria-selected="false">郡国农商</button>
+        <button type="button" class="v2-tab" data-tab="roster" aria-selected="false">将领军团</button>
         <button type="button" class="v2-tab" data-tab="diplomacy" aria-selected="false">天下外交</button>
-        <button type="button" class="v2-tab" data-tab="decrees" aria-selected="false">官爵国策</button>
-        <button type="button" class="v2-tab" data-tab="captives" aria-selected="false">俘将处置</button>
-        <button type="button" class="v2-tab" data-tab="trends" aria-selected="false">天下大势</button>
-        <button type="button" class="v2-tab" data-tab="chronicle" aria-selected="false">战局奏报</button>
+        <button type="button" class="v2-tab" data-tab="chronicle" aria-selected="false">大势奏报</button>
       </nav>
       <div class="v2-dialog-body" id="court-body"></div>
+    </div>
+  </dialog>
+
+  <dialog id="cabinet-dialog" class="v2-dialog v2-cabinet-dialog" aria-labelledby="cabinet-title">
+    <div class="v2-dialog-shell">
+      <header class="v2-dialog-head">
+        <div>
+          <h2 id="cabinet-title">🏛️ 军机处 · 中枢决断阁</h2>
+          <p class="v2-dialog-sub" id="cabinet-sub">重臣汇总天下要务与建言，一键朱批准奏或开启重臣自动托管</p>
+        </div>
+        <button type="button" class="v2-btn quiet" data-close="cabinet-dialog">关闭</button>
+      </header>
+      <div class="v2-dialog-body" id="cabinet-body"></div>
     </div>
   </dialog>
 
@@ -100,8 +111,8 @@
     <div class="v2-dialog-shell">
       <header class="v2-dialog-head">
         <div>
-          <h2 id="menu-title">经略三国 3.0 · 剧本与军政设置</h2>
-          <p class="v2-dialog-sub">择定汉末三国十一大史实剧本，运筹实时流逝行军、名将战法与大事件博弈</p>
+          <h2 id="menu-title">经略三国 4.0 · 剧本与军政设置</h2>
+          <p class="v2-dialog-sub">择定汉末三国十一大史实剧本，统筹郡国农商、六卿朝堂、军机奏折与三足鼎立</p>
         </div>
         <button type="button" class="v2-btn quiet" data-close="menu-dialog">返回战局</button>
       </header>

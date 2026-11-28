@@ -254,7 +254,7 @@ async function boot() {
     if (flowing) scheduleNextFlowTick();
   });
 
-  for (const id of ["open-court", "open-log", "open-menu", "seal-btn"]) {
+  for (const id of ["open-cabinet", "open-court", "open-log", "open-menu", "seal-btn"]) {
     $(id)?.addEventListener("click", () => {
       if (flowing) stopFlow();
     }, { capture: true });
@@ -300,10 +300,14 @@ async function boot() {
       speedIndex = (speedIndex + 1) % SPEED_MODES.length;
       syncFlowUi();
       if (flowing) scheduleNextFlowTick();
+    } else if (k === "b") {
+      ev.preventDefault();
+      if (flowing) stopFlow();
+      ui.openCabinetDialog?.();
     } else if (k === "c") {
       ev.preventDefault();
       if (flowing) stopFlow();
-      ui.openCourtDialog("officers");
+      ui.openCourtDialog("offices");
     } else if (k === "d") {
       ev.preventDefault();
       if (flowing) stopFlow();

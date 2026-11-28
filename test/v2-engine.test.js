@@ -7,16 +7,21 @@ import {
   edgeKey, formatCalendar, imperialRankForCities, roadTerrain, troopCounterEffect,
 } from "../dist/v2/constants.js";
 import {
-  EMPEROR_EDICTS_V3, WANDERING_HEROES_V3, activeTreaty, advanceDekad, aiPersonalityFor,
-  availableOfficersInCity, batchSetCityPolicy, bribeDefection, buildFort, canBuildFort,
-  castStratagem, checkSupplyLine, clearSupplyLink, computeThreats, createGameV2, demolishFort,
-  deserializeStateV2, dispatchArmy, dispatchEmergencyReinforce, enactDecree, evaluateDeal,
-  executeDiplomacy, findRoadPath, hasDecree, isHostileV2, issueImperialEdict,
-  launchCoordinatedAttack, layCityTrap, officerBattleArt, planCoordinatedAttack, proposeDeal,
+  CITY_BUILDINGS_V4, COURT_OFFICES_V4, EMPEROR_EDICTS_V3, OPENING_DEV_DEKADS,
+  PRESTIGE_RANKS_V4, TAX_LEVELS_V4, WANDERING_HEROES_V3, activeTreaty, advanceDekad,
+  aiPersonalityFor, appointCourtOffice, approveAllCabinet, approveCabinetProposal,
+  availableOfficersInCity, batchSetCityPolicy, bribeDefection, buildCabinetBriefings, buildFort,
+  buildingUpgradeCost, canBuildFort, castStratagem, checkSupplyLine, cityTierInfo,
+  clearSupplyLink, computeCourtBonuses, computeFactionPrestige, computeThreats, createGameV2,
+  demolishFort, deserializeStateV2, dismissCabinetProposal, dispatchArmy,
+  dispatchEmergencyReinforce, enactDecree, estimateFactionEconomy, evaluateDeal, executeDiplomacy,
+  findRoadPath, hasDecree, isHostileV2, issueImperialEdict, launchCoordinatedAttack, layCityTrap,
+  officerBattleArt, planCoordinatedAttack, prestigeRankForFaction, proposeDeal,
   rankProgressForFaction, recruitWanderingOfficer, redirectArmy, renderDiploMatrixHtml,
   renderPowerChartSvg, renderReplayMapSvg, repairFort, resolveCaptive, resolveEventChoice,
-  rewardOfficer, serializeStateV2, setCityPolicy, setCitySiegeDefense, setCityTroopType,
-  setSupplyLink, sowDiscord, stratagemCooldownLeft, transferOfficer, triggerArmyArt,
+  rewardOfficer, serializeStateV2, setAutoGovernance, setCityPolicy, setCitySiegeDefense,
+  setCityTroopType, setSupplyLink, setTaxLevel, sowDiscord, stratagemCooldownLeft,
+  transferOfficer, triggerArmyArt, upgradeCityBuilding,
 } from "../dist/v2/engine.js";
 import { spawnWanderingHeroes } from "../dist/v2/arts.js";
 import { maybeTriggerEvent } from "../dist/v2/events.js";
@@ -865,4 +870,160 @@ test("3.0 战役明细战报、历史态势图表/外交矩阵/疆域回放及 2
   assert.ok(Array.isArray(restored.wanderingOfficers));
   assert.ok(Array.isArray(restored.battleReports));
   assert.equal(typeof restored.supplyLinks, "object");
+});
+
+test("4.0 郡国农商基建、城市规模晋升、国家税率与维持腐败经济闭环", () => {
+  assert.equal(Object.keys(CITY_BUILDINGS_V4).length, 4);
+  assert.equal(Object.keys(TAX_LEVELS_V4).length, 3);
+
+  let st = createGameV2(world, 199, "cao");
+  st.factions.cao.treasury = 500;
+  const xu = st.cities.xu;
+  assert.ok(xu.buildings.farm >= 1 && xu.buildings.market >= 1);
+  assert.equal(xu.publicOrder, 78);
+
+  const farmCost = buildingUpgradeCost(st, "cao", "farm", xu.buildings.farm + 1);
+  const goldBefore = st.factions.cao.treasury;
+  const farmBefore = xu.buildings.farm;
+  st = upgradeCityBuilding(world, st, "xu", "farm");
+  assert.equal(st.cities.xu.buildings.farm, farmBefore + 1);
+  assert.equal(st.factions.cao.treasury, goldBefore - farmCost);
+
+  const wallMaxBefore = st.cities.xu.wallMax;
+  st = upgradeCityBuilding(world, st, "xu", "academy");
+  assert.equal(st.cities.xu.wallMax, wallMaxBefore + CITY_BUILDINGS_V4.academy.wallPerLv);
+  assert.ok(cityTierInfo(st.cities.xu).totalDev >= 4);
+
+  const lowTax = estimateFactionEconomy(setTaxLevel(st, "low"), "cao");
+  const normTax = estimateFactionEconomy(setTaxLevel(st, "normal"), "cao");
+  const highTax = estimateFactionEconomy(setTaxLevel(st, "high"), "cao");
+  assert.ok(highTax.grossTreasury > normTax.grossTreasury && normTax.grossTreasury > lowTax.grossTreasury);
+  assert.ok(normTax.upkeepTreasury > 0 && normTax.upkeepGrain > 0);
+
+  // Public order unrest trigger when dropping below 25
+  let unrestSt = setTaxLevel(st, "high");
+  unrestSt.cities.xu.publicOrder = 22;
+  unrestSt.cities.xu.buildings.academy = 0;
+  unrestSt.cities.xu.troops = 1600;
+  for (let i = 0; i < 3; i += 1) unrestSt = advanceDekad(world, unrestSt, { skipAi: true });
+  assert.ok(unrestSt.events.some((e) => e.text.includes("治安告急") || e.text.includes("骚乱")));
+  assert.ok(unrestSt.cities.xu.troops < 1600);
+});
+
+test("4.0 朝堂六卿官职任免光环、威望晋爵与三足鼎立终局", () => {
+  assert.equal(Object.keys(COURT_OFFICES_V4).length, 6);
+  assert.equal(PRESTIGE_RANKS_V4.length, 6);
+
+  const small = createGameV2(world, 199, "lu");
+  assert.throws(() => appointCourtOffice(small, "imperial_censor", Object.values(small.officers).find((o) => o.faction === "lu")?.key), /威望晋升/);
+
+  let st = createGameV2(world, 199, "cao");
+  const pool = Object.values(st.officers).filter((o) => o.faction === "cao" && o.name !== "曹操");
+  const bestGov = pool.slice().sort((a, b) => b.governance - a.governance)[0];
+  const bestCmd = pool.filter((o) => o.key !== bestGov.key).sort((a, b) => b.command - a.command)[0];
+
+  const loyBefore = bestGov.loyalty;
+  st = appointCourtOffice(st, "chancellor", bestGov.key);
+  st = appointCourtOffice(st, "grand_general", bestCmd.key);
+  assert.equal(st.courtOffices.cao.chancellor, bestGov.key);
+  assert.equal(st.courtOffices.cao.grand_general, bestCmd.key);
+  assert.ok(st.officers[bestGov.key].loyalty >= loyBefore);
+
+  const bonuses = computeCourtBonuses(st, "cao");
+  assert.ok(bonuses.buildDiscount < 1);
+  assert.ok(bonuses.dealBonus >= 6);
+  assert.ok(bonuses.upkeepDiscount < 1);
+  assert.ok(bonuses.combatMult > 1);
+  assert.ok(computeFactionPrestige(st, "cao") > 0);
+  assert.ok(prestigeRankForFaction(st, "cao").prestige > 0);
+
+  // Trigger Three Kingdoms climax after turn 18 with >= 22 cities & >= 3 active powers
+  const nonCaoKeys = Object.keys(st.cities).filter((ck) => !["cao", "yuan", "ce"].includes(st.cities[ck].owner));
+  let given = Object.values(st.cities).filter((c) => c.owner === "cao").length;
+  for (const ck of nonCaoKeys) {
+    if (given >= 22) break;
+    st.cities[ck].owner = "cao";
+    given += 1;
+  }
+  st.turn = 20;
+  st.treaties.push({ kind: "alliance", sides: ["cao", "yuan"].sort(), expires: 60 });
+  st = advanceDekad(world, st, { skipAi: true });
+  assert.equal(st.threeKingdoms?.triggered, true);
+  assert.equal(st.threeKingdoms.emperors.length, 3);
+  const [e0, e1] = st.threeKingdoms.emperors;
+  assert.equal(activeTreaty(st, e0.faction, e1.faction), null);
+});
+
+test("4.0 军机处中枢奏折建议、朱批准奏/留中/一键全批与重臣自动托管", () => {
+  let st = createGameV2(world, 199, "cao");
+  st.factions.cao.treasury = 350;
+  const briefings = buildCabinetBriefings(world, st);
+  assert.ok(briefings.length >= 2);
+  for (let i = 1; i < briefings.length; i += 1) {
+    assert.ok(briefings[i - 1].priority >= briefings[i].priority);
+  }
+
+  const firstId = briefings[0].id;
+  const afterDismiss = dismissCabinetProposal(st, firstId);
+  assert.equal(buildCabinetBriefings(world, afterDismiss).some((p) => p.id === firstId), false);
+
+  const buildProp = briefings.find((p) => p.action.kind === "build");
+  assert.ok(buildProp);
+  const prevLv = st.cities[buildProp.action.payload.cityKey].buildings[buildProp.action.payload.trackId];
+  const afterOne = approveCabinetProposal(world, st, buildProp.id);
+  assert.equal(afterOne.cities[buildProp.action.payload.cityKey].buildings[buildProp.action.payload.trackId], prevLv + 1);
+
+  const afterAll = approveAllCabinet(world, st);
+  assert.ok(afterAll.events.some((e) => e.text.includes("军机总批")));
+
+  // Test autonomous governance on monthly tick
+  let autoSt = setAutoGovernance(st, "autoEconomy", true);
+  autoSt = setAutoGovernance(autoSt, "autoPersonnel", true);
+  autoSt.factions.cao.treasury = 300;
+  for (let i = 0; i < 3; i += 1) autoSt = advanceDekad(world, autoSt, { skipAi: true });
+  assert.ok(autoSt.events.some((e) => e.text.includes("军机自动")));
+});
+
+test("4.0 开局 9 旬农商休养蓄势期 AI 行为与 2.0/3.0 旧档向上兼容", () => {
+  assert.equal(OPENING_DEV_DEKADS, 9);
+  let st = createGameV2(world, 199, "cao");
+  const initialAiDev = Object.values(st.cities)
+    .filter((c) => c.owner !== "cao")
+    .reduce((sum, c) => sum + c.buildings.farm + c.buildings.market + c.buildings.workshop + c.buildings.academy, 0);
+
+  for (let i = 0; i < OPENING_DEV_DEKADS; i += 1) {
+    st = advanceDekad(world, st);
+  }
+  const aiOffensiveInOpening = st.armies.filter((a) => a.faction !== "cao" && a.stance === "attack");
+  assert.equal(aiOffensiveInOpening.length, 0, "开局 9 旬休养蓄势期内 AI 不主动发起跨境进攻");
+
+  const devAfter9 = Object.values(st.cities)
+    .filter((c) => c.owner !== "cao")
+    .reduce((sum, c) => sum + c.buildings.farm + c.buildings.market + c.buildings.workshop + c.buildings.academy, 0);
+  assert.ok(devAfter9 > initialAiDev, "休养蓄势期内 AI 真实花钱兴建郡国农商基建");
+
+  // Advance after turn 9 so AI resumes normal campaign tempo cleanly
+  for (let i = 0; i < 6; i += 1) {
+    st = advanceDekad(world, st);
+  }
+  assert.equal(st.turn, 15);
+
+  // Strip v4 fields from save JSON & verify smooth upgrade via deserializeStateV2
+  const raw = JSON.parse(serializeStateV2(st));
+  delete raw.courtOffices;
+  delete raw.autoGovernance;
+  delete raw.dismissedCabinetIds;
+  delete raw.threeKingdoms;
+  for (const c of Object.values(raw.cities)) {
+    delete c.buildings;
+    delete c.publicOrder;
+  }
+  for (const f of Object.values(raw.factions)) {
+    delete f.taxLevel;
+  }
+  const restored = deserializeStateV2(world, JSON.stringify(raw));
+  assert.ok(restored.courtOffices?.cao);
+  assert.equal(restored.factions.cao.taxLevel, "normal");
+  assert.ok(restored.cities.xu.buildings.farm >= 1);
+  assert.equal(restored.cities.xu.publicOrder, 78);
 });
