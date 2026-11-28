@@ -7,14 +7,19 @@ import {
   edgeKey, formatCalendar, imperialRankForCities, roadTerrain, troopCounterEffect,
 } from "../dist/v2/constants.js";
 import {
-  advanceDekad, availableOfficersInCity, bribeDefection, buildFort, canBuildFort,
-  castStratagem, checkSupplyLine, computeThreats, createGameV2, demolishFort,
+  EMPEROR_EDICTS_V3, WANDERING_HEROES_V3, activeTreaty, advanceDekad, aiPersonalityFor,
+  availableOfficersInCity, batchSetCityPolicy, bribeDefection, buildFort, canBuildFort,
+  castStratagem, checkSupplyLine, clearSupplyLink, computeThreats, createGameV2, demolishFort,
   deserializeStateV2, dispatchArmy, dispatchEmergencyReinforce, enactDecree, evaluateDeal,
-  executeDiplomacy, hasDecree, isHostileV2, layCityTrap, proposeDeal,
-  rankProgressForFaction, redirectArmy, repairFort, resolveCaptive, rewardOfficer,
-  serializeStateV2, setCityPolicy, setCitySiegeDefense, setCityTroopType, sowDiscord,
-  stratagemCooldownLeft,
+  executeDiplomacy, findRoadPath, hasDecree, isHostileV2, issueImperialEdict,
+  launchCoordinatedAttack, layCityTrap, officerBattleArt, planCoordinatedAttack, proposeDeal,
+  rankProgressForFaction, recruitWanderingOfficer, redirectArmy, renderDiploMatrixHtml,
+  renderPowerChartSvg, renderReplayMapSvg, repairFort, resolveCaptive, resolveEventChoice,
+  rewardOfficer, serializeStateV2, setCityPolicy, setCitySiegeDefense, setCityTroopType,
+  setSupplyLink, sowDiscord, stratagemCooldownLeft, transferOfficer, triggerArmyArt,
 } from "../dist/v2/engine.js";
+import { spawnWanderingHeroes } from "../dist/v2/arts.js";
+import { maybeTriggerEvent } from "../dist/v2/events.js";
 import { evaluateBondBonus } from "../dist/v2/systems.js";
 
 const world = enrichWorld(JSON.parse(readFileSync(new URL("../dist/assets/world.json", import.meta.url), "utf8")));
@@ -631,4 +636,233 @@ test("汉室官爵晋升、国家国策颁行加成及旧档平滑升级有效",
   delete raw.decrees;
   const restored = deserializeStateV2(world, JSON.stringify(raw));
   assert.deepEqual(restored.decrees, {});
+});
+
+test("3.0 历史大事件分支抉择与汉帝奉迎 / 传国玉玺诏令系统", () => {
+  assert.equal(Object.keys(EMPEROR_EDICTS_V3).length, 3);
+
+  const biao = createGameV2(world, 199, "biao");
+  assert.throws(() => issueImperialEdict(world, biao, "edict_levy"), /汉帝驻跸|传国玉玺/);
+
+  let st = createGameV2(world, 199, "cao");
+  st.factions.cao.treasury = 300;
+  st.factions.cao.grain = 300;
+  for (let i = 0; i < 3; i += 1) {
+    st = advanceDekad(world, st, { skipAi: true });
+    if (st.pendingEvent) break;
+  }
+  if (!st.pendingEvent) maybeTriggerEvent(world, st);
+  assert.ok(st.pendingEvent && Array.isArray(st.pendingEvent.choices) && st.pendingEvent.choices.length >= 2);
+  st = resolveEventChoice(world, st, 0);
+  assert.equal(st.pendingEvent, null);
+
+  assert.equal(st.cities[st.emperorCity]?.owner, "cao");
+  const rivalKey = Object.values(st.cities).find((c) => c.owner && c.owner !== "cao").owner;
+  st.edictCooldown = 0;
+  st = issueImperialEdict(world, st, "edict_truce", rivalKey);
+  assert.equal(activeTreaty(st, "cao", rivalKey)?.kind, "truce");
+  assert.equal(st.edictCooldown, 9);
+  assert.throws(() => issueImperialEdict(world, st, "edict_levy"), /冷却中/);
+
+  st.edictCooldown = 0;
+  st = issueImperialEdict(world, st, "edict_crusade", rivalKey);
+  assert.equal(activeTreaty(st, "cao", rivalKey), null);
+
+  st.edictCooldown = 0;
+  const troopsBefore = st.cities[st.emperorCity].troops;
+  st = issueImperialEdict(world, st, "edict_levy");
+  assert.equal(st.cities[st.emperorCity].troops, troopsBefore + 600);
+});
+
+test("3.0 名将专属战法蓄怒施放、在野贤才寻访与驿传调防", () => {
+  assert.equal(officerBattleArt({ name: "吕布", traits: [] }).id, "unrivaled");
+  assert.equal(officerBattleArt({ name: "诸葛亮", traits: ["fire"] }).id, "eight_trigrams");
+  assert.equal(officerBattleArt({ name: "关羽", traits: [] }).id, "flood_seven");
+  assert.ok(WANDERING_HEROES_V3.length >= 18);
+
+  let st = createGameV2(world, 208, "liu");
+  spawnWanderingHeroes(world, st);
+  assert.ok(st.wanderingOfficers.length > 0);
+  const hero = st.wanderingOfficers[0];
+  st.cities[hero.city].owner = "liu";
+  delete st.sieges[hero.city];
+  st.factions.liu.treasury = 100;
+  st = recruitWanderingOfficer(world, st, hero.id);
+  assert.equal(st.factions.liu.treasury, 76);
+  assert.equal(st.wanderingOfficers.some((w) => w.id === hero.id), false);
+  assert.ok(Object.values(st.officers).some((o) => o.name === hero.name && o.faction === "liu"));
+
+  let trSt = createGameV2(world, 199, "cao");
+  const caoCities = Object.values(trSt.cities).filter((c) => c.owner === "cao");
+  const cFrom = caoCities.find((c) => availableOfficersInCity(trSt, c.key, "cao").length > 0).key;
+  const cTo = caoCities.find((c) => c.key !== cFrom).key;
+  const off = availableOfficersInCity(trSt, cFrom, "cao")[0];
+
+  trSt = transferOfficer(world, trSt, off.key, cTo);
+  assert.equal(trSt.officers[off.key].transferringTo, cTo);
+  assert.equal(trSt.officers[off.key].city, null);
+  for (let i = 0; i < 3; i += 1) {
+    trSt = advanceDekad(world, trSt, { skipAi: true });
+    if (!trSt.officers[off.key].transferringTo) break;
+  }
+  assert.equal(trSt.officers[off.key].transferringTo, null);
+  assert.equal(trSt.officers[off.key].city, cTo);
+
+  const sendMeta = world.cities.find((c) => c.key === cTo);
+  const nb = sendMeta.links[0];
+  trSt.cities[cTo].troops = 2000;
+  trSt = dispatchArmy(world, trSt, { from: cTo, to: nb, officer: off.key, troops: 900, troopType: "cavalry" });
+  trSt.armies[0].rage = 100;
+  trSt = triggerArmyArt(world, trSt, trSt.armies[0].id, [], { manual: true });
+  assert.equal(trSt.armies[0].rage, 0);
+  assert.equal(trSt.lastTurnEvents[0].kind, "battle_art");
+});
+
+test("3.0 后勤自动输血、多城协同合围延迟齐抵、批量治城与反霸包围网", () => {
+  let st = createGameV2(world, 199, "cao");
+  st.cities.puyang.owner = "cao";
+  st.cities.chenliu.owner = "cao";
+  st.cities.xu.owner = "cao";
+  st.cities.puyang.troops = 2200;
+  st.cities.xu.troops = 900;
+  st.factions.cao.grain = 450;
+
+  assert.ok(findRoadPath(world, st, "cao", "puyang", "xu", { allowEnemyEnd: false }));
+  st = setSupplyLink(world, st, "puyang", "xu");
+  for (let i = 0; i < 5; i += 1) st = advanceDekad(world, st, { skipAi: true });
+  assert.ok(
+    st.events.some((e) => e.text.includes("后勤自动输血"))
+      || st.armies.some((a) => a.escortName === "辎重偏将"),
+    "腹地后勤大营在月初结算安全发兵输血且无主将空指针错误",
+  );
+  st = clearSupplyLink(st, "puyang");
+  assert.equal(st.supplyLinks.puyang, undefined);
+
+  let coordSt = createGameV2(world, 199, "cao");
+  coordSt.cities.runan.owner = "biao";
+  coordSt.cities.xu.owner = "cao";
+  coordSt.cities.xu.troops = 2200;
+  coordSt.cities.puyang.owner = "cao";
+  coordSt.cities.puyang.troops = 2200;
+  coordSt.factions.cao.grain = 600;
+  for (const ck of ["xu", "puyang"]) {
+    if (availableOfficersInCity(coordSt, ck, "cao").length === 0) {
+      const spare = Object.values(coordSt.officers).find((o) => o.faction === "cao" && !o.armyId && o.city !== "xu" && o.city !== "puyang");
+      if (spare) {
+        if (spare.city && coordSt.cities[spare.city]) {
+          if (coordSt.cities[spare.city].governor === spare.key) coordSt.cities[spare.city].governor = null;
+          if (coordSt.cities[spare.city].commander === spare.key) coordSt.cities[spare.city].commander = null;
+        }
+        spare.city = ck;
+      }
+    }
+  }
+  const plan = planCoordinatedAttack(world, coordSt, {
+    targetCity: "runan",
+    originKeys: ["xu", "puyang"],
+    syncArrival: true,
+  });
+  assert.equal(plan.ok, true);
+  assert.equal(plan.columns.length, 2);
+  assert.ok(plan.columns.some((c) => c.delayDekads > 0), "同步合围会为近路军团自动计算整备延迟以齐抵敌城");
+  coordSt = launchCoordinatedAttack(world, coordSt, {
+    targetCity: "runan",
+    originKeys: ["xu", "puyang"],
+    syncArrival: true,
+  });
+  assert.equal(coordSt.armies.filter((a) => a.targetCity === "runan").length, 2);
+
+  coordSt = batchSetCityPolicy(coordSt, ["xu", "puyang"], "granary");
+  assert.equal(coordSt.cities.xu.policy, "granary");
+  assert.equal(coordSt.cities.puyang.policy, "granary");
+
+  assert.notEqual(aiPersonalityFor("cao").preferTroop, aiPersonalityFor("ce").preferTroop);
+
+  let coalSt = createGameV2(world, 199, "cao");
+  const rivals = Object.keys(coalSt.factions).filter((fk) => fk !== "cao");
+  const nonCaoKeys = Object.keys(coalSt.cities).filter((ck) => coalSt.cities[ck].owner !== "cao");
+  let given = Object.values(coalSt.cities).filter((c) => c.owner === "cao").length;
+  for (const ck of nonCaoKeys) {
+    if (given >= 17) break;
+    coalSt.cities[ck].owner = "cao";
+    given += 1;
+  }
+  // Ensure at least two rivals still hold territory
+  const remainingKeys = Object.keys(coalSt.cities).filter((ck) => coalSt.cities[ck].owner !== "cao");
+  if (rivals.length >= 2 && remainingKeys.length >= 2) {
+    coalSt.cities[remainingKeys[0]].owner = rivals[0];
+    coalSt.cities[remainingKeys[1]].owner = rivals[1];
+  }
+  for (let i = 0; i < 3; i += 1) coalSt = advanceDekad(world, coalSt, { skipAi: true });
+  assert.ok(coalSt.coalitionAlertLevel >= 1);
+  assert.ok(coalSt.events.some((e) => e.text.includes("合纵") || e.text.includes("反霸")));
+});
+
+test("3.0 战役明细战报、历史态势图表/外交矩阵/疆域回放及 2.0 存档向下兼容", () => {
+  let st = createGameV2(world, 199, "cao");
+  st.cities.runan.owner = "biao";
+  st.cities.xu.troops = 3000;
+  st.cities.runan.troops = 2600;
+  const caoOff = availableOfficersInCity(st, "xu", "cao")[0];
+  let biaoOff = availableOfficersInCity(st, "runan", "biao")[0];
+  if (!biaoOff) {
+    biaoOff = Object.values(st.officers).find((o) => o.faction === "biao" && !o.armyId);
+    biaoOff.city = "runan";
+  }
+  st = dispatchArmy(world, st, { from: "xu", to: "runan", officer: caoOff.key, troops: 1500, troopType: "cavalry" });
+  st.armies.push({
+    id: "army-test-v3-clash",
+    faction: "biao",
+    officer: biaoOff.key,
+    troops: 1200,
+    maxTroops: 1200,
+    troopType: "archer",
+    morale: 80,
+    grain: 20,
+    route: ["runan", "xu"],
+    step: 0,
+    from: "runan",
+    to: "xu",
+    targetCity: "xu",
+    depot: "runan",
+    progress: 0.45,
+    edgeDekads: 2,
+    stance: "attack",
+    siegeStance: "storm",
+    supplyCut: false,
+    reorgDekads: 0,
+    rage: 0,
+    delayDekads: 0,
+  });
+  biaoOff.armyId = "army-test-v3-clash";
+
+  for (let i = 0; i < 4; i += 1) {
+    st = advanceDekad(world, st, { skipAi: true });
+    if (st.battleReports.length > 0 && st.historySnapshots.length >= 2) break;
+  }
+  assert.ok(st.battleReports.length > 0, "战阵交锋自动记录详细胜负复盘战报");
+  assert.ok(Array.isArray(st.battleReports[0].factors));
+  assert.ok(st.battleReports[0].losses);
+  assert.ok(st.historySnapshots.length >= 2);
+
+  const svg = renderPowerChartSvg(world, st, "cities");
+  assert.ok(svg.includes("<svg") && svg.includes("<polyline"));
+  const matrix = renderDiploMatrixHtml(world, st);
+  assert.ok(matrix.includes('class="v2-matrix-table"'));
+  const replay = renderReplayMapSvg(world, st, 0);
+  assert.ok(replay.includes("<svg") && replay.includes('viewBox="40 20 710 460"'));
+
+  const raw = JSON.parse(serializeStateV2(st));
+  for (const k of [
+    "emperorCity", "sealFaction", "wanderingOfficers", "triggeredWanderingIds",
+    "pendingEvent", "triggeredEvents", "eventCooldowns", "supplyLinks",
+    "officerTransfers", "battleReports", "historySnapshots", "edictCooldown", "coalitionAlertLevel",
+  ]) {
+    delete raw[k];
+  }
+  const restored = deserializeStateV2(world, JSON.stringify(raw));
+  assert.ok(restored.emperorCity);
+  assert.ok(Array.isArray(restored.wanderingOfficers));
+  assert.ok(Array.isArray(restored.battleReports));
+  assert.equal(typeof restored.supplyLinks, "object");
 });

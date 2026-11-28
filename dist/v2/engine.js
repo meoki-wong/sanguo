@@ -1,173 +1,62 @@
-// 经略三国 2.0 — 核心大战略仿真引擎
-// 特性：旬制双轨节奏 / 地图在途军团行军与野战截击 / 跨回合多阶段围城战 / 补给线切断 / 5兵种地形天气相克 / 动态忠义与称号觉醒
+// 经略三国 3.0 — 核心大战略仿真引擎
+// 特性：旬制双轨节奏 / 地图在途军团行军与阵前绞杀 / 跨回合围城 / 历史事件天子玉玺 / 名将战法与贤才寻访 / 后勤协同合围
 
 import {
   AWAKENED_TITLES, CITY_POLICIES, CITY_SPECIALTIES, DEFENSE_TRAPS, DEKADS_PER_SEASON, DIFFICULTY_MODES,
-  FACTION_PREFERRED_TROOP, FORMATIONS_V2, NATIONAL_DECREES_V2, REGIONAL_DEFAULT_TROOP, SEASON_KEYS,
-  SIEGE_DEFENSE_MODES, SIEGE_STANCES, TROOP_TYPES, WEATHER_CATALOG, citySpecialtyV2, edgeKey,
-  formatCalendar, imperialRankForCities, roadTerrain, troopCounterEffect,
+  FACTION_PREFERRED_TROOP, FORMATIONS_V2, MIN_DISPATCH_TROOPS, MIN_GARRISON_LEAVE, NATIONAL_DECREES_V2,
+  REGIONAL_DEFAULT_TROOP, SIEGE_DEFENSE_MODES, SIEGE_STANCES, TROOP_TYPES, WEATHER_CATALOG,
+  activeTreaty, armyWorldPosition, availableOfficersInCity, canTransitCity, cityByKey, cityNameV2,
+  citySpecialtyV2, clamp, computeMarchDekads, createArmyRecord, edgeDekadsRequired, edgeDistance,
+  edgeKey, eraByYearV2, factionNameV2, findRoadPath, forecastDispatch, formatCalendar, hashStr,
+  imperialRankForCities, initialEmperorCity, isHostileV2, returnOfficerHome, roadTerrain,
+  troopCounterEffect,
 } from "./constants.js";
 import { officerMeta } from "../traits.js";
 import {
   ensurePhase2State, evaluateBondBonus, hasDecree, planAiPhase2Dekad, resolveFortsOnMove,
 } from "./systems.js";
+import {
+  spawnWanderingHeroes, tickOfficerTransfers, triggerArmyArt,
+} from "./arts.js";
+import {
+  initialSealFaction, maybeTriggerEvent,
+} from "./events.js";
+import {
+  recordBattleReport, recordHistorySnapshot,
+} from "./chronicle.js";
+import {
+  aiPersonalityFor, processSupplyLinksMonthly, updateAntiHegemonCoalition,
+} from "./theater.js";
+
+export {
+  MIN_DISPATCH_TROOPS, MIN_GARRISON_LEAVE, activeTreaty, armyWorldPosition,
+  availableOfficersInCity, canTransitCity, cityByKey, cityNameV2, computeMarchDekads,
+  createArmyRecord, edgeDekadsRequired, edgeDistance, eraByYearV2, factionNameV2,
+  findRoadPath, forecastDispatch, initialEmperorCity, isHostileV2, returnOfficerHome,
+} from "./constants.js";
 export {
   buildFort, canBuildFort, castStratagem, cityBonds, demolishFort, enactDecree, ensurePhase2State,
   evaluateDeal, fortOnEdge, bribeDefection, hasDecree, proposeDeal, repairFort, sowDiscord,
   stratagemCooldownLeft,
 } from "./systems.js";
+export {
+  BATTLE_ARTS_V3, WANDERING_HEROES_V3, officerBattleArt, recruitWanderingOfficer, transferOfficer,
+  triggerArmyArt,
+} from "./arts.js";
+export {
+  EMPEROR_EDICTS_V3, HISTORICAL_EVENTS_V3, issueImperialEdict, resolveEventChoice,
+} from "./events.js";
+export {
+  AI_PERSONALITIES_V3, aiPersonalityFor, batchSetCityPolicy, clearSupplyLink,
+  launchCoordinatedAttack, planCoordinatedAttack, setSupplyLink,
+} from "./theater.js";
+export {
+  renderDiploMatrixHtml, renderPowerChartSvg, renderReplayMapSvg,
+} from "./chronicle.js";
 
 export const V2_VERSION = 2;
-export const MIN_DISPATCH_TROOPS = 300;
-export const MIN_GARRISON_LEAVE = 300;
-
-function clamp(n, lo, hi) {
-  return Math.max(lo, Math.min(hi, n));
-}
-
-function hashStr(str = "") {
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i += 1) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-export function eraByYearV2(world, year) {
-  return world.scenarios.find((s) => s.year === year) || world.scenarios[0];
-}
-
-export function cityByKey(world, key) {
-  return world.cities.find((c) => c.key === key) || null;
-}
-
-export function cityNameV2(world, key) {
-  return cityByKey(world, key)?.name || key;
-}
-
-export function factionNameV2(world, state, key) {
-  return state.factions[key]?.name || eraByYearV2(world, state.year)?.factions.find((f) => f.key === key)?.name || key;
-}
-
-export function edgeDistance(world, aKey, bKey) {
-  const a = cityByKey(world, aKey);
-  const b = cityByKey(world, bKey);
-  if (!a || !b) return 55;
-  return Math.hypot(a.position[0] - b.position[0], a.position[1] - b.position[1]);
-}
-
-export function activeTreaty(state, f1, f2) {
-  if (!f1 || !f2 || f1 === f2) return null;
-  return (state.treaties || []).find(
-    (t) => t.expires > state.turn && t.sides.includes(f1) && t.sides.includes(f2),
-  ) || null;
-}
-
-export function isHostileV2(state, f1, f2) {
-  return Boolean(f1 && f2 && f1 !== f2 && !activeTreaty(state, f1, f2));
-}
-
-export function canTransitCity(state, faction, cityKey) {
-  const city = state.cities[cityKey];
-  if (!city) return false;
-  if (city.owner === faction) return true;
-  const treaty = activeTreaty(state, faction, city.owner);
-  return treaty?.kind === "alliance";
-}
-
-/**
- * 寻找城际道路路径（允许经己方/盟友城池通行；若 allowEnemyEnd=true，终点可为任意敌城）
- */
-export function findRoadPath(world, state, faction, fromKey, toKey, { allowEnemyEnd = true, maxHops = 8 } = {}) {
-  if (!fromKey || !toKey || fromKey === toKey) return null;
-  const targetCity = state.cities[toKey];
-  if (!targetCity) return null;
-  if (!allowEnemyEnd && !canTransitCity(state, faction, toKey)) return null;
-  if (!canTransitCity(state, faction, fromKey)) return null;
-
-  const adj = new Map(world.cities.map((c) => [c.key, c.links]));
-  const bestCost = new Map([[fromKey, 0]]);
-  const prev = new Map();
-  const queue = [{ key: fromKey, cost: 0, hops: 0 }];
-
-  while (queue.length) {
-    queue.sort((a, b) => a.cost - b.cost);
-    const cur = queue.shift();
-    if (cur.key === toKey) break;
-    if (cur.hops >= maxHops) continue;
-    for (const nb of adj.get(cur.key) || []) {
-      const isDest = nb === toKey;
-      if (!isDest && !canTransitCity(state, faction, nb)) continue;
-      if (isDest && !allowEnemyEnd && !canTransitCity(state, faction, nb)) continue;
-      // Avoid walking straight through a non-destination enemy city or neutral city without alliance
-      if (isDest && state.cities[nb].owner !== faction) {
-        const tr = activeTreaty(state, faction, state.cities[nb].owner);
-        if (tr?.kind === "truce" && !allowEnemyEnd) continue;
-      }
-      const nextCost = cur.cost + edgeDistance(world, cur.key, nb);
-      if (nextCost < (bestCost.get(nb) ?? Infinity)) {
-        bestCost.set(nb, nextCost);
-        prev.set(nb, cur.key);
-        queue.push({ key: nb, cost: nextCost, hops: cur.hops + 1 });
-      }
-    }
-  }
-
-  if (!prev.has(toKey)) return null;
-  const path = [toKey];
-  let step = toKey;
-  while (step !== fromKey) {
-    step = prev.get(step);
-    if (!step) return null;
-    path.unshift(step);
-  }
-  return path;
-}
-
-export function edgeDekadsRequired(world, fromKey, toKey, troopType = "infantry", weather = null, officer = null, formation = "heyi") {
-  const dist = edgeDistance(world, fromKey, toKey);
-  const typeDef = TROOP_TYPES[troopType] || TROOP_TYPES.infantry;
-  const formDef = FORMATIONS_V2[formation] || FORMATIONS_V2.heyi;
-  const terrain = roadTerrain(fromKey, toKey);
-  let speed = typeDef.speed * (formDef.speedMult ?? 1);
-  if (troopType === "navy") speed = (terrain === "river" ? typeDef.riverSpeed : 0.9) * (formDef.speedMult ?? 1);
-  if (terrain === "river" && troopType !== "navy") speed *= 0.85;
-  if (terrain === "pass" && troopType === "cavalry") speed *= 0.82;
-  const hasLogistics = officer?.traits?.includes("logistics");
-  const wMarch = weather?.marchMult ?? 1;
-  if (hasLogistics && wMarch < 1) speed *= 1.05;
-  else speed *= wMarch;
-  const raw = Math.round(dist / 28 / Math.max(0.55, speed));
-  return clamp(raw, 2, 5);
-}
-
-export function computeMarchDekads(world, route, troopType = "infantry", weather = null, officer = null, formation = "heyi") {
-  if (!route || route.length < 2) return 0;
-  let total = 0;
-  for (let i = 0; i < route.length - 1; i += 1) {
-    total += edgeDekadsRequired(world, route[i], route[i + 1], troopType, weather, officer, formation);
-  }
-  return total;
-}
-
-export function armyWorldPosition(world, army) {
-  if (army.stance === "besiege") {
-    const pos = cityByKey(world, army.targetCity || army.to)?.position || [390, 250];
-    // Deterministic slight siege offset outside wall ring so army & city stay distinct
-    const seed = hashStr(army.id || army.officer || "");
-    const ang = ((seed % 360) * Math.PI) / 180;
-    return [pos[0] + Math.cos(ang) * 14, pos[1] + Math.sin(ang) * 14];
-  }
-  const a = cityByKey(world, army.from)?.position;
-  const b = cityByKey(world, army.to)?.position;
-  if (!a || !b) return a || b || [390, 250];
-  const t = clamp(army.progress ?? 0, 0, 1);
-  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-}
 
 export function checkSupplyLine(world, state, army) {
-  // Hostile army sitting on army's current road segment behind army cuts supply immediately
   const curPair = [army.from, army.to].sort().join(":");
   const interceptedBehind = (state.armies || []).some((other) => {
     if (other.id === army.id || other.troops <= 0 || !isHostileV2(state, army.faction, other.faction)) return false;
@@ -180,7 +69,6 @@ export function checkSupplyLine(world, state, army) {
   });
   if (interceptedBehind) return false;
 
-  // Forward depot fort on army's current edge sustains supply directly
   const curFort = state.forts?.[edgeKey(army.from, army.to)];
   if (curFort?.kind === "depot" && (curFort.faction === army.faction || activeTreaty(state, curFort.faction, army.faction)?.kind === "alliance")) {
     return true;
@@ -194,7 +82,6 @@ export function checkSupplyLine(world, state, army) {
   const path = findRoadPath(world, state, army.faction, depot, army.from, { allowEnemyEnd: false, maxHops: 10 });
   if (!path) return false;
 
-  // Check if a besieged friendly city on the supply route breaks supply
   for (let i = 1; i < path.length - 1; i += 1) {
     if (state.sieges?.[path[i]]) return false;
   }
@@ -275,7 +162,7 @@ export function createGameV2(world, year, playerFaction, { difficulty = "standar
   const officers = {};
   const officersByFaction = {};
   for (const raw of era.officers) {
-    if (raw.reserve) continue; // Keep active starting roster clean
+    if (raw.reserve) continue;
     const meta = officerMeta(raw);
     const cityPool = ownedByFaction[raw.faction] || [];
     const list = (officersByFaction[raw.faction] ??= []);
@@ -294,6 +181,7 @@ export function createGameV2(world, year, playerFaction, { difficulty = "standar
       seal: meta.seal,
       city: assignedCity,
       armyId: null,
+      transferringTo: null,
       loyalty: loyaltyBase,
       merit: 0,
       wins: 0,
@@ -307,10 +195,8 @@ export function createGameV2(world, year, playerFaction, { difficulty = "standar
     list.push(obj);
   }
 
-  // Assign initial governors & commanders cleanly across owned cities
   for (const [factionKey, cityKeys] of Object.entries(ownedByFaction)) {
     const pool = (officersByFaction[factionKey] || []).slice();
-    // Appoint best commanders to frontline border cities first
     const borderCities = cityKeys.filter((ck) => cityByKey(world, ck).links.some((nb) => cities[nb].owner !== factionKey));
     const orderedCities = [...borderCities, ...cityKeys.filter((ck) => !borderCities.includes(ck))];
     const byCmd = pool.slice().sort((a, b) => b.command - a.command);
@@ -337,8 +223,9 @@ export function createGameV2(world, year, playerFaction, { difficulty = "standar
 
   const cal = formatCalendar(year, 0);
   const weather = chooseSeasonalWeather(cal.seasonKey, 0);
+  const emperorCity = initialEmperorCity(year);
 
-  return {
+  const state = {
     version: V2_VERSION,
     year,
     turn: 0,
@@ -354,94 +241,29 @@ export function createGameV2(world, year, playerFaction, { difficulty = "standar
     forts: {},
     stratagemCooldowns: {},
     decrees: {},
+    emperorCity,
+    sealFaction: null,
+    pendingEvent: null,
+    triggeredEvents: [],
+    eventCooldowns: {},
+    wanderingOfficers: [],
+    triggeredWanderingIds: [],
+    officerTransfers: [],
+    supplyLinks: {},
+    battleReports: [],
+    historySnapshots: [],
+    coalitionAlertLevel: 0,
+    edictCooldown: 0,
     treaties: [],
     captives: [],
     events: [{ turn: 0, kind: "system", text: `建元伊始：${era.title}剧本开启，我方执掌「${factions[player].name}」。每回合以「一旬」推进战局，大军沿官道实景行军与跨旬围城。` }],
     lastTurnEvents: [],
     outcome: "ongoing",
   };
-}
-
-export function availableOfficersInCity(state, cityKey, faction = null) {
-  const city = state.cities[cityKey];
-  if (!city) return [];
-  const f = faction || city.owner;
-  return Object.values(state.officers).filter(
-    (o) => o.faction === f && o.city === cityKey && !o.armyId && !o.capturedBy && o.injuredDekads <= 0,
-  ).sort((a, b) => (b.command + b.might * 0.4) - (a.command + a.might * 0.4));
-}
-
-export function forecastDispatch(world, state, { from, to, troops, troopType, officer, formation = "heyi" }) {
-  const fromCity = state.cities[from];
-  const toCity = state.cities[to];
-  if (!fromCity || !toCity) return { ok: false, reason: "请选择有效的出发城池与目标城池。" };
-  const faction = fromCity.owner;
-  const route = findRoadPath(world, state, faction, from, to, { allowEnemyEnd: true });
-  if (!route) return { ok: false, reason: "两城之间暂无我方/盟友可通行的道路。" };
-  const isFriendlyDest = canTransitCity(state, faction, to);
-  if (!isFriendlyDest && activeTreaty(state, faction, toCity.owner)) {
-    return { ok: false, reason: "与目标势力尚在停战/同盟期内，不可进攻。" };
-  }
-  const type = troopType || fromCity.troopType || "infantry";
-  const resolvedForm = FORMATIONS_V2[formation] ? formation : "heyi";
-  const offObj = typeof officer === "string" ? state.officers[officer] : officer;
-  const dekads = computeMarchDekads(world, route, type, state.weather, offObj, resolvedForm);
-  const grainCost = Math.max(4, Math.ceil((troops || MIN_DISPATCH_TROOPS) / 220) * 2);
-  const terrain = roadTerrain(route[route.length - 2], to);
-  const counter = isFriendlyDest
-    ? { mult: 1, label: "增援己方", relation: "neutral" }
-    : troopCounterEffect(type, toCity.troopType, terrain, state.weather);
-
-  return {
-    ok: true,
-    route,
-    dekads,
-    grainCost,
-    terrain,
-    counter,
-    isFriendlyDest,
-    targetWall: toCity.wall,
-    targetTroops: toCity.troops,
-    targetTroopType: toCity.troopType,
-  };
-}
-
-export function createArmyRecord(world, state, {
-  faction, from, route, officerKey, deputyKey = null, troops, troopType, stance, siegeStance = "storm", formation = "heyi",
-}) {
-  const id = `army-${state.nextArmySeq++}`;
-  const to = route[1];
-  const resolvedForm = FORMATIONS_V2[formation] ? formation : "heyi";
-  const reqDekads = edgeDekadsRequired(world, from, to, troopType, state.weather, state.officers[officerKey], resolvedForm);
-  const army = {
-    id,
-    faction,
-    officer: officerKey,
-    deputy: deputyKey || null,
-    formation: resolvedForm,
-    troops,
-    maxTroops: troops,
-    troopType,
-    morale: clamp(state.factions[faction]?.morale ?? 80, 50, 100),
-    grain: Math.max(8, Math.ceil(troops / 180) * 3),
-    route,
-    step: 0,
-    from,
-    to,
-    targetCity: route[route.length - 1],
-    depot: from,
-    progress: 0.08,
-    edgeDekads: reqDekads,
-    stance, // "attack" | "reinforce" | "besiege" | "engaged" | "retreat"
-    siegeStance,
-    engagedWith: null,
-    engageRounds: 0,
-    supplyCut: false,
-    reorgDekads: 0,
-    fireRaidHit: false,
-    lastPos: cityByKey(world, from)?.position || [390, 250],
-  };
-  return army;
+  state.sealFaction = initialSealFaction(state, year);
+  spawnWanderingHeroes(world, state, []);
+  recordHistorySnapshot(world, state);
+  return state;
 }
 
 export function dispatchArmy(world, state, { from, to, officer, deputy = null, formation = "heyi", troops, troopType, stance, siegeStance = "storm" }) {
@@ -681,7 +503,7 @@ export function appointOfficer(state, cityKey, role, officerKey) {
     return next;
   }
   const off = next.officers[officerKey];
-  if (!off || off.faction !== next.player || off.armyId || off.capturedBy) {
+  if (!off || off.faction !== next.player || off.armyId || off.capturedBy || off.transferringTo) {
     throw new Error("所选将领当前不在空闲可任状态。");
   }
   // Remove officer from old post
@@ -950,18 +772,6 @@ function officerPowerMult(state, off, isSiege = false, isDef = false, terrain = 
   return clamp(m, 0.72, 1.65);
 }
 
-export function returnOfficerHome(state, offKey, preferredCityKey) {
-  const off = state.officers[offKey];
-  if (!off) return;
-  off.armyId = null;
-  if (preferredCityKey && state.cities[preferredCityKey]?.owner === off.faction) {
-    off.city = preferredCityKey;
-    return;
-  }
-  const fallback = Object.values(state.cities).find((c) => c.owner === off.faction);
-  off.city = fallback?.key || null;
-}
-
 function releaseArmyOfficers(state, army, preferredCityKey = null) {
   if (!army) return;
   if (army.officer) returnOfficerHome(state, army.officer, preferredCityKey);
@@ -969,6 +779,7 @@ function releaseArmyOfficers(state, army, preferredCityKey = null) {
 }
 
 function attemptCaptureOrReturn(state, offKey, victorFaction, cityKey, bonusProb = 0, events = []) {
+  if (!offKey) return;
   const off = state.officers[offKey];
   if (!off) return;
   const fallCities = Object.values(state.cities).filter((c) => c.owner === off.faction);
@@ -977,6 +788,7 @@ function attemptCaptureOrReturn(state, offKey, victorFaction, cityKey, bonusProb
   if (victorFaction === state.player && roll < prob && off.name !== state.factions[off.faction]?.name) {
     off.armyId = null;
     off.city = null;
+    off.transferringTo = null;
     off.capturedBy = victorFaction;
     state.captives.push({ officer: offKey, origFaction: off.faction, turn: state.turn, city: cityKey });
     events.push({ turn: state.turn, kind: "officer", city: cityKey, text: `阵前生擒敌将「${off.name}」！可在「朝堂」处置劝降。` });
@@ -987,14 +799,29 @@ function attemptCaptureOrReturn(state, offKey, victorFaction, cityKey, bonusProb
 
 function resolveFieldBattle(world, state, a, b, events, { allowEngage = true } = {}) {
   const terrain = roadTerrain(a.from, a.to);
-  const offA = state.officers[a.officer];
-  const offB = state.officers[b.officer];
+  const offA = a.officer ? state.officers[a.officer] : null;
+  const offB = b.officer ? state.officers[b.officer] : null;
+  const nameA = offA?.name || a.escortName || "我军";
+  const nameB = offB?.name || b.escortName || "敌军";
   const depA = a.deputy ? state.officers[a.deputy] : null;
   const depB = b.deputy ? state.officers[b.deputy] : null;
   const formA = FORMATIONS_V2[a.formation || "heyi"] || FORMATIONS_V2.heyi;
   const formB = FORMATIONS_V2[b.formation || "heyi"] || FORMATIONS_V2.heyi;
   const cAB = troopCounterEffect(a.troopType, b.troopType, terrain, state.weather);
   const cBA = troopCounterEffect(b.troopType, a.troopType, terrain, state.weather);
+
+  if (a.officer) a.rage = clamp((a.rage || 0) + 36, 0, 100);
+  if (b.officer) b.rage = clamp((b.rage || 0) + 36, 0, 100);
+
+  const artTriggered = [];
+  if (a.officer && a.rage >= 100 && a.troops >= 240 && b.troops >= 180) {
+    const firedA = triggerArmyArt(world, state, a.id, events, { manual: false });
+    if (firedA) artTriggered.push(`${firedA.offName} · ${firedA.artName}`);
+  }
+  if (b.officer && b.rage >= 100 && b.troops >= 240 && a.troops >= 180) {
+    const firedB = triggerArmyArt(world, state, b.id, events, { manual: false });
+    if (firedB) artTriggered.push(`${firedB.offName} · ${firedB.artName}`);
+  }
 
   const alliesA = [
     ...state.armies.filter((x) => x.faction === a.faction && x.id !== a.id && x.troops > 0).flatMap((x) => [x.officer, x.deputy]),
@@ -1004,8 +831,8 @@ function resolveFieldBattle(world, state, a, b, events, { allowEngage = true } =
     ...state.armies.filter((x) => x.faction === b.faction && x.id !== b.id && x.troops > 0).flatMap((x) => [x.officer, x.deputy]),
     b.deputy,
   ].filter(Boolean);
-  const bondA = evaluateBondBonus(state, a.officer, alliesA, [b.officer, b.deputy].filter(Boolean));
-  const bondB = evaluateBondBonus(state, b.officer, alliesB, [a.officer, a.deputy].filter(Boolean));
+  const bondA = a.officer ? evaluateBondBonus(state, a.officer, alliesA, [b.officer, b.deputy].filter(Boolean)) : { atkMult: 1, defMult: 1, lossMult: 1, labels: [] };
+  const bondB = b.officer ? evaluateBondBonus(state, b.officer, alliesB, [a.officer, a.deputy].filter(Boolean)) : { atkMult: 1, defMult: 1, lossMult: 1, labels: [] };
   const depMultA = depA ? clamp(1 + ((depA.might - 60) + (depA.command - 60)) * 0.0018, 0.96, 1.14) : 1;
   const depMultB = depB ? clamp(1 + ((depB.might - 60) + (depB.command - 60)) * 0.0018, 0.96, 1.14) : 1;
   const decMultA = (hasDecree(state, a.faction, "repeating_crossbow") && a.troopType === "archer" ? 1.18 : 1)
@@ -1025,12 +852,12 @@ function resolveFieldBattle(world, state, a, b, events, { allowEngage = true } =
   const specMultA = (a.specialtyTag === "horse" && a.troopType === "cavalry") || (a.specialtyTag === "shipyard" && a.troopType === "navy") ? 1.12 : 1;
   const specMultB = (b.specialtyTag === "horse" && b.troopType === "cavalry") || (b.specialtyTag === "shipyard" && b.troopType === "navy") ? 1.12 : 1;
 
-  const powA = a.troops * cAB.mult * officerPowerMult(state, offA, false, false, terrain)
+  const powA = Math.max(1, a.troops) * cAB.mult * officerPowerMult(state, offA, false, false, terrain)
     * depMultA * formA.atkMult * bondA.atkMult * wfMultA * specMultA * decMultA * flankMultA
     * (0.72 + a.morale * 0.004) * (a.supplyCut ? 0.72 : 1)
     * (a.troopType === "siege" ? 0.82 : 1)
     * (a.faction !== state.player ? DIFFICULTY_MODES[state.difficulty || "standard"].aiAtkMult : 1);
-  const powB = b.troops * cBA.mult * officerPowerMult(state, offB, false, false, terrain)
+  const powB = Math.max(1, b.troops) * cBA.mult * officerPowerMult(state, offB, false, false, terrain)
     * depMultB * formB.atkMult * bondB.atkMult * wfMultB * specMultB * decMultB * flankMultB
     * (0.72 + b.morale * 0.004) * (b.supplyCut ? 0.72 : 1)
     * (b.troopType === "siege" ? 0.82 : 1)
@@ -1054,8 +881,8 @@ function resolveFieldBattle(world, state, a, b, events, { allowEngage = true } =
   const rawWinLoss = Math.round(winner.troops * (0.12 + 0.14 / dom) * roundPreScale * (TROOP_TYPES[winner.troopType]?.lossMult ?? 1) * winBond.lossMult * (winForm.lossMult / Math.sqrt(winForm.defMult)));
   const rawLoseLoss = Math.round(loser.troops * clamp(0.24 * dom, 0.24, 0.65) * roundPreScale * (TROOP_TYPES[loser.troopType]?.lossMult ?? 1) * loseBond.lossMult * (loseForm.lossMult / Math.sqrt(loseForm.defMult)));
 
-  const winLoss = clamp(rawWinLoss, 25, Math.max(25, winner.troops - 120));
-  const loseLoss = clamp(rawLoseLoss, 40, loser.troops);
+  const winLoss = Math.min(winner.troops, clamp(rawWinLoss, 25, Math.max(25, winner.troops - 120)));
+  const loseLoss = Math.min(loser.troops, clamp(rawLoseLoss, 40, loser.troops));
 
   winner.troops -= winLoss;
   loser.troops -= loseLoss;
@@ -1074,14 +901,37 @@ function resolveFieldBattle(world, state, a, b, events, { allowEngage = true } =
   const posA = armyWorldPosition(world, a);
   const posB = armyWorldPosition(world, b);
   const pos = [(posA[0] + posB[0]) / 2, (posA[1] + posB[1]) / 2];
-  const winOff = state.officers[winner.officer];
-  const loseOff = state.officers[loser.officer];
-  awardMerit(state, winner.officer, { merit: canLockOngoing ? 18 : 35, win: !canLockOngoing }, events);
+  const winName = aWins ? nameA : nameB;
+  const loseName = aWins ? nameB : nameA;
+  if (winner.officer) awardMerit(state, winner.officer, { merit: canLockOngoing ? 18 : 35, win: !canLockOngoing }, events);
   if (winner.deputy) awardMerit(state, winner.deputy, { merit: canLockOngoing ? 10 : 18, win: !canLockOngoing }, events);
 
   const counterHint = cAB.relation === "counter" ? `（${cAB.label}）`
     : cBA.relation === "counter" ? `（${cBA.label}）` : "";
   const flankNote = (aWins ? hasFlankA : hasFlankB) ? " · 友军夹击" : "";
+  const locStr = `${cityNameV2(world, a.from)}—${cityNameV2(world, a.to)}`;
+
+  const reportPayload = {
+    kind: canLockOngoing ? "engaged" : "field",
+    title: `${winName} ${canLockOngoing ? `阵前绞杀(第${nextRound}合)` : "野战击溃"} ${loseName}`,
+    location: locStr,
+    locationKey: a.to,
+    winnerFaction: winner.faction,
+    attacker: { faction: a.faction, officer: nameA, troops: a.troops + (a === winner ? winLoss : loseLoss), form: formA.name },
+    defender: { faction: b.faction, officer: nameB, troops: b.troops + (b === winner ? winLoss : loseLoss), form: formB.name },
+    factors: [
+      cAB.label || cBA.label || null,
+      `${winForm.name}克制${loseForm.name}`,
+      winBond.labels?.length ? `羁绊：${winBond.labels.join("、")}` : null,
+      (aWins ? hasFlankA : hasFlankB) ? "友军同道夹击 +18%" : null,
+      (aWins ? decMultA : decMultB) > 1 ? "国策军械增益" : null,
+      loser.supplyCut ? "敌军粮道断绝 -28%" : null,
+    ].filter(Boolean),
+    losses: { winner: winLoss, loser: loseLoss },
+    artTriggered,
+    shattered: !canLockOngoing && loser.troops < 180,
+  };
+  const br = recordBattleReport(state, reportPayload);
 
   if (canLockOngoing) {
     a.stance = "engaged";
@@ -1097,6 +947,7 @@ function resolveFieldBattle(world, state, a, b, events, { allowEngage = true } =
       turn: state.turn,
       kind: "field_battle",
       engaged: true,
+      reportId: br?.id,
       faction: winner.faction,
       participants: [a.faction, b.faction],
       pos,
@@ -1104,12 +955,11 @@ function resolveFieldBattle(world, state, a, b, events, { allowEngage = true } =
       winnerLoss: winLoss,
       loserLoss: loseLoss,
       shattered: false,
-      text: `⚔️ 阵前绞杀(第${nextRound}合)${flankNote}！${winOff?.name || "胜军"}与${loseOff?.name || "敌军"}杀作一团${counterHint}，毙敌 ${loseLoss.toLocaleString()}、自损 ${winLoss.toLocaleString()}，两军继续对峙（下旬续战）。`,
+      text: `⚔️ 阵前绞杀(第${nextRound}合)${flankNote}！${winName}与${loseName}杀作一团${counterHint}，毙敌 ${loseLoss.toLocaleString()}、自损 ${winLoss.toLocaleString()}，两军继续对峙（下旬续战）。`,
     });
     return ratioAB;
   }
 
-  // Decisive break or final round resolution
   winner.engagedWith = null;
   winner.engageRounds = 0;
   loser.engagedWith = null;
@@ -1120,7 +970,6 @@ function resolveFieldBattle(world, state, a, b, events, { allowEngage = true } =
   winner.reorgDekads = 1;
   loser.reorgDekads = 1;
 
-  // Push loser back toward their starting city to prevent infinite same-edge loops
   if (loser.troops >= 180) {
     loser.stance = "retreat";
     const tmp = loser.from;
@@ -1135,6 +984,7 @@ function resolveFieldBattle(world, state, a, b, events, { allowEngage = true } =
   events.push({
     turn: state.turn,
     kind: "field_battle",
+    reportId: br?.id,
     faction: winner.faction,
     participants: [a.faction, b.faction],
     pos,
@@ -1142,7 +992,7 @@ function resolveFieldBattle(world, state, a, b, events, { allowEngage = true } =
     winnerLoss: winLoss,
     loserLoss: loseLoss,
     shattered: loser.troops < 180,
-    text: `野战交锋！${winOff?.name || "胜军"}击溃${loseOff?.name || "敌军"}${counterHint}${flankNote}，毙敌 ${loseLoss.toLocaleString()}、自损 ${winLoss.toLocaleString()}。`,
+    text: `野战交锋！${winName}击溃${loseName}${counterHint}${flankNote}，毙敌 ${loseLoss.toLocaleString()}、自损 ${winLoss.toLocaleString()}。`,
   });
 
   if (loser.troops < 180) {
@@ -1166,12 +1016,13 @@ function handleTrapOnArrival(world, state, cityKey, army, events) {
   if (!trap) return;
 
   const pos = cityByKey(world, cityKey)?.position || [390, 250];
+  const offName = (army.officer && state.officers[army.officer]?.name) || army.escortName || "敌";
   if (trap.id === "fire_pit") {
     const wFire = state.weather?.fireMult ?? 1;
     const dmg = Math.max(80, Math.round(army.troops * trap.troopDmgPct * wFire));
     army.troops = Math.max(0, army.troops - dmg);
     army.morale = clamp(army.morale - trap.moraleDmg, 10, 100);
-    events.push({ turn: state.turn, kind: "trap", faction: city.owner, participants: [city.owner, army.faction], city: cityKey, pos, dmg, text: `🔥 ${cityNameV2(world, cityKey)}「火油陷坑」烈焰轰鸣！焚毁${state.officers[army.officer]?.name || "敌"}先头部队 ${dmg.toLocaleString()} 人！` });
+    events.push({ turn: state.turn, kind: "trap", faction: city.owner, participants: [city.owner, army.faction], city: cityKey, pos, dmg, text: `🔥 ${cityNameV2(world, cityKey)}「火油陷坑」烈焰轰鸣！焚毁${offName}先头部队 ${dmg.toLocaleString()} 人！` });
   } else if (trap.id === "abatis") {
     city.wall = Math.min(city.wallMax + 120, city.wall + trap.extraWall);
     army.reorgDekads = 1;
@@ -1199,14 +1050,13 @@ function transferCityOwnership(world, state, cityKey, winnerFaction, besiegerArm
   city.foodReserve = 68;
   city.morale = 64;
 
-  // Garrison remaining troops from lead victorious army
   const sorted = besiegerArmies.slice().sort((a, b) => b.troops - a.troops);
   const lead = sorted[0];
   let totalAdded = 0;
   for (const a of sorted) {
     if (a.faction !== winnerFaction || a.troops <= 0) continue;
     totalAdded += a.troops;
-    const off = state.officers[a.officer];
+    const off = a.officer ? state.officers[a.officer] : null;
     if (off) {
       off.armyId = null;
       off.city = cityKey;
@@ -1220,7 +1070,7 @@ function transferCityOwnership(world, state, cityKey, winnerFaction, besiegerArm
     }
     a.troops = 0;
   }
-  if (lead && state.officers[lead.officer]?.faction === winnerFaction) {
+  if (lead?.officer && state.officers[lead.officer]?.faction === winnerFaction) {
     city.commander = lead.officer;
   }
   city.troops = Math.max(350, city.troops + totalAdded);
@@ -1231,7 +1081,6 @@ function transferCityOwnership(world, state, cityKey, winnerFaction, besiegerArm
       attemptCaptureOrReturn(state, defOff, winnerFaction, cityKey, lead?.ambushHitBonus ?? 0, events);
     }
   }
-  // Relocate any remaining idle officers from prevOwner in that city
   for (const o of Object.values(state.officers)) {
     if (o.city === cityKey && o.faction === prevOwner && !o.armyId && !o.capturedBy) {
       returnOfficerHome(state, o.key, null);
@@ -1239,15 +1088,53 @@ function transferCityOwnership(world, state, cityKey, winnerFaction, besiegerArm
   }
 
   const pos = cityByKey(world, cityKey)?.position || [390, 250];
+  const br = recordBattleReport(state, {
+    kind: "capture",
+    title: `攻克「${cityNameV2(world, cityKey)}」`,
+    location: cityNameV2(world, cityKey),
+    locationKey: cityKey,
+    winnerFaction,
+    attacker: { faction: winnerFaction, officer: lead?.officer ? state.officers[lead.officer]?.name : "诸路围师", troops: totalAdded },
+    defender: { faction: prevOwner, officer: oldCmd ? state.officers[oldCmd]?.name : "城防守军", troops: 0 },
+    factors: [sorted.length >= 2 ? "多路合围攻破" : "主力克城", `留驻守军 ${city.troops.toLocaleString()} 人`],
+    losses: { winner: 0, loser: 0 },
+  });
+
   events.push({
     turn: state.turn,
     kind: "capture",
+    reportId: br?.id,
     faction: winnerFaction,
     participants: [winnerFaction, prevOwner],
     city: cityKey,
     pos,
     text: `🚩 攻克名城！${factionNameV2(world, state, winnerFaction)}挥师夺取「${cityNameV2(world, cityKey)}」（原属${factionNameV2(world, state, prevOwner)}）！`,
   });
+
+  if (state.emperorCity === cityKey) {
+    events.push({
+      turn: state.turn,
+      kind: "system",
+      faction: winnerFaction,
+      city: cityKey,
+      pos,
+      text: `👑 奉迎汉帝！「${factionNameV2(world, state, winnerFaction)}」克复帝都「${cityNameV2(world, cityKey)}」，天子龙辇已入其掌握，可于朝堂颁发天子诏书！`,
+    });
+  }
+  if (state.sealFaction === prevOwner) {
+    const prevRemains = Object.values(state.cities).some((c) => c.owner === prevOwner);
+    if (!prevRemains) {
+      state.sealFaction = winnerFaction;
+      events.push({
+        turn: state.turn,
+        kind: "system",
+        faction: winnerFaction,
+        city: cityKey,
+        pos,
+        text: `💎 传国玉玺易主！「${factionNameV2(world, state, winnerFaction)}」覆灭旧主并获献受命传国玉玺！`,
+      });
+    }
+  }
 }
 
 function resolveSieges(world, state, events) {
@@ -1321,14 +1208,20 @@ function resolveSieges(world, state, events) {
       } else if (stance.cost) {
         a.siegeStance = "storm";
       }
+      if (a.officer) {
+        a.rage = clamp((a.rage || 0) + 28, 0, 100);
+        if (a.rage >= 100 && a.troops >= 240) {
+          triggerArmyArt(world, state, a.id, events, { manual: false });
+        }
+      }
       const st = SIEGE_STANCES[a.siegeStance] || SIEGE_STANCES.storm;
       const form = FORMATIONS_V2[a.formation || "heyi"] || FORMATIONS_V2.heyi;
       const share = a.troops / Math.max(1, totalAttTroops);
       const tSpec = TROOP_TYPES[a.troopType] || TROOP_TYPES.infantry;
-      const offObj = state.officers[a.officer];
+      const offObj = a.officer ? state.officers[a.officer] : null;
       const depObj = a.deputy ? state.officers[a.deputy] : null;
       const attAllies = [...attackers.flatMap((x) => [x.officer, x.deputy]), a.deputy].filter(Boolean);
-      const attBond = evaluateBondBonus(state, a.officer, attAllies, [city.commander, city.governor].filter(Boolean));
+      const attBond = a.officer ? evaluateBondBonus(state, a.officer, attAllies, [city.commander, city.governor].filter(Boolean)) : { atkMult: 1, defMult: 1, lossMult: 1 };
       const depMult = depObj ? clamp(1 + ((depObj.might - 60) + (depObj.command - 60)) * 0.0018, 0.96, 1.14) : 1;
       const counter = troopCounterEffect(a.troopType, city.troopType, "plain", state.weather);
       const arsenalBonus = a.specialtyTag === "arsenal" && a.troopType === "siege" ? 1.15 : 1;
@@ -1466,6 +1359,8 @@ function planAiDekad(world, state) {
   for (const fk of factions) {
     const ownedCities = Object.values(state.cities).filter((c) => c.owner === fk);
     if (!ownedCities.length) continue;
+    const pers = aiPersonalityFor(fk);
+    const aggMult = diff.aiAggression * (pers.aggression ?? 1) * (state.coalitionAlertLevel > 0 ? 1.14 : 1);
 
     // 1. Update besieging AI stances intelligently
     const myArmies = state.armies.filter((a) => a.faction === fk && a.troops > 0);
@@ -1474,7 +1369,6 @@ function planAiDekad(world, state) {
         const target = state.cities[a.targetCity];
         if (!target) continue;
         if (a.troops < 340 || a.morale < 25) {
-          // Retreat battered army
           const safe = findRoadPath(world, state, fk, a.targetCity, ownedCities[0].key, { allowEnemyEnd: false });
           if (safe && safe.length >= 2) {
             if (state.sieges[a.targetCity]) {
@@ -1496,7 +1390,6 @@ function planAiDekad(world, state) {
       }
     }
 
-    // Limit concurrent field armies per AI faction cleanly
     const maxAiArmies = clamp(Math.ceil(ownedCities.length / 2) + 1, 2, 4);
     if (myArmies.length >= maxAiArmies) continue;
 
@@ -1524,6 +1417,7 @@ function planAiDekad(world, state) {
           troops,
           troopType: helper.troopType,
           stance: "reinforce",
+          formation: "changshe",
         });
         helperOff.armyId = relief.id;
         state.armies.push(relief);
@@ -1533,8 +1427,8 @@ function planAiDekad(world, state) {
     }
     if (dispatchedThisTurn) continue;
 
-    // 3. Opportunistic AI border offensive
-    if (((state.turn + hashStr(fk)) % (diff.aiAggression > 1.1 ? 2 : 3)) !== 0) continue;
+    // 3. Opportunistic AI border offensive shaped by ruler personality
+    if (((state.turn + hashStr(fk)) % (aggMult > 1.1 ? 2 : 3)) !== 0) continue;
     if (state.factions[fk].grain < 18) continue;
 
     let bestAttack = null;
@@ -1545,10 +1439,9 @@ function planAiDekad(world, state) {
       for (const nbKey of cityByKey(world, c.key).links) {
         const target = state.cities[nbKey];
         if (!target || !isHostileV2(state, fk, target.owner)) continue;
-        // Favor weaker targets and player borders moderately
-        const powerGap = (c.troops - 450) * diff.aiAggression - target.troops * 0.92;
+        const powerGap = (c.troops - 450) * aggMult - target.troops * 0.92;
         if (powerGap < 250) continue;
-        const score = powerGap + (target.owner === state.player ? 120 : 0);
+        const score = powerGap + (target.owner === state.player ? (state.coalitionAlertLevel > 0 ? 280 : 120) : 0);
         if (!bestAttack || score > bestAttack.score) {
           bestAttack = { from: c, to: target, off, score };
         }
@@ -1562,15 +1455,17 @@ function planAiDekad(world, state) {
       if (bestAttack.from.governor === bestAttack.off.key) bestAttack.from.governor = null;
       bestAttack.off.city = null;
       state.factions[fk].grain -= Math.max(6, Math.ceil(troops / 240));
+      const useType = pers.preferTroop && (hashStr(`${fk}:${state.turn}`) % 3 === 0) ? pers.preferTroop : bestAttack.from.troopType;
       const army = createArmyRecord(world, state, {
         faction: fk,
         from: bestAttack.from.key,
         route: [bestAttack.from.key, bestAttack.to.key],
         officerKey: bestAttack.off.key,
         troops,
-        troopType: bestAttack.from.troopType,
+        troopType: useType,
         stance: "attack",
-        siegeStance: "storm",
+        siegeStance: bestAttack.to.wall > 320 ? "storm" : "surround",
+        formation: pers.formation || "heyi",
       });
       bestAttack.off.armyId = army.id;
       state.armies.push(army);
@@ -1598,7 +1493,10 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
   if (state.outcome !== "ongoing") return state;
   const next = ensurePhase2State(structuredClone(state));
   next.turn += 1;
+  next.edictCooldown = Math.max(0, (next.edictCooldown || 0) - 1);
   const events = [];
+
+  tickOfficerTransfers(world, next, events);
 
   if (!skipAi) {
     planAiDekad(world, next);
@@ -1636,12 +1534,13 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
         a.troops = Math.max(0, a.troops - starve);
         a.morale = clamp(a.morale - 14, 10, 100);
         if (a.faction === next.player || a.targetCity && next.cities[a.targetCity]?.owner === next.player) {
+          const offName = (a.officer && next.officers[a.officer]?.name) || a.escortName || "孤军";
           events.push({
             turn: next.turn,
             kind: "supply_cut",
             faction: a.faction,
             pos: armyWorldPosition(world, a),
-            text: `⚡ 粮道断绝！${next.officers[a.officer]?.name || "孤军"}部缺粮逃散 ${starve.toLocaleString()} 人、士气骤跌！`,
+            text: `⚡ 粮道断绝！${offName}部缺粮逃散 ${starve.toLocaleString()} 人、士气骤跌！`,
           });
         }
       }
@@ -1652,8 +1551,13 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
       continue;
     }
 
+    if ((a.delayDekads || 0) > 0) {
+      a.delayDekads -= 1;
+      continue;
+    }
+
     if (a.stance !== "besiege" && a.stance !== "engaged" && a.reorgDekads === 0) {
-      const req = edgeDekadsRequired(world, a.from, a.to, a.troopType, next.weather, next.officers[a.officer], a.formation || "heyi");
+      const req = edgeDekadsRequired(world, a.from, a.to, a.troopType, next.weather, a.officer ? next.officers[a.officer] : null, a.formation || "heyi");
       a.edgeDekads = req;
       a.progress = Math.min(1, a.progress + 1 / req);
     }
@@ -1735,30 +1639,32 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
           .map((id) => next.armies.find((x) => x.id === id))
           .filter((x) => x && x.troops > 0);
         if (besiegers.length) {
+          const aidName = (a.officer && next.officers[a.officer]?.name) || a.escortName || "援军";
           events.push({
             turn: next.turn,
             kind: "relief",
             faction: a.faction,
             city: arrivedNode,
             pos: cityByKey(world, arrivedNode)?.position,
-            text: `🎺 援军疾至！${next.officers[a.officer]?.name || "援军"}杀抵${cityNameV2(world, arrivedNode)}外围，直扑围城敌营！`,
+            text: `🎺 援军疾至！${aidName}杀抵${cityNameV2(world, arrivedNode)}外围，直扑围城敌营！`,
           });
           resolveFieldBattle(world, next, a, besiegers[0], events, { allowEngage: false });
         }
       }
       if (a.troops > 0 && dest.owner === a.faction) {
         dest.troops += a.troops;
-        const off = next.officers[a.officer];
+        const off = a.officer ? next.officers[a.officer] : null;
         releaseArmyOfficers(next, a, arrivedNode);
         if (off && !dest.commander) dest.commander = off.key;
         if (a.faction === next.player) {
+          const aidName = off?.name || a.escortName || "援师";
           events.push({
             turn: next.turn,
             kind: "reinforce",
             faction: a.faction,
             city: arrivedNode,
             pos: cityByKey(world, arrivedNode)?.position,
-            text: `${next.officers[a.officer]?.name || "援师"}率 ${a.troops.toLocaleString()} 人顺利进驻「${cityNameV2(world, arrivedNode)}」。`,
+            text: `${aidName}率 ${a.troops.toLocaleString()} 人顺利进驻「${cityNameV2(world, arrivedNode)}」。`,
           });
         }
         a.troops = 0;
@@ -1795,7 +1701,7 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
           supplyCut: false,
           stance: "hold",
         };
-        const offAtt = next.officers[a.officer];
+        const offAtt = a.officer ? next.officers[a.officer] : null;
         const offDef = dest.commander ? next.officers[dest.commander] : null;
         const counter = troopCounterEffect(a.troopType, dest.troopType, "plain", next.weather);
         const attP = a.troops * counter.mult * officerPowerMult(next, offAtt, false, false, "plain");
@@ -1837,6 +1743,7 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
           fireRaidUsed: false,
         };
         if (!siege.attackerArmyIds.includes(a.id)) siege.attackerArmyIds.push(a.id);
+        const leadName = (a.officer && next.officers[a.officer]?.name) || a.escortName || "大军";
         events.push({
           turn: next.turn,
           kind: "siege_start",
@@ -1844,7 +1751,7 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
           participants: [a.faction, dest.owner],
           city: arrivedNode,
           pos: cityByKey(world, arrivedNode)?.position,
-          text: `🔥 兵临城下！${next.officers[a.officer]?.name || "大军"}率 ${a.troops.toLocaleString()} 人合围「${cityNameV2(world, arrivedNode)}」！`,
+          text: `🔥 兵临城下！${leadName}率 ${a.troops.toLocaleString()} 人合围「${cityNameV2(world, arrivedNode)}」！`,
         });
       }
     }
@@ -1862,9 +1769,20 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
     if (off.injuredDekads > 0) off.injuredDekads -= 1;
   }
 
-  // 5. Monthly governance & economy tick (every 3 dekads)
+  if (events.some((e) => e.kind === "capture")) {
+    recordHistorySnapshot(world, next);
+  }
+
+  // 5. Monthly governance, logistics links, hero spawns, coalition & historical events (every 3 dekads)
   if (next.turn % 3 === 0) {
     applyMonthlyGovernance(world, next, events);
+    processSupplyLinksMonthly(world, next, events);
+    spawnWanderingHeroes(world, next, events);
+    updateAntiHegemonCoalition(world, next, events);
+    recordHistorySnapshot(world, next);
+    if (!skipAi) {
+      maybeTriggerEvent(world, next, events);
+    }
   }
 
   // 6. Quarterly season/weather & treaty expiration tick (every 9 dekads)
@@ -1890,10 +1808,10 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
 
 export function armyEtaDekads(world, state, army) {
   if (!army || army.stance === "besiege") return 0;
-  let rem = Math.max(1, Math.ceil((1 - (army.progress ?? 0)) * (army.edgeDekads || 2)));
-  const off = state?.officers?.[army.officer];
+  let rem = (army.delayDekads || 0) + Math.max(1, Math.ceil((1 - (army.progress ?? 0)) * (army.edgeDekads || 2)));
+  const off = army.officer ? state?.officers?.[army.officer] : null;
   for (let i = (army.step ?? 0) + 1; i < (army.route?.length ?? 0) - 1; i += 1) {
-    rem += edgeDekadsRequired(world, army.route[i], army.route[i + 1], army.troopType, state?.weather, off);
+    rem += edgeDekadsRequired(world, army.route[i], army.route[i + 1], army.troopType, state?.weather, off, army.formation || "heyi");
   }
   return rem;
 }
@@ -1912,7 +1830,7 @@ export function computeThreats(world, state) {
       from: a.from,
       to: a.targetCity,
       enemyFaction: a.faction,
-      officerName: state.officers[a.officer]?.name || "敌将",
+      officerName: (a.officer && state.officers[a.officer]?.name) || a.escortName || "敌将",
       troops: a.troops,
       troopType: a.troopType,
       etaDekads: a.stance === "besiege" ? 0 : Math.max(1, Math.round((1 - a.progress) * (a.edgeDekads || 2)) + Math.max(0, (a.route.length - 2 - a.step) * 2)),

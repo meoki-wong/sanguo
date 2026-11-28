@@ -26,6 +26,7 @@ export function createMapV2(world, stage, callbacks = {}) {
     onSelectEdge,
     onDragDispatch,
     onPreviewDispatch,
+    onQuickTarget,
     onHover,
   } = callbacks;
 
@@ -123,7 +124,7 @@ export function createMapV2(world, stage, callbacks = {}) {
     btn.className = "v2-city-pin";
     btn.dataset.city = c.key;
     btn.setAttribute("aria-label", c.name);
-    btn.innerHTML = `<span class="v2-city-badge"><i class="v2-city-dot"></i><em class="v2-city-siege" hidden>围</em></span><span class="v2-city-label"><b>${c.name}</b><small class="v2-city-meta"></small></span><span class="v2-city-wall" hidden><i></i></span>`;
+    btn.innerHTML = `<span class="v2-city-badge"><i class="v2-city-dot"></i><em class="v2-city-crown" hidden title="汉帝驻跸">👑</em><em class="v2-city-hero" hidden title="在野名士">📜</em><em class="v2-city-siege" hidden>围</em></span><span class="v2-city-label"><b>${c.name}</b><small class="v2-city-meta"></small></span><span class="v2-city-wall" hidden><i></i></span>`;
 
     btn.addEventListener("pointerdown", (ev) => {
       if (ev.button !== 0 || !state) return;
@@ -139,6 +140,14 @@ export function createMapV2(world, stage, callbacks = {}) {
           preview: null,
         };
       }
+    });
+
+    btn.addEventListener("contextmenu", (ev) => {
+      if (!state) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      onHover?.(null);
+      onQuickTarget?.(c.key);
     });
 
     btn.addEventListener("pointerenter", (ev) => {
@@ -161,6 +170,8 @@ export function createMapV2(world, stage, callbacks = {}) {
     cityPins.set(c.key, {
       btn,
       dot: btn.querySelector(".v2-city-dot"),
+      crownTag: btn.querySelector(".v2-city-crown"),
+      heroTag: btn.querySelector(".v2-city-hero"),
       siegeTag: btn.querySelector(".v2-city-siege"),
       meta: btn.querySelector(".v2-city-meta"),
       wallWrap: btn.querySelector(".v2-city-wall"),
@@ -459,17 +470,18 @@ export function createMapV2(world, stage, callbacks = {}) {
         armyPins.set(army.id, pin);
       }
 
-      const off = state.officers[army.officer];
+      const off = army.officer ? state.officers[army.officer] : null;
       const spec = TROOP_TYPES[army.troopType] || TROOP_TYPES.infantry;
-      const surname = off?.name ? [...off.name][0] : "军";
+      const surname = off?.name ? [...off.name][0] : (army.escortName ? "辎" : "军");
       pin.icon.textContent = spec.icon;
       const troopsK = army.troops >= 1000 ? `${(army.troops / 1000).toFixed(1)}k` : String(army.troops);
-      pin.text.textContent = `${surname} ${troopsK}`;
+      const waitMark = (army.delayDekads || 0) > 0 ? "⏳" : "";
+      pin.text.textContent = `${waitMark}${surname} ${troopsK}`;
       pin.supply.hidden = !army.supplyCut;
       pin.btn.style.setProperty("--force", factionColor(army.faction));
       pin.btn.dataset.stance = army.stance;
       pin.btn.dataset.selected = String(selectedArmyId === army.id);
-      pin.btn.setAttribute("aria-label", `${off?.name || "军团"} ${spec.name} ${army.troops}人`);
+      pin.btn.setAttribute("aria-label", `${off?.name || army.escortName || "军团"} ${spec.name} ${army.troops}人`);
 
       const [wx, wy] = interpolatedArmyPos(army);
       const [vx, vy] = toView([wx, wy]);
@@ -621,6 +633,14 @@ export function createMapV2(world, stage, callbacks = {}) {
       pin.siegeTag.hidden = !besieged;
       pin.btn.dataset.besieged = String(besieged);
 
+      if (pin.crownTag) {
+        pin.crownTag.hidden = state.emperorCity !== c.key;
+      }
+      if (pin.heroTag) {
+        const hasHero = (state.wanderingOfficers || []).some((w) => w.city === c.key);
+        pin.heroTag.hidden = !hasHero;
+      }
+
       if (besieged) {
         pin.wallWrap.hidden = false;
         const pct = Math.max(4, Math.round((city.wall / Math.max(1, city.wallMax)) * 100));
@@ -711,6 +731,10 @@ export function createMapV2(world, stage, callbacks = {}) {
     ctx.drawImage(baseCanvas, 0, 0, width, height);
 
     const z = camera.zoom;
+    const lod = z >= 1.5 ? "near" : z >= 1.15 ? "mid" : "far";
+    if (markerLayer.dataset.zoomLod !== lod) {
+      markerLayer.dataset.zoomLod = lod;
+    }
 
     // Selected city neighbor links highlight
     if (selectedCity && cityByKey.has(selectedCity)) {
@@ -727,6 +751,17 @@ export function createMapV2(world, stage, callbacks = {}) {
         ctx.lineWidth = 2.0 / z;
         ctx.stroke();
         ctx.restore();
+      }
+    }
+
+    // Player automated logistics supply links (rear -> front) in supply overlay
+    if (overlayMode === "supply" && state.supplyLinks) {
+      for (const [rearKey, frontKey] of Object.entries(state.supplyLinks)) {
+        const rp = cityPositions.get(rearKey);
+        const fp = cityPositions.get(frontKey);
+        if (rp && fp) {
+          drawCurvedArrow(rp, fp, "#84e1a7", { dashed: true, lineWidth: 1.9, alpha: 0.78 });
+        }
       }
     }
 
@@ -1022,6 +1057,7 @@ export function createMapV2(world, stage, callbacks = {}) {
         else if (ev.kind === "stratagem_flood") fxList.push({ pos: ev.pos, color: "#4cb8f0", text: "🌊 决水淹城!", start: now, duration: 1750 });
         else if (ev.kind === "stratagem_raid") fxList.push({ pos: ev.pos, color: "#ffd252", text: "⚡ 奇袭劫粮!", start: now, duration: 1700 });
         else if (ev.kind === "defection") fxList.push({ pos: ev.pos, color: "#76f2a2", text: "🏳️ 阵前倒戈!", start: now, duration: 1850 });
+        else if (ev.kind === "battle_art") fxList.push({ pos: ev.pos, color: "#ffd866", text: ev.callout || "⚡ 名将战法!", start: now, duration: 1900 });
       }
       ensureAnimLoop();
       draw();
@@ -1039,7 +1075,9 @@ export function createMapV2(world, stage, callbacks = {}) {
       const now = performance.now();
       for (const ev of events) {
         if (!ev.pos) continue;
-        if (ev.kind === "field_battle") {
+        if (ev.kind === "battle_art") {
+          fxList.push({ pos: ev.pos, color: "#ffd866", text: ev.callout || "⚡ 名将战法!", start: now, duration: 1850 });
+        } else if (ev.kind === "field_battle") {
           fxList.push({ pos: ev.pos, color: "#ffd166", text: `野战 -${ev.loserLoss}`, start: now, duration: 1450 });
         } else if (ev.kind === "capture") {
           fxList.push({ pos: ev.pos, color: "#76f2a2", text: "🚩 破城易帜!", start: now, duration: 1750 });

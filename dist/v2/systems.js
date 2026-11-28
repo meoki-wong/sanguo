@@ -2,13 +2,12 @@
 
 import {
   CITY_SPECIALTIES, FORMATIONS_V2, FORT_CATALOG, NATIONAL_DECREES_V2, OFFICER_BONDS_V2,
-  OFFICER_RIVALS_V2, STRATAGEM_CATALOG, TROOP_TYPES, citySpecialtyV2, edgeDisplayName,
-  edgeKey, roadTerrain,
+  OFFICER_RIVALS_V2, STRATAGEM_CATALOG, TROOP_TYPES, activeTreaty, armyWorldPosition,
+  availableOfficersInCity, cityByKey, cityNameV2, citySpecialtyV2, createArmyRecord,
+  edgeDisplayName, edgeKey, factionNameV2, initialEmperorCity, isHostileV2, returnOfficerHome,
+  roadTerrain,
 } from "./constants.js";
-import {
-  activeTreaty, armyWorldPosition, availableOfficersInCity, cityByKey,
-  cityNameV2, createArmyRecord, factionNameV2, isHostileV2, returnOfficerHome,
-} from "./engine.js";
+import { aiPersonalityFor } from "./theater.js";
 
 function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
@@ -28,6 +27,21 @@ export function ensurePhase2State(state) {
   state.forts ??= {};
   state.stratagemCooldowns ??= {};
   state.decrees ??= {};
+  if (state.emperorCity === undefined) {
+    state.emperorCity = initialEmperorCity(state.year || 199);
+  }
+  state.sealFaction ??= null;
+  state.pendingEvent ??= null;
+  state.triggeredEvents ??= [];
+  state.eventCooldowns ??= {};
+  state.wanderingOfficers ??= [];
+  state.triggeredWanderingIds ??= [];
+  state.officerTransfers ??= [];
+  state.supplyLinks ??= {};
+  state.battleReports ??= [];
+  state.historySnapshots ??= [];
+  state.coalitionAlertLevel ??= 0;
+  state.edictCooldown ??= 0;
   if (state.cities) {
     for (const c of Object.values(state.cities)) {
       if (!c.specialty || !CITY_SPECIALTIES[c.specialty]) {
@@ -41,6 +55,9 @@ export function ensurePhase2State(state) {
       a.deputy ??= null;
       a.engagedWith ??= null;
       a.engageRounds ??= 0;
+      a.rage ??= 0;
+      a.delayDekads ??= 0;
+      a.escortName ??= null;
     }
   }
   return state;
@@ -203,13 +220,14 @@ export function resolveFortsOnMove(world, next, army, events) {
     const dmg = Math.max(40, Math.round(army.troops * FORT_CATALOG.tower.arrowDmgPct * xbBonus));
     army.troops = Math.max(0, army.troops - dmg);
     army.morale = Math.max(10, army.morale - 6);
+    const aName = next.officers[army.officer]?.name || army.escortName || "过路敌军";
     events.push({
       turn: next.turn,
       kind: "fort_fire",
       faction: fort.faction,
       participants: [fort.faction, army.faction],
       pos,
-      text: `🏹 ${passLabel}「连弩箭楼」居高齐射！${next.officers[army.officer]?.name || "过路敌军"}折损 ${dmg.toLocaleString()} 人。`,
+      text: `🏹 ${passLabel}「连弩箭楼」居高齐射！${aName}折损 ${dmg.toLocaleString()} 人。`,
     });
     return;
   }
@@ -219,13 +237,14 @@ export function resolveFortsOnMove(world, next, army, events) {
     army.troops = Math.max(0, army.troops - dmg);
     army.morale = Math.max(10, army.morale - 6);
     if (army.progress > 0.65) army.progress = 0.65;
+    const aName = next.officers[army.officer]?.name || army.escortName || "敌军";
     events.push({
       turn: next.turn,
       kind: "fort_fire",
       faction: fort.faction,
       participants: [fort.faction, army.faction],
       pos,
-      text: `⚓ ${passLabel}「江防水寨」楼船截渡，${next.officers[army.officer]?.name || "敌军"}强渡受阻并损 ${dmg.toLocaleString()} 人！`,
+      text: `⚓ ${passLabel}「江防水寨」楼船截渡，${aName}强渡受阻并损 ${dmg.toLocaleString()} 人！`,
     });
     return;
   }
@@ -241,6 +260,7 @@ export function resolveFortsOnMove(world, next, army, events) {
     fort.hp = Math.max(0, fort.hp - fortDmg);
     army.troops = Math.max(0, army.troops - counterLoss);
     army.morale = Math.max(10, army.morale - 5);
+    const aName = next.officers[army.officer]?.name || army.escortName || "大军";
 
     if (fort.hp <= 0) {
       delete next.forts[eKey];
@@ -251,7 +271,7 @@ export function resolveFortsOnMove(world, next, army, events) {
         faction: army.faction,
         participants: [army.faction, fort.faction],
         pos,
-        text: `💥 ${next.officers[army.officer]?.name || "大军"}强攻拔除「${passLabel}关隘寨堡」，扫清官道！`,
+        text: `💥 ${aName}强攻拔除「${passLabel}关隘寨堡」，扫清官道！`,
       });
     } else {
       events.push({
@@ -260,7 +280,7 @@ export function resolveFortsOnMove(world, next, army, events) {
         faction: fort.faction,
         participants: [fort.faction, army.faction],
         pos,
-        text: `🧱 ${next.officers[army.officer]?.name || "敌军"}遇「${passLabel}关隘寨堡」阻截！强攻损兵 ${counterLoss.toLocaleString()}，寨堡尚余耐久 ${fort.hp}。`,
+        text: `🧱 ${aName}遇「${passLabel}关隘寨堡」阻截！强攻损兵 ${counterLoss.toLocaleString()}，寨堡尚余耐久 ${fort.hp}。`,
       });
     }
   }
@@ -779,6 +799,7 @@ export function planAiPhase2Dekad(world, state) {
 
     // Limit max 2 road forts per AI faction
     const myForts = Object.values(state.forts).filter((f) => f.faction === fk);
+    const pers = aiPersonalityFor(fk);
     if (myForts.length < 2 && ((state.turn + hashStr(fk)) % 3 === 0)) {
       let bestEdge = null;
       for (const c of ownedCities) {
@@ -790,7 +811,8 @@ export function planAiPhase2Dekad(world, state) {
           if (state.forts[eKey]) continue;
           const isRiver = roadTerrain(c.key, nb) === "river";
           const isPass = roadTerrain(c.key, nb) === "pass";
-          const kind = isRiver && fac.treasury >= 22 ? "water_fort" : isPass ? "gate" : "tower";
+          const nonRiverBias = pers.preferFort && pers.preferFort !== "water_fort" ? pers.preferFort : "tower";
+          const kind = isRiver && fac.treasury >= 22 ? "water_fort" : isPass ? "gate" : nonRiverBias;
           const score = enemy.troops + (enemy.owner === state.player ? 500 : 0) + (isPass ? 400 : 0);
           if (!bestEdge || score > bestEdge.score) {
             bestEdge = { a: c.key, b: nb, kind, score };

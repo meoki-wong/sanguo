@@ -100,6 +100,9 @@ async function boot() {
     onDragDispatch(fromKey, toKey) {
       ui?.handleDragDispatch(fromKey, toKey);
     },
+    onQuickTarget(targetCityKey) {
+      ui?.quickPrimeTarget?.(targetCityKey);
+    },
     onHover(info) {
       if (!tooltip) return;
       if (!info) {
@@ -110,20 +113,21 @@ async function boot() {
         const c = state.cities[info.key];
         const sp = TROOP_TYPES[c.troopType] || TROOP_TYPES.infantry;
         const spec = CITY_SPECIALTIES[c.specialty];
-        tooltip.innerHTML = `<strong>${cityNameV2(world, info.key)}</strong>（${factionNameV2(world, state, c.owner)}）${spec ? `<br>${spec.icon} ${spec.name}` : ""}<br>${sp.icon} ${sp.name} ${c.troops.toLocaleString()} · 城防 ${c.wall}/${c.wallMax}`;
+        const empMark = state.emperorCity === info.key ? " 👑汉帝" : "";
+        tooltip.innerHTML = `<strong>${cityNameV2(world, info.key)}</strong>（${factionNameV2(world, state, c.owner)}）${empMark}${spec ? `<br>${spec.icon} ${spec.name}` : ""}<br>${sp.icon} ${sp.name} ${c.troops.toLocaleString()} · 城防 ${c.wall}/${c.wallMax}`;
       } else if (info.type === "army") {
         const a = state.armies.find((x) => x.id === info.armyId);
         if (!a) {
           tooltip.hidden = true;
           return;
         }
-        const o = state.officers[a.officer];
+        const o = a.officer ? state.officers[a.officer] : null;
         const sp = TROOP_TYPES[a.troopType] || TROOP_TYPES.infantry;
         const eta = armyEtaDekads(world, state, a);
         const stTxt = a.stance === "besiege" ? `围攻${cityNameV2(world, a.targetCity)}`
           : a.stance === "engaged" ? `⚔️ 阵前绞杀(第${a.engageRounds || 1}合)`
             : `趋向${cityNameV2(world, a.targetCity)}(${eta}旬)`;
-        tooltip.innerHTML = `<strong>${o?.name || "军团"}所部</strong>（${factionNameV2(world, state, a.faction)}）<br>${sp.icon} ${a.troops.toLocaleString()} · ${stTxt}`;
+        tooltip.innerHTML = `<strong>${o?.name || a.escortName || "军团"}所部</strong>（${factionNameV2(world, state, a.faction)}）<br>${sp.icon} ${a.troops.toLocaleString()} · ${stTxt} · 战意 ${a.rage || 0}%`;
       }
       tooltip.hidden = false;
       tooltip.style.left = `${Math.min(window.innerWidth - 220, info.x + 14)}px`;
@@ -170,17 +174,18 @@ async function boot() {
     if (!flowing || state.outcome !== "ongoing") return;
     flowTimer = setTimeout(() => {
       if (!flowing || state.outcome !== "ongoing") return;
-      if (document.querySelector("dialog[open]")) {
+      if (document.querySelector("dialog[open]") || state.pendingEvent) {
         stopFlow();
         return;
       }
       const evs = stepOneDekad();
       const playerHot = evs.some((e) => (
-        ["capture", "field_battle", "trap", "siege_start", "supply_cut"].includes(e.kind)
-        && (e.faction === state.player || e.participants?.includes(state.player))
+        e.kind === "dilemma"
+        || (["capture", "field_battle", "trap", "siege_start", "supply_cut", "battle_art"].includes(e.kind)
+          && (e.faction === state.player || e.participants?.includes(state.player)))
       ));
-      if (state.outcome !== "ongoing") {
-        stopFlow();
+      if (state.outcome !== "ongoing" || state.pendingEvent) {
+        stopFlow(state.pendingEvent ? `📜 时局重大抉择：「${state.pendingEvent.title}」` : "");
         return;
       }
       if (playerHot) {
@@ -196,7 +201,7 @@ async function boot() {
       stopFlow();
       return;
     }
-    if (state.outcome !== "ongoing" || document.querySelector("dialog[open]")) return;
+    if (state.outcome !== "ongoing" || document.querySelector("dialog[open]") || state.pendingEvent) return;
     flowing = true;
     syncFlowUi();
     scheduleNextFlowTick(160);
@@ -204,6 +209,11 @@ async function boot() {
 
   function stepOneDekad() {
     if (state.outcome !== "ongoing") return [];
+    if (state.pendingEvent) {
+      stopFlow();
+      ui.renderEventDialog?.();
+      return [];
+    }
     const prev = state;
     const next = advanceDekad(world, state);
     setState(next);
@@ -211,17 +221,21 @@ async function boot() {
     const evs = next.lastTurnEvents || [];
     const hasCapture = evs.some((e) => e.kind === "capture");
     const hasTrap = evs.some((e) => e.kind === "trap");
-    const hasBattle = evs.some((e) => e.kind === "field_battle" || e.kind === "siege_tick" || e.kind === "siege_start");
+    const hasBattle = evs.some((e) => e.kind === "field_battle" || e.kind === "siege_tick" || e.kind === "siege_start" || e.kind === "battle_art");
     sound?.play?.(hasCapture ? "capture" : hasTrap ? "fire" : hasBattle ? "siege" : "turn");
 
-    const topEv = evs.find((e) => e.kind === "capture")
-      || evs.find((e) => e.kind === "trap" || e.kind === "field_battle")
+    const topEv = evs.find((e) => e.kind === "dilemma" || e.kind === "capture")
+      || evs.find((e) => e.kind === "battle_art" || e.kind === "trap" || e.kind === "field_battle")
       || evs.find((e) => e.kind === "siege_start" || e.kind === "supply_cut")
       || evs[0];
     if (topEv) ui.showTicker(topEv.text);
 
     ui.renderAll();
     mapApi.playTurnAnimation(prev, next, evs);
+    if (next.pendingEvent) {
+      stopFlow();
+      ui.renderEventDialog?.();
+    }
     return evs;
   }
 
@@ -270,6 +284,11 @@ async function boot() {
         ev.preventDefault();
         setFlowing(!flowing);
       }
+    } else if (k === "1" || k === "2" || k === "3") {
+      ev.preventDefault();
+      speedIndex = Number(k) - 1;
+      syncFlowUi();
+      if (flowing) scheduleNextFlowTick();
     } else if (k === "n") {
       if (!document.querySelector("dialog[open]")) {
         ev.preventDefault();
@@ -304,6 +323,9 @@ async function boot() {
   // Initial selection on player's capital / first city
   const firstPlayerCity = Object.values(state.cities).find((c) => c.owner === state.player)?.key || world.cities[0].key;
   ui.selectCity(firstPlayerCity, { expandMobile: false, focusMap: false });
+  if (state.pendingEvent) {
+    ui.renderEventDialog?.();
+  }
 }
 
 boot();

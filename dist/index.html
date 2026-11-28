@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#161410">
-  <meta name="description" content="经略三国 2.0 — 旬制实时行军、跨回合围城与五大兵种三国大战略">
-  <title>经略三国 2.0</title>
+  <meta name="description" content="经略三国 3.0 — 实时流逝行军、历史大事件抉择、名将战法与大战略统一">
+  <title>经略三国 3.0</title>
   <link rel="stylesheet" href="./v2/style.css">
   <script type="module" src="./v2/main.js"></script>
 </head>
@@ -16,7 +16,7 @@
       <div class="v2-title-meta">
         <div class="v2-title-row">
           <h1>经略三国</h1>
-          <span class="v2-ver-pill">2.0</span>
+          <span class="v2-ver-pill">3.0</span>
           <button type="button" class="v2-weather-pill" id="v2-weather" title="当前时令天时"></button>
         </div>
         <div class="v2-date-line" id="v2-date">199年1月上旬</div>
@@ -84,10 +84,12 @@
       </header>
       <nav class="v2-tabs" id="court-tabs" role="tablist">
         <button type="button" class="v2-tab" data-tab="officers" aria-selected="true">麾下名将</button>
+        <button type="button" class="v2-tab" data-tab="cities" aria-selected="false">疆域城政</button>
         <button type="button" class="v2-tab" data-tab="armies" aria-selected="false">在途军团</button>
         <button type="button" class="v2-tab" data-tab="diplomacy" aria-selected="false">天下外交</button>
         <button type="button" class="v2-tab" data-tab="decrees" aria-selected="false">官爵国策</button>
         <button type="button" class="v2-tab" data-tab="captives" aria-selected="false">俘将处置</button>
+        <button type="button" class="v2-tab" data-tab="trends" aria-selected="false">天下大势</button>
         <button type="button" class="v2-tab" data-tab="chronicle" aria-selected="false">战局奏报</button>
       </nav>
       <div class="v2-dialog-body" id="court-body"></div>
@@ -98,12 +100,37 @@
     <div class="v2-dialog-shell">
       <header class="v2-dialog-head">
         <div>
-          <h2 id="menu-title">经略三国 2.0 · 剧本与军政设置</h2>
-          <p class="v2-dialog-sub">择定汉末三国十一大史实剧本，运筹全图实时行军与围城博弈</p>
+          <h2 id="menu-title">经略三国 3.0 · 剧本与军政设置</h2>
+          <p class="v2-dialog-sub">择定汉末三国十一大史实剧本，运筹实时流逝行军、名将战法与大事件博弈</p>
         </div>
         <button type="button" class="v2-btn quiet" data-close="menu-dialog">返回战局</button>
       </header>
       <div class="v2-dialog-body" id="menu-body"></div>
+    </div>
+  </dialog>
+
+  <dialog id="event-dialog" class="v2-dialog v2-event-dialog" aria-labelledby="event-title">
+    <div class="v2-dialog-shell">
+      <header class="v2-dialog-head">
+        <div>
+          <h2 id="event-title">历史抉择</h2>
+          <p class="v2-dialog-sub" id="event-sub">时局关键节点 · 请主公定夺</p>
+        </div>
+      </header>
+      <div class="v2-dialog-body" id="event-body"></div>
+    </div>
+  </dialog>
+
+  <dialog id="battle-dialog" class="v2-dialog v2-battle-dialog" aria-labelledby="battle-title">
+    <div class="v2-dialog-shell">
+      <header class="v2-dialog-head">
+        <div>
+          <h2 id="battle-title">战役明细复盘</h2>
+          <p class="v2-dialog-sub" id="battle-sub">双方战阵、兵种相克、地形羁绊与战损详情</p>
+        </div>
+        <button type="button" class="v2-btn quiet" data-close="battle-dialog">关闭</button>
+      </header>
+      <div class="v2-dialog-body" id="battle-body"></div>
     </div>
   </dialog>
 

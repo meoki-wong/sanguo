@@ -599,4 +599,257 @@ export const NATIONAL_DECREES_V2 = {
   },
 };
 
+// ===== 公共推演原语（多模块无环共享） =====
+
+export const MIN_DISPATCH_TROOPS = 300;
+export const MIN_GARRISON_LEAVE = 300;
+
+export function clamp(n, lo, hi) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+export function hashStr(str = "") {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i += 1) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+export function initialEmperorCity(year = 199) {
+  const y = Number(year) || 199;
+  if (y <= 191) return "luoyang";
+  if (y <= 195) return "changan";
+  if (y <= 219) return "xu";
+  return null;
+}
+
+export function eraByYearV2(world, year) {
+  return world?.scenarios?.find((s) => s.year === year) || world?.scenarios?.[0] || { year, title: "三国群雄", factions: [], ownership: {}, officers: [] };
+}
+
+export function cityByKey(world, key) {
+  return world?.cities?.find((c) => c.key === key) || null;
+}
+
+export function cityNameV2(world, key) {
+  return cityByKey(world, key)?.name || key;
+}
+
+export function factionNameV2(world, state, key) {
+  return state?.factions?.[key]?.name || eraByYearV2(world, state?.year)?.factions?.find((f) => f.key === key)?.name || key;
+}
+
+export function edgeDistance(world, aKey, bKey) {
+  const a = cityByKey(world, aKey);
+  const b = cityByKey(world, bKey);
+  if (!a || !b) return 55;
+  return Math.hypot(a.position[0] - b.position[0], a.position[1] - b.position[1]);
+}
+
+export function activeTreaty(state, f1, f2) {
+  if (!f1 || !f2 || f1 === f2) return null;
+  return (state?.treaties || []).find(
+    (t) => t.expires > state.turn && t.sides.includes(f1) && t.sides.includes(f2),
+  ) || null;
+}
+
+export function isHostileV2(state, f1, f2) {
+  return Boolean(f1 && f2 && f1 !== f2 && !activeTreaty(state, f1, f2));
+}
+
+export function canTransitCity(state, faction, cityKey) {
+  const city = state?.cities?.[cityKey];
+  if (!city) return false;
+  if (city.owner === faction) return true;
+  const treaty = activeTreaty(state, faction, city.owner);
+  return treaty?.kind === "alliance";
+}
+
+export function findRoadPath(world, state, faction, fromKey, toKey, { allowEnemyEnd = true, maxHops = 8 } = {}) {
+  if (!fromKey || !toKey || fromKey === toKey) return null;
+  const targetCity = state?.cities?.[toKey];
+  if (!targetCity) return null;
+  if (!allowEnemyEnd && !canTransitCity(state, faction, toKey)) return null;
+  if (!canTransitCity(state, faction, fromKey)) return null;
+
+  const adj = new Map(world.cities.map((c) => [c.key, c.links]));
+  const bestCost = new Map([[fromKey, 0]]);
+  const prev = new Map();
+  const queue = [{ key: fromKey, cost: 0, hops: 0 }];
+
+  while (queue.length) {
+    queue.sort((a, b) => a.cost - b.cost);
+    const cur = queue.shift();
+    if (cur.key === toKey) break;
+    if (cur.hops >= maxHops) continue;
+    for (const nb of adj.get(cur.key) || []) {
+      const isDest = nb === toKey;
+      if (!isDest && !canTransitCity(state, faction, nb)) continue;
+      if (isDest && !allowEnemyEnd && !canTransitCity(state, faction, nb)) continue;
+      if (isDest && state.cities[nb].owner !== faction) {
+        const tr = activeTreaty(state, faction, state.cities[nb].owner);
+        if (tr?.kind === "truce" && !allowEnemyEnd) continue;
+      }
+      const nextCost = cur.cost + edgeDistance(world, cur.key, nb);
+      if (nextCost < (bestCost.get(nb) ?? Infinity)) {
+        bestCost.set(nb, nextCost);
+        prev.set(nb, cur.key);
+        queue.push({ key: nb, cost: nextCost, hops: cur.hops + 1 });
+      }
+    }
+  }
+
+  if (!prev.has(toKey)) return null;
+  const path = [toKey];
+  let step = toKey;
+  while (step !== fromKey) {
+    step = prev.get(step);
+    if (!step) return null;
+    path.unshift(step);
+  }
+  return path;
+}
+
+export function edgeDekadsRequired(world, fromKey, toKey, troopType = "infantry", weather = null, officer = null, formation = "heyi") {
+  const dist = edgeDistance(world, fromKey, toKey);
+  const typeDef = TROOP_TYPES[troopType] || TROOP_TYPES.infantry;
+  const formDef = FORMATIONS_V2[formation] || FORMATIONS_V2.heyi;
+  const terrain = roadTerrain(fromKey, toKey);
+  let speed = typeDef.speed * (formDef.speedMult ?? 1);
+  if (troopType === "navy") speed = (terrain === "river" ? typeDef.riverSpeed : 0.9) * (formDef.speedMult ?? 1);
+  if (terrain === "river" && troopType !== "navy") speed *= 0.85;
+  if (terrain === "pass" && troopType === "cavalry") speed *= 0.82;
+  const hasLogistics = officer?.traits?.includes("logistics");
+  const wMarch = weather?.marchMult ?? 1;
+  if (hasLogistics && wMarch < 1) speed *= 1.05;
+  else speed *= wMarch;
+  const raw = Math.round(dist / 28 / Math.max(0.55, speed));
+  return clamp(raw, 2, 5);
+}
+
+export function computeMarchDekads(world, route, troopType = "infantry", weather = null, officer = null, formation = "heyi") {
+  if (!route || route.length < 2) return 0;
+  let total = 0;
+  for (let i = 0; i < route.length - 1; i += 1) {
+    total += edgeDekadsRequired(world, route[i], route[i + 1], troopType, weather, officer, formation);
+  }
+  return total;
+}
+
+export function armyWorldPosition(world, army) {
+  if (army.stance === "besiege") {
+    const pos = cityByKey(world, army.targetCity || army.to)?.position || [390, 250];
+    const seed = hashStr(army.id || army.officer || army.escortName || "");
+    const ang = ((seed % 360) * Math.PI) / 180;
+    return [pos[0] + Math.cos(ang) * 14, pos[1] + Math.sin(ang) * 14];
+  }
+  const a = cityByKey(world, army.from)?.position;
+  const b = cityByKey(world, army.to)?.position;
+  if (!a || !b) return a || b || [390, 250];
+  const t = clamp(army.progress ?? 0, 0, 1);
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+}
+
+export function returnOfficerHome(state, offKey, preferredCityKey) {
+  if (!offKey) return;
+  const off = state?.officers?.[offKey];
+  if (!off) return;
+  off.armyId = null;
+  off.transferringTo = null;
+  if (preferredCityKey && state.cities[preferredCityKey]?.owner === off.faction) {
+    off.city = preferredCityKey;
+    return;
+  }
+  const fallback = Object.values(state.cities).find((c) => c.owner === off.faction);
+  off.city = fallback?.key || null;
+}
+
+export function availableOfficersInCity(state, cityKey, faction = null) {
+  const city = state?.cities?.[cityKey];
+  if (!city) return [];
+  const f = faction || city.owner;
+  return Object.values(state.officers).filter(
+    (o) => o.faction === f && o.city === cityKey && !o.armyId && !o.capturedBy && !o.transferringTo && (o.injuredDekads || 0) <= 0,
+  ).sort((a, b) => (b.command + b.might * 0.4) - (a.command + a.might * 0.4));
+}
+
+export function forecastDispatch(world, state, { from, to, troops, troopType, officer, formation = "heyi" }) {
+  const fromCity = state.cities[from];
+  const toCity = state.cities[to];
+  if (!fromCity || !toCity) return { ok: false, reason: "请选择有效的出发城池与目标城池。" };
+  const faction = fromCity.owner;
+  const route = findRoadPath(world, state, faction, from, to, { allowEnemyEnd: true });
+  if (!route) return { ok: false, reason: "两城之间暂无我方/盟友可通行的道路。" };
+  const isFriendlyDest = canTransitCity(state, faction, to);
+  if (!isFriendlyDest && activeTreaty(state, faction, toCity.owner)) {
+    return { ok: false, reason: "与目标势力尚在停战/同盟期内，不可进攻。" };
+  }
+  const type = troopType || fromCity.troopType || "infantry";
+  const resolvedForm = FORMATIONS_V2[formation] ? formation : "heyi";
+  const offObj = typeof officer === "string" ? state.officers[officer] : officer;
+  const dekads = computeMarchDekads(world, route, type, state.weather, offObj, resolvedForm);
+  const grainCost = Math.max(4, Math.ceil((troops || MIN_DISPATCH_TROOPS) / 220) * 2);
+  const terrain = roadTerrain(route[route.length - 2], to);
+  const counter = isFriendlyDest
+    ? { mult: 1, label: "增援己方", relation: "neutral" }
+    : troopCounterEffect(type, toCity.troopType, terrain, state.weather);
+
+  return {
+    ok: true,
+    route,
+    dekads,
+    grainCost,
+    terrain,
+    counter,
+    isFriendlyDest,
+    targetWall: toCity.wall,
+    targetTroops: toCity.troops,
+    targetTroopType: toCity.troopType,
+  };
+}
+
+export function createArmyRecord(world, state, {
+  faction, from, route, officerKey = null, deputyKey = null, escortName = null,
+  troops, troopType, stance, siegeStance = "storm", formation = "heyi", delayDekads = 0,
+}) {
+  const id = `army-${state.nextArmySeq++}`;
+  const to = route[1];
+  const resolvedForm = FORMATIONS_V2[formation] ? formation : "heyi";
+  const reqDekads = edgeDekadsRequired(world, from, to, troopType, state.weather, officerKey ? state.officers[officerKey] : null, resolvedForm);
+  return {
+    id,
+    faction,
+    officer: officerKey || null,
+    deputy: deputyKey || null,
+    escortName: escortName || null,
+    formation: resolvedForm,
+    troops,
+    maxTroops: troops,
+    troopType,
+    morale: clamp(state.factions[faction]?.morale ?? 80, 50, 100),
+    grain: Math.max(8, Math.ceil(troops / 180) * 3),
+    route,
+    step: 0,
+    from,
+    to,
+    targetCity: route[route.length - 1],
+    depot: from,
+    progress: delayDekads > 0 ? 0.02 : 0.08,
+    edgeDekads: reqDekads,
+    delayDekads: Math.max(0, Math.round(delayDekads || 0)),
+    stance,
+    siegeStance,
+    engagedWith: null,
+    engageRounds: 0,
+    rage: 0,
+    supplyCut: false,
+    reorgDekads: 0,
+    fireRaidHit: false,
+    lastPos: cityByKey(world, from)?.position || [390, 250],
+  };
+}
+
+
 

@@ -1,5 +1,6 @@
 /* 经略三国 2.0 — 黑金水墨羊皮纸战略界面样式（兼顾桌面端与 H5 零遮挡体验） */
 :root {
+  color-scheme: dark;
   --bg: #15120e;
   --panel: rgba(24, 20, 15, 0.94);
   --panel-soft: rgba(34, 29, 22, 0.88);
@@ -18,6 +19,28 @@
 
 *, *::before, *::after {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(204, 168, 96, 0.42) rgba(0, 0, 0, 0.16);
+}
+
+*::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.16);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(204, 168, 96, 0.42);
+  border-radius: 999px;
+  border: 1px solid rgba(20, 16, 10, 0.5);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(224, 179, 84, 0.68);
 }
 
 html, body {
@@ -757,12 +780,86 @@ body[data-immersive="true"] .v2-inspector {
 
 .v2-select, .v2-input {
   width: 100%;
-  padding: 0.42rem 0.55rem;
+  padding: 0.46rem 2.05rem 0.46rem 0.65rem;
   border-radius: 8px;
-  border: 1px solid rgba(204, 168, 96, 0.28);
-  background: rgba(16, 14, 10, 0.92);
+  border: 1px solid rgba(204, 168, 96, 0.34);
+  background-color: #191510;
   color: var(--ink);
   font-size: 0.82rem;
+  line-height: 1.35;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+select.v2-select,
+.v2-select {
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23e0b354' d='M2.2 4.2L6 8l3.8-3.8-.9-.9L6 6.2 3.1 3.3z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.65rem center;
+  background-size: 12px 12px;
+}
+
+select.v2-select::-ms-expand {
+  display: none;
+}
+
+select.v2-select::picker-icon {
+  display: none !important;
+  content: none !important;
+}
+
+.v2-select:hover, .v2-input:hover {
+  border-color: var(--border-strong);
+  background-color: #211b14;
+}
+
+.v2-select:focus-visible, .v2-input:focus-visible {
+  outline: none;
+  border-color: var(--gold);
+  box-shadow: 0 0 0 2px rgba(224, 179, 84, 0.25);
+}
+
+.v2-select option {
+  background: #1d1812;
+  color: var(--ink);
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(224, 179, 84, 0.48), rgba(204, 168, 96, 0.22));
+  border: 1px solid rgba(204, 168, 96, 0.28);
+  outline: none;
+  cursor: pointer;
+  margin: 0.28rem 0;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #ffe6a3, #c89234);
+  border: 1.5px solid #fff4d6;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #ffe6a3, #c89234);
+  border: 1.5px solid #fff4d6;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
 }
 
 .v2-chip-grid {
@@ -779,6 +876,12 @@ body[data-immersive="true"] .v2-inspector {
   color: var(--ink-muted);
   font-size: 0.76rem;
   font-weight: 600;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.v2-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--ink);
 }
 
 .v2-chip[aria-pressed="true"], .v2-chip.active {
@@ -806,19 +909,27 @@ body[data-immersive="true"] .v2-inspector {
   line-height: 1.45;
 }
 
-/* ===== 弹窗统一样式（彻底防止桌面端右边缘裁切） ===== */
+/* ===== 弹窗统一样式（彻底优化边距、页签、滚动区与卡片对齐） ===== */
 dialog.v2-dialog {
-  width: min(820px, calc(100vw - 1.25rem));
+  width: min(920px, calc(100vw - 1.25rem));
   max-width: calc(100vw - 1.25rem);
-  max-height: min(86vh, 760px);
+  max-height: min(88vh, 780px);
   padding: 0;
   margin: auto;
   border-radius: 14px;
   border: 1px solid var(--border-strong);
   background: #191510;
   color: var(--ink);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.72);
   overflow: hidden;
+}
+
+dialog.v2-dialog.v2-event-dialog {
+  width: min(620px, calc(100vw - 1.25rem));
+}
+
+dialog.v2-dialog.v2-battle-dialog {
+  width: min(680px, calc(100vw - 1.25rem));
 }
 
 dialog.v2-dialog::backdrop {
@@ -827,12 +938,14 @@ dialog.v2-dialog::backdrop {
 
 .v2-dialog-shell {
   width: 100%;
-  max-height: min(86vh, 760px);
+  height: 100%;
+  max-height: min(88vh, 780px);
   display: flex;
   flex-direction: column;
 }
 
 .v2-dialog-head {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -854,52 +967,71 @@ dialog.v2-dialog::backdrop {
 }
 
 .v2-tabs {
+  flex: none;
   display: flex;
-  gap: 0.35rem;
+  flex-wrap: wrap;
+  gap: 0.32rem;
   padding: 0.55rem 1rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  overflow-x: auto;
+  background: rgba(14, 11, 8, 0.6);
 }
 
 .v2-tab {
-  padding: 0.34rem 0.72rem;
+  padding: 0.34rem 0.68rem;
   border-radius: 8px;
   border: 1px solid transparent;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.03);
   color: var(--ink-muted);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 600;
   white-space: nowrap;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.v2-tab:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
 }
 
 .v2-tab[aria-selected="true"] {
   border-color: var(--gold);
-  background: rgba(224, 179, 84, 0.16);
+  background: rgba(224, 179, 84, 0.2);
   color: #fff6dc;
 }
 
 .v2-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
   padding: 0.9rem 1rem;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
+  gap: 0.72rem;
 }
 
 .v2-list-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(245px, 1fr));
   gap: 0.65rem;
 }
 
 .v2-row-card {
-  padding: 0.68rem 0.78rem;
+  padding: 0.72rem 0.82rem;
   border-radius: 10px;
-  border: 1px solid rgba(204, 168, 96, 0.22);
-  background: rgba(34, 29, 22, 0.78);
+  border: 1px solid rgba(204, 168, 96, 0.24);
+  background: rgba(34, 29, 22, 0.82);
   display: flex;
   flex-direction: column;
-  gap: 0.42rem;
+  gap: 0.45rem;
+}
+
+.v2-row-actions {
+  margin-top: auto;
+  padding-top: 0.22rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
 }
 
 .v2-row-top {
@@ -907,6 +1039,210 @@ dialog.v2-dialog::backdrop {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+}
+
+/* ===== 3.0 新增：势力圆丸按钮 / 战意条 / 城政总览 / 图表与历史抉择 ===== */
+.v2-bar.rage > i { background: linear-gradient(90deg, #d84b36, #f4ad42); }
+
+.v2-faction-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.36rem;
+}
+
+.v2-faction-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  padding: 0.34rem 0.64rem;
+  border-radius: 999px;
+  border: 1px solid rgba(204, 168, 96, 0.26);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 600;
+  transition: border-color 140ms ease, background 140ms ease, transform 80ms ease;
+}
+
+.v2-faction-pill:hover {
+  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.v2-faction-pill.selected {
+  border-color: var(--gold);
+  background: rgba(224, 179, 84, 0.22);
+  color: #fff8e2;
+  box-shadow: 0 0 0 1px rgba(224, 179, 84, 0.35);
+}
+
+.v2-fac-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+.v2-art-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.14rem 0.45rem;
+  border-radius: 6px;
+  background: rgba(216, 75, 54, 0.18);
+  border: 1px solid rgba(244, 173, 66, 0.45);
+  color: #ffd79a;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.v2-choice-card {
+  text-align: left;
+  width: 100%;
+  padding: 0.75rem 0.88rem;
+  border-radius: 10px;
+  border: 1px solid rgba(204, 168, 96, 0.36);
+  background: linear-gradient(135deg, rgba(48, 39, 27, 0.92), rgba(28, 23, 17, 0.96));
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  transition: border-color 140ms ease, background 140ms ease, transform 80ms ease;
+}
+
+.v2-choice-card:hover {
+  border-color: var(--gold);
+  background: linear-gradient(135deg, rgba(72, 56, 34, 0.94), rgba(40, 32, 21, 0.98));
+  transform: translateY(-1px);
+}
+
+.v2-choice-card strong {
+  color: #ffe39d;
+  font-size: 0.9rem;
+}
+
+.v2-city-table-wrap, .v2-matrix-scroll {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(204, 168, 96, 0.2);
+}
+
+.v2-city-table, .v2-matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  background: rgba(22, 18, 13, 0.78);
+}
+
+.v2-city-table th, .v2-city-table td,
+.v2-matrix-table th, .v2-matrix-table td {
+  padding: 0.46rem 0.55rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.v2-city-table th, .v2-matrix-table th {
+  color: var(--gold);
+  background: rgba(255, 255, 255, 0.03);
+  font-weight: 700;
+}
+
+.v2-matrix-table td { text-align: center; font-weight: 700; }
+.v2-matrix-table td.ally { color: #78e0a4; background: rgba(45, 112, 74, 0.2); }
+.v2-matrix-table td.truce { color: #9ec8e8; background: rgba(48, 86, 118, 0.2); }
+.v2-matrix-table td.war { color: #f08878; background: rgba(118, 42, 34, 0.18); }
+.v2-matrix-table td.self { color: var(--ink-muted); }
+
+.v2-chart-wrap, .v2-replay-wrap {
+  padding: 0.7rem;
+  border-radius: 10px;
+  border: 1px solid rgba(204, 168, 96, 0.22);
+  background: rgba(24, 20, 15, 0.82);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.v2-chart-svg, .v2-replay-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.v2-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  font-size: 0.74rem;
+  color: var(--ink-muted);
+}
+
+.v2-chart-leg {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+}
+
+.v2-chart-leg i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.v2-replay-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.v2-battle-card {
+  padding: 0.78rem;
+  border-radius: 10px;
+  border: 1px solid rgba(204, 168, 96, 0.28);
+  background: rgba(34, 29, 22, 0.84);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.v2-factor-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.v2-factor-pill {
+  padding: 0.16rem 0.48rem;
+  border-radius: 6px;
+  background: rgba(224, 179, 84, 0.14);
+  border: 1px solid rgba(224, 179, 84, 0.34);
+  color: #f3dba0;
+  font-size: 0.74rem;
+}
+
+.v2-city-crown, .v2-city-hero {
+  position: absolute;
+  top: -11px;
+  font-style: normal;
+  font-size: 10px;
+  line-height: 1;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px #000);
+}
+.v2-city-crown { left: -10px; }
+.v2-city-hero { left: 10px; }
+
+.v2-marker-layer[data-zoom-lod="far"] .v2-city-meta {
+  opacity: 0.72;
+}
+.v2-marker-layer[data-zoom-lod="far"] .v2-fort-pin:not([data-built="true"]) {
+  opacity: 0.48;
 }
 
 .v2-scenario-grid {
@@ -1105,5 +1441,15 @@ dialog.v2-dialog::backdrop {
   .v2-alert-strip {
     top: 0.45rem;
     left: 0.45rem;
+  }
+
+  .v2-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 0.45rem 0.65rem;
+  }
+
+  .v2-list-grid {
+    grid-template-columns: 1fr;
   }
 }
