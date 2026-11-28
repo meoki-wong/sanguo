@@ -11,13 +11,13 @@ import {
   PRESTIGE_RANKS_V4, TAX_LEVELS_V4, WANDERING_HEROES_V3, activeTreaty, advanceDekad,
   aiPersonalityFor, appointCourtOffice, approveAllCabinet, approveCabinetProposal,
   availableOfficersInCity, batchSetCityPolicy, bribeDefection, buildCabinetBriefings, buildFort,
-  buildingUpgradeCost, canBuildFort, castStratagem, checkSupplyLine, cityTierInfo,
+  buildingBuildDekads, buildingUpgradeCost, canBuildFort, castStratagem, checkSupplyLine, cityTierInfo,
   clearSupplyLink, computeCourtBonuses, computeFactionPrestige, computeThreats, createGameV2,
   demolishFort, deserializeStateV2, dismissCabinetProposal, dispatchArmy,
   dispatchEmergencyReinforce, enactDecree, estimateFactionEconomy, evaluateDeal, executeDiplomacy,
   findRoadPath, hasDecree, isHostileV2, issueImperialEdict, launchCoordinatedAttack, layCityTrap,
   officerBattleArt, planCoordinatedAttack, prestigeRankForFaction, proposeDeal,
-  rankProgressForFaction, recruitWanderingOfficer, redirectArmy, renderDiploMatrixHtml,
+  rankProgressForFaction, recruitWanderingOfficer, redirectArmy, refreshCabinetInbox, renderDiploMatrixHtml,
   renderPowerChartSvg, renderReplayMapSvg, repairFort, resolveCaptive, resolveEventChoice,
   rewardOfficer, serializeStateV2, setAutoGovernance, setCityPolicy, setCitySiegeDefense,
   setCityTroopType, setSupplyLink, setTaxLevel, sowDiscord, stratagemCooldownLeft,
@@ -885,12 +885,24 @@ test("4.0 郡国农商基建、城市规模晋升、国家税率与维持腐败�
   const farmCost = buildingUpgradeCost(st, "cao", "farm", xu.buildings.farm + 1);
   const goldBefore = st.factions.cao.treasury;
   const farmBefore = xu.buildings.farm;
+  const durFarm = buildingBuildDekads(farmBefore + 1);
+  assert.ok(durFarm >= 2);
   st = upgradeCityBuilding(world, st, "xu", "farm");
-  assert.equal(st.cities.xu.buildings.farm, farmBefore + 1);
+  assert.equal(st.cities.xu.buildings.farm, farmBefore, "筑建需耗时数旬，不得批准即秒成");
+  assert.equal(st.cities.xu.construction?.trackId, "farm");
+  assert.equal(st.cities.xu.construction?.remainingDekads, durFarm);
   assert.equal(st.factions.cao.treasury, goldBefore - farmCost);
+  assert.throws(() => upgradeCityBuilding(world, st, "xu", "market"), /正在兴建/);
+
+  for (let i = 0; i < durFarm; i += 1) st = advanceDekad(world, st, { skipAi: true });
+  assert.equal(st.cities.xu.construction, null);
+  assert.equal(st.cities.xu.buildings.farm, farmBefore + 1);
+  assert.ok(st.events.some((e) => e.text.includes("竣工报喜")));
 
   const wallMaxBefore = st.cities.xu.wallMax;
+  const durAcad = buildingBuildDekads(st.cities.xu.buildings.academy + 1);
   st = upgradeCityBuilding(world, st, "xu", "academy");
+  for (let i = 0; i < durAcad; i += 1) st = advanceDekad(world, st, { skipAi: true });
   assert.equal(st.cities.xu.wallMax, wallMaxBefore + CITY_BUILDINGS_V4.academy.wallPerLv);
   assert.ok(cityTierInfo(st.cities.xu).totalDev >= 4);
 
@@ -957,8 +969,9 @@ test("4.0 朝堂六卿官职任免光环、威望晋爵与三足鼎立终局", (
 test("4.0 军机处中枢奏折建议、朱批准奏/留中/一键全批与重臣自动托管", () => {
   let st = createGameV2(world, 199, "cao");
   st.factions.cao.treasury = 350;
+  refreshCabinetInbox(world, st);
   const briefings = buildCabinetBriefings(world, st);
-  assert.ok(briefings.length >= 2);
+  assert.ok(briefings.length >= 2 && briefings.length <= 4, "军机奏折按月定量限额呈递，不超过 4 件");
   for (let i = 1; i < briefings.length; i += 1) {
     assert.ok(briefings[i - 1].priority >= briefings[i].priority);
   }
@@ -966,15 +979,23 @@ test("4.0 军机处中枢奏折建议、朱批准奏/留中/一键全批与重�
   const firstId = briefings[0].id;
   const afterDismiss = dismissCabinetProposal(st, firstId);
   assert.equal(buildCabinetBriefings(world, afterDismiss).some((p) => p.id === firstId), false);
+  assert.equal(buildCabinetBriefings(world, afterDismiss).length, briefings.length - 1);
 
   const buildProp = briefings.find((p) => p.action.kind === "build");
   assert.ok(buildProp);
   const prevLv = st.cities[buildProp.action.payload.cityKey].buildings[buildProp.action.payload.trackId];
   const afterOne = approveCabinetProposal(world, st, buildProp.id);
-  assert.equal(afterOne.cities[buildProp.action.payload.cityKey].buildings[buildProp.action.payload.trackId], prevLv + 1);
+  assert.equal(afterOne.cities[buildProp.action.payload.cityKey].buildings[buildProp.action.payload.trackId], prevLv, "军机批建进入施工期而非瞬时竣工");
+  assert.equal(afterOne.cities[buildProp.action.payload.cityKey].construction?.trackId, buildProp.action.payload.trackId);
+  assert.equal(afterOne.cabinetInbox.length, briefings.length - 1, "批复一件减少一件，不再无限刷新补满");
 
   const afterAll = approveAllCabinet(world, st);
+  assert.equal(afterAll.cabinetInbox.length, 0, "一键全批后本月奏折清空");
   assert.ok(afterAll.events.some((e) => e.text.includes("军机总批")));
+
+  let monthSt = afterAll;
+  for (let i = 0; i < 3; i += 1) monthSt = advanceDekad(world, monthSt, { skipAi: true });
+  assert.ok(monthSt.cabinetInbox.length >= 1 && monthSt.cabinetInbox.length <= 4, "次月朔日重新呈递新一批军机奏折");
 
   // Test autonomous governance on monthly tick
   let autoSt = setAutoGovernance(st, "autoEconomy", true);
@@ -984,29 +1005,39 @@ test("4.0 军机处中枢奏折建议、朱批准奏/留中/一键全批与重�
   assert.ok(autoSt.events.some((e) => e.text.includes("军机自动")));
 });
 
-test("4.0 开局 9 旬农商休养蓄势期 AI 行为与 2.0/3.0 旧档向上兼容", () => {
+test("4.0 开局 9 旬农商休养蓄势期 AI 行为、突发事件节流与旧档向上兼容", () => {
   assert.equal(OPENING_DEV_DEKADS, 9);
   let st = createGameV2(world, 199, "cao");
   const initialAiDev = Object.values(st.cities)
     .filter((c) => c.owner !== "cao")
     .reduce((sum, c) => sum + c.buildings.farm + c.buildings.market + c.buildings.workshop + c.buildings.academy, 0);
 
+  let triggeredEvents = 0;
   for (let i = 0; i < OPENING_DEV_DEKADS; i += 1) {
     st = advanceDekad(world, st);
+    if (st.pendingEvent) {
+      triggeredEvents += 1;
+      st = resolveEventChoice(world, st, st.pendingEvent.choices[0].id);
+    }
   }
   const aiOffensiveInOpening = st.armies.filter((a) => a.faction !== "cao" && a.stance === "attack");
   assert.equal(aiOffensiveInOpening.length, 0, "开局 9 旬休养蓄势期内 AI 不主动发起跨境进攻");
 
   const devAfter9 = Object.values(st.cities)
     .filter((c) => c.owner !== "cao")
-    .reduce((sum, c) => sum + c.buildings.farm + c.buildings.market + c.buildings.workshop + c.buildings.academy, 0);
+    .reduce((sum, c) => sum + c.buildings.farm + c.buildings.market + c.buildings.workshop + c.buildings.academy + (c.construction ? 1 : 0), 0);
   assert.ok(devAfter9 > initialAiDev, "休养蓄势期内 AI 真实花钱兴建郡国农商基建");
 
-  // Advance after turn 9 so AI resumes normal campaign tempo cleanly
-  for (let i = 0; i < 6; i += 1) {
+  // Advance after turn 9 through turn 18 & verify dilemma event throttling
+  for (let i = 0; i < 9; i += 1) {
     st = advanceDekad(world, st);
+    if (st.pendingEvent) {
+      triggeredEvents += 1;
+      st = resolveEventChoice(world, st, st.pendingEvent.choices[0].id);
+    }
   }
-  assert.equal(st.turn, 15);
+  assert.equal(st.turn, 18);
+  assert.ok(triggeredEvents <= 2, `18 旬内突发事件应受全局冷却节流（实际触发 ${triggeredEvents} 次）`);
 
   // Strip v4 fields from save JSON & verify smooth upgrade via deserializeStateV2
   const raw = JSON.parse(serializeStateV2(st));
@@ -1014,9 +1045,12 @@ test("4.0 开局 9 旬农商休养蓄势期 AI 行为与 2.0/3.0 旧档向上兼
   delete raw.autoGovernance;
   delete raw.dismissedCabinetIds;
   delete raw.threeKingdoms;
+  delete raw.nextEventAllowedTurn;
+  delete raw.cabinetInbox;
   for (const c of Object.values(raw.cities)) {
     delete c.buildings;
     delete c.publicOrder;
+    delete c.construction;
   }
   for (const f of Object.values(raw.factions)) {
     delete f.taxLevel;
@@ -1026,4 +1060,7 @@ test("4.0 开局 9 旬农商休养蓄势期 AI 行为与 2.0/3.0 旧档向上兼
   assert.equal(restored.factions.cao.taxLevel, "normal");
   assert.ok(restored.cities.xu.buildings.farm >= 1);
   assert.equal(restored.cities.xu.publicOrder, 78);
+  assert.equal(restored.cities.xu.construction, null);
+  assert.equal(restored.nextEventAllowedTurn, 0);
+  assert.ok(Array.isArray(restored.cabinetInbox));
 });

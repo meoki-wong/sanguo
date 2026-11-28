@@ -10,8 +10,8 @@ import {
   CITY_BUILDINGS_V4, COURT_OFFICES_V4, EMPEROR_EDICTS_V3, MIN_DISPATCH_TROOPS,
   MIN_GARRISON_LEAVE, OPENING_DEV_DEKADS, TAX_LEVELS_V4, activeTreaty, appointCourtOffice,
   appointOfficer, approveAllCabinet, approveCabinetProposal, armyEtaDekads, availableOfficersInCity,
-  batchSetCityPolicy, bribeDefection, buildCabinetBriefings, buildFort, buildingUpgradeCost,
-  canBuildFort, castStratagem, checkSupplyLine, cityBonds, cityByKey, cityNameV2, cityTierInfo,
+  batchSetCityPolicy, bribeDefection, buildCabinetBriefings, buildFort, buildingBuildDekads,
+  buildingUpgradeCost, canBuildFort, castStratagem, checkSupplyLine, cityBonds, cityByKey, cityNameV2, cityTierInfo,
   clearSupplyLink, computeCourtBonuses, computeThreats, createGameV2, demolishFort,
   deserializeStateV2, dismissCabinetProposal, dispatchArmy, dispatchEmergencyReinforce,
   enactDecree, eraByYearV2, estimateFactionEconomy, evaluateDeal, executeDiplomacy, factionNameV2,
@@ -25,6 +25,32 @@ import {
 } from "./engine.js";
 
 const $ = (id) => document.getElementById(id);
+
+function openDialogSafe(dialog) {
+  if (!dialog || dialog.open) return;
+  if (typeof dialog.showModal === "function") {
+    try {
+      dialog.showModal();
+      return;
+    } catch {
+      // Fallback for restricted mobile WebViews
+    }
+  }
+  dialog.setAttribute("open", "");
+}
+
+function closeDialogSafe(dialog) {
+  if (!dialog) return;
+  if (typeof dialog.close === "function") {
+    try {
+      if (dialog.open) dialog.close();
+      return;
+    } catch {
+      // Fallback to attribute removal
+    }
+  }
+  dialog.removeAttribute("open");
+}
 
 function esc(str = "") {
   return String(str).replace(/[&<>"']/g, (m) => ({
@@ -677,6 +703,8 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
           const tier = cityTierInfo(city);
           const orderVal = Number.isFinite(city.publicOrder) ? city.publicOrder : 78;
           const treasury = state.factions[state.player]?.treasury ?? 0;
+          const con = city.construction;
+          const conDef = con ? CITY_BUILDINGS_V4[con.trackId] : null;
           return `
             <div class="v2-card">
               <div class="v2-card-head">
@@ -687,19 +715,24 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
                 <small>公共秩序 (${orderVal}/100${orderVal < 30 ? " · ⚠️ 恐生民变" : ""})</small>
                 <div class="v2-bar order"><i style="width:${orderVal}%"></i></div>
               </div>
+              ${con && conDef ? `
+                <div class="v2-forecast-line">
+                  🔨 正在施工：<strong>${conDef.icon} ${esc(conDef.name)} Lv.${con.targetLevel}</strong>（尚余 <strong>${con.remainingDekads}/${con.totalDekads} 旬</strong> 竣工${isBesieged ? " · 围城暂缓" : ""}）
+                </div>` : ""}
               <div class="v2-building-grid">
                 ${Object.values(CITY_BUILDINGS_V4).map((b) => {
                   const lv = city.buildings?.[b.id] ?? 0;
                   const maxd = lv >= 5;
                   const cost = maxd ? 0 : buildingUpgradeCost(state, state.player, b.id, lv + 1);
-                  const blocked = maxd || isBesieged || treasury < cost;
+                  const dur = maxd ? 0 : buildingBuildDekads(lv + 1);
+                  const blocked = maxd || isBesieged || Boolean(con) || treasury < cost;
                   return `
                     <button type="button" class="v2-building-cell" data-upgrade-building="${esc(b.id)}" ${blocked ? "disabled" : ""} title="${esc(b.summary)}">
                       <div class="v2-row-top">
                         <strong style="font-size:0.78rem">${b.icon} ${esc(b.name)}</strong>
                         <span class="v2-badge">Lv.${lv}/5</span>
                       </div>
-                      <span class="v2-muted" style="font-size:0.7rem">${maxd ? "✅ 已至满级" : isBesieged ? "围城停工" : `升 Lv.${lv + 1} · ${cost}钱`}</span>
+                      <span class="v2-muted" style="font-size:0.7rem">${maxd ? "✅ 已至满级" : con ? "另有工程在建" : isBesieged ? "围城停工" : `动工 Lv.${lv + 1} · ${cost}钱/${dur}旬`}</span>
                     </button>`;
                 }).join("")}
               </div>
@@ -1164,8 +1197,27 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
                   <button type="button" class="v2-btn primary" data-cab-approve="${esc(p.id)}">朱批准奏</button>
                 </div>
               </div>
-            </div>`).join("") : `<div class="v2-card"><p class="v2-muted" style="margin:0">🌿 海内秩序平稳、政令皆顺，暂无紧急待裁奏折。主公可推进旬日以积累钱粮或关注前线军情。</p></div>`}
-        </div>`;
+            </div>`).join("") : `<div class="v2-card"><p class="v2-muted" style="margin:0">✅ 本月军机奏折已尽数批复，无复积案。主公可安心推进旬日（下月初重臣再呈新折）。</p></div>`}
+        </div>
+
+        ${(() => {
+          const activeBuilds = Object.values(state.cities).filter((c) => c.owner === state.player && c.construction);
+          if (!activeBuilds.length) return "";
+          return `
+            <div class="v2-card">
+              <div class="v2-card-head">
+                <h3>🔨 正在施工中的郡国工程 (${activeBuilds.length})</h3>
+                <span class="v2-badge">按旬推进</span>
+              </div>
+              <div class="v2-chip-grid">
+                ${activeBuilds.map((c) => {
+                  const con = c.construction;
+                  const bDef = CITY_BUILDINGS_V4[con.trackId];
+                  return `<span class="v2-dev-pip">🏛️ ${esc(cityNameV2(world, c.key))} · ${bDef?.icon || ""}${esc(bDef?.name || "")} Lv.${con.targetLevel}（余${con.remainingDekads}/${con.totalDekads}旬）</span>`;
+                }).join("")}
+              </div>
+            </div>`;
+        })()}`;
     });
 
     $("btn-approve-all")?.addEventListener("click", () => {
@@ -1202,7 +1254,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
 
   function openCabinetDialog() {
     const dialog = $("cabinet-dialog");
-    if (dialog && !dialog.open) dialog.showModal();
+    openDialogSafe(dialog);
     renderCabinetDialog();
   }
 
@@ -1395,7 +1447,9 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
                   : (b.market < 5) ? "market"
                     : (b.academy < 5) ? "academy" : "workshop";
                 const nextCost = (b[nextTrack] ?? 0) < 5 ? buildingUpgradeCost(state, state.player, nextTrack, (b[nextTrack] ?? 0) + 1) : 9999;
-                const canQuickBuild = !state.sieges?.[c.key] && (b[nextTrack] ?? 0) < 5 && treasury >= nextCost;
+                const con = c.construction;
+                const conDef = con ? CITY_BUILDINGS_V4[con.trackId] : null;
+                const canQuickBuild = !state.sieges?.[c.key] && !con && (b[nextTrack] ?? 0) < 5 && treasury >= nextCost;
                 const empBadge = state.emperorCity === c.key ? "👑 " : "";
                 return `
                   <tr>
@@ -1418,8 +1472,9 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
                       </select>
                     </td>
                     <td>
-                      <div style="display:flex;gap:0.25rem">
-                        ${(b[nextTrack] ?? 0) < 5 ? `<button type="button" class="v2-btn secondary" data-table-build="${esc(c.key)}:${esc(nextTrack)}" ${canQuickBuild ? "" : "disabled"} style="padding:0.22rem 0.44rem;font-size:0.72rem">+${CITY_BUILDINGS_V4[nextTrack].icon}</button>` : ""}
+                      <div style="display:flex;gap:0.25rem;align-items:center">
+                        ${con ? `<span class="v2-dev-pip">🔨${conDef?.icon || ""}余${con.remainingDekads}旬</span>`
+                          : (b[nextTrack] ?? 0) < 5 ? `<button type="button" class="v2-btn secondary" data-table-build="${esc(c.key)}:${esc(nextTrack)}" ${canQuickBuild ? "" : "disabled"} style="padding:0.22rem 0.44rem;font-size:0.72rem">+${CITY_BUILDINGS_V4[nextTrack].icon}</button>` : ""}
                         <button type="button" class="v2-btn quiet" data-jump-city="${esc(c.key)}" style="padding:0.22rem 0.46rem;font-size:0.72rem">定位</button>
                       </div>
                     </td>
@@ -1456,7 +1511,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
       });
       body.querySelectorAll("[data-jump-city]").forEach((btn) => {
         btn.addEventListener("click", () => {
-          dialog.close();
+          closeDialogSafe(dialog);
           selectCity(btn.dataset.jumpCity, { expandMobile: true, focusMap: true });
         });
       });
@@ -1585,7 +1640,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
       });
       body.querySelectorAll("[data-cmd-army]").forEach((btn) => {
         btn.addEventListener("click", () => {
-          dialog.close();
+          closeDialogSafe(dialog);
           selectArmy(btn.dataset.cmdArmy, true);
         });
       });
@@ -1884,7 +1939,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
   function openCourtDialog(tab = "offices") {
     courtTab = tab;
     const dialog = $("court-dialog");
-    if (dialog && !dialog.open) dialog.showModal();
+    openDialogSafe(dialog);
     renderCourtDialog();
   }
 
@@ -1982,7 +2037,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
       replayIndex = -1;
       edictTarget = null;
       onNewGame(next);
-      dialog?.close();
+      closeDialogSafe(dialog);
       mapApi.fitAll();
       showTicker(`新局开启：${eraByYearV2(world, next.year).title} · ${factionNameV2(world, next, next.player)}`);
     });
@@ -2009,7 +2064,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
         replayIndex = -1;
         edictTarget = null;
         onNewGame(loaded);
-        dialog?.close();
+        closeDialogSafe(dialog);
         showTicker("已载入存档，继续经略九州！");
       } catch (err) {
         showTicker(`⚠️ ${err.message}`);
@@ -2023,7 +2078,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
     menuFaction = getState().player;
     menuDifficulty = getState().difficulty;
     renderMenuDialog();
-    if (dialog && !dialog.open) dialog.showModal();
+    openDialogSafe(dialog);
   }
 
   function checkOutcomeDialog(state) {
@@ -2038,10 +2093,10 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
       <p class="v2-muted">${won ? `恭喜主公率${factionNameV2(world, state, state.player)}一统天下四十四城！` : "所余城池尽失，可随时重整山河或换选剧本再图霸业。"}</p>
       <button type="button" class="v2-btn primary" id="outcome-restart">开启新剧本</button>`;
     $("outcome-restart")?.addEventListener("click", () => {
-      dialog.close();
+      closeDialogSafe(dialog);
       openMenuDialog();
     });
-    dialog.showModal();
+    openDialogSafe(dialog);
   }
 
   function renderEventDialog() {
@@ -2050,7 +2105,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
     const dialog = $("event-dialog");
     if (!dialog) return;
     if (!ev) {
-      if (dialog.open) dialog.close();
+      closeDialogSafe(dialog);
       delete dialog.dataset.eventId;
       return;
     }
@@ -2077,7 +2132,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
         const idx = Number(btn.dataset.eventChoice);
         const ok = applyCommand((s) => resolveEventChoice(world, s, idx));
         if (ok) {
-          dialog.close();
+          closeDialogSafe(dialog);
           delete dialog.dataset.eventId;
           const msg = getState().lastTurnEvents?.[0]?.text;
           if (msg) showTicker(msg);
@@ -2085,7 +2140,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
       });
     });
 
-    if (!dialog.open) dialog.showModal();
+    openDialogSafe(dialog);
   }
 
   function renderBattleDialog(reportId) {
@@ -2148,7 +2203,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
           </div>` : ""}
       </div>`;
 
-    if (!dialog.open) dialog.showModal();
+    openDialogSafe(dialog);
   }
 
   function quickPrimeTarget(targetCityKey) {
@@ -2252,7 +2307,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
   });
 
   document.querySelectorAll("[data-close]").forEach((btn) => {
-    btn.addEventListener("click", () => $(btn.dataset.close)?.close());
+    btn.addEventListener("click", () => closeDialogSafe($(btn.dataset.close)));
   });
 
   $("event-dialog")?.addEventListener("cancel", (ev) => {
@@ -2262,7 +2317,7 @@ export function createUiV2({ world, sound, getState, setState, mapApi, onNewGame
   for (const dlgId of ["court-dialog", "cabinet-dialog", "menu-dialog", "battle-dialog", "outcome-dialog"]) {
     const dlg = $(dlgId);
     dlg?.addEventListener("click", (ev) => {
-      if (ev.target === dlg) dlg.close();
+      if (ev.target === dlg) closeDialogSafe(dlg);
     });
   }
 

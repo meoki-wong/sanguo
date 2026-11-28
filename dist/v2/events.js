@@ -1,7 +1,7 @@
 // 经略三国 3.0 — 历史大事件分支抉择 / 汉帝奉迎 / 传国玉玺系统
 
 import {
-  activeTreaty, cityByKey, cityNameV2, clamp, factionNameV2, isHostileV2,
+  activeTreaty, cityByKey, cityNameV2, clamp, factionNameV2, hashStr, isHostileV2,
 } from "./constants.js";
 
 export const EMPEROR_EDICTS_V3 = {
@@ -293,8 +293,9 @@ export const HISTORICAL_EVENTS_V3 = [
     icon: "🌾",
     eraMin: 189,
     eraMax: 280,
-    repeatableCooldown: 18,
-    condition: (_w, s) => (s.turn || 0) >= 6,
+    repeatableCooldown: 45,
+    chancePct: 35,
+    condition: (_w, s) => (s.turn || 0) >= 12,
     text: () => "岁逢久旱兼生蝗蝻，数郡流民起于野。若开官仓赈济可安万民军心；若强行督税充军恐生内患。",
     choices: [
       {
@@ -328,8 +329,9 @@ export const HISTORICAL_EVENTS_V3 = [
     icon: "💰",
     eraMin: 189,
     eraMax: 280,
-    repeatableCooldown: 15,
-    condition: (_w, s) => (s.turn || 0) >= 3,
+    repeatableCooldown: 36,
+    chancePct: 35,
+    condition: (_w, s) => (s.turn || 0) >= 9,
     text: () => "江南与朔北豪商感慕我朝商道安宁，愿倾私财助军。正值战事吃紧，主公意下如何筹措？",
     choices: [
       {
@@ -362,8 +364,9 @@ export const HISTORICAL_EVENTS_V3 = [
     icon: "📜",
     eraMin: 189,
     eraMax: 280,
-    repeatableCooldown: 21,
-    condition: (_w, s) => Boolean(firstHostileFaction(s)),
+    repeatableCooldown: 42,
+    chancePct: 35,
+    condition: (_w, s) => (s.turn || 0) >= 12 && Boolean(firstHostileFaction(s)),
     text: (w, s) => {
       const fk = firstHostileFaction(s);
       return `「${factionNameV2(w, s, fk)}」密使夜入幕府，称若我方愿各退一步暂罢兵戈，可暂免腹背受敌之忧。`;
@@ -398,6 +401,7 @@ export const HISTORICAL_EVENTS_V3 = [
 export function maybeTriggerEvent(world, state, events = []) {
   if (!state || state.pendingEvent || state.outcome !== "ongoing") return null;
   if ((state.turn || 0) < 3) return null;
+  if ((state.nextEventAllowedTurn || 0) > state.turn) return null;
 
   const triggered = (state.triggeredEvents ??= []);
   const cooldowns = (state.eventCooldowns ??= {});
@@ -411,12 +415,14 @@ export function maybeTriggerEvent(world, state, events = []) {
       continue;
     }
     if (def.condition && !def.condition(world, state)) continue;
+    if (def.chancePct && (hashStr(`${state.year}:${state.turn}:${def.id}`) % 100) >= def.chancePct) continue;
 
     if (def.repeatableCooldown) {
       cooldowns[def.id] = state.turn + def.repeatableCooldown;
     } else {
       triggered.push(def.id);
     }
+    state.nextEventAllowedTurn = state.turn + 15;
 
     const bodyText = typeof def.text === "function" ? def.text(world, state) : def.text;
     state.pendingEvent = {

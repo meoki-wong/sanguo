@@ -29,13 +29,14 @@ import {
 } from "./theater.js";
 import {
   CITY_BUILDINGS_V4, CITY_TIERS_V4, COURT_OFFICES_V4, PRESTIGE_RANKS_V4, TAX_LEVELS_V4,
-  appointCourtOffice, buildingUpgradeCost, checkThreeKingdomsClimax, cityTierInfo,
-  computeCourtBonuses, computeFactionPrestige, ensureV4State, estimateFactionEconomy,
-  prestigeRankForFaction, setTaxLevel, upgradeCityBuilding,
+  appointCourtOffice, buildingBuildDekads, buildingUpgradeCost, checkThreeKingdomsClimax,
+  cityTierInfo, computeCourtBonuses, computeFactionPrestige, ensureV4State, estimateFactionEconomy,
+  prestigeRankForFaction, setTaxLevel, tickCityConstructions, upgradeCityBuilding,
 } from "./court.js";
 import {
   OPENING_DEV_DEKADS, approveAllRecommended, buildCabinetBriefings,
-  dismissCabinetProposal, executeCabinetProposal, runAutoGovernanceMonthly, setAutoGovernance,
+  dismissCabinetProposal, executeCabinetProposal, refreshCabinetInbox, runAutoGovernanceMonthly,
+  setAutoGovernance,
 } from "./cabinet.js";
 
 export {
@@ -65,12 +66,13 @@ export {
 } from "./chronicle.js";
 export {
   CITY_BUILDINGS_V4, CITY_TIERS_V4, COURT_OFFICES_V4, PRESTIGE_RANKS_V4, TAX_LEVELS_V4,
-  appointCourtOffice, buildingUpgradeCost, cityTierInfo, computeCourtBonuses,
+  appointCourtOffice, buildingBuildDekads, buildingUpgradeCost, cityTierInfo, computeCourtBonuses,
   computeFactionPrestige, estimateFactionEconomy, prestigeRankForFaction, setTaxLevel,
   upgradeCityBuilding,
 } from "./court.js";
 export {
-  OPENING_DEV_DEKADS, buildCabinetBriefings, dismissCabinetProposal, setAutoGovernance,
+  OPENING_DEV_DEKADS, buildCabinetBriefings, dismissCabinetProposal, refreshCabinetInbox,
+  setAutoGovernance,
 } from "./cabinet.js";
 
 export const V2_VERSION = 2;
@@ -272,6 +274,8 @@ export function createGameV2(world, year, playerFaction, { difficulty = "standar
     pendingEvent: null,
     triggeredEvents: [],
     eventCooldowns: {},
+    nextEventAllowedTurn: 0,
+    cabinetInbox: [],
     wanderingOfficers: [],
     triggeredWanderingIds: [],
     officerTransfers: [],
@@ -289,6 +293,7 @@ export function createGameV2(world, year, playerFaction, { difficulty = "standar
   state.sealFaction = initialSealFaction(state, year);
   ensureV4State(state);
   spawnWanderingHeroes(world, state, []);
+  refreshCabinetInbox(world, state);
   recordHistorySnapshot(world, state);
   return state;
 }
@@ -1475,7 +1480,7 @@ function planAiDekad(world, state) {
           : (state.factions[fk].treasury < 110 || econ.netTreasury < 30 ? "market"
             : ((state.turn % 2 === 0) ? "farm" : "workshop"));
       const buildCity = ownedCities
-        .filter((c) => !state.sieges?.[c.key] && (c.buildings?.[track] ?? 0) < 5)
+        .filter((c) => !state.sieges?.[c.key] && !c.construction && (c.buildings?.[track] ?? 0) < 5)
         .sort((a, b) => (a.buildings?.[track] ?? 0) - (b.buildings?.[track] ?? 0) || b.troops - a.troops)[0];
       if (buildCity) {
         const nextLv = (buildCity.buildings?.[track] ?? 0) + 1;
@@ -1628,6 +1633,7 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
   const events = [];
 
   tickOfficerTransfers(world, next, events);
+  tickCityConstructions(world, next, events);
 
   if (!skipAi) {
     planAiDekad(world, next);
@@ -1913,6 +1919,7 @@ export function advanceDekad(world, state, { skipAi = false } = {}) {
     spawnWanderingHeroes(world, next, events);
     updateAntiHegemonCoalition(world, next, events);
     checkThreeKingdomsClimax(world, next, events);
+    refreshCabinetInbox(world, next);
     recordHistorySnapshot(world, next);
     if (!skipAi) {
       maybeTriggerEvent(world, next, events);

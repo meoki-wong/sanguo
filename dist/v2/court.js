@@ -185,6 +185,7 @@ export function ensureCityV4Fields(city) {
   }
   if (!Number.isFinite(city.publicOrder)) city.publicOrder = 78;
   else city.publicOrder = clamp(Math.round(city.publicOrder), 0, 100);
+  if (city.construction === undefined) city.construction = null;
   city.level = Math.max(city.level || 1, cityTierInfo(city).level);
   return city;
 }
@@ -305,6 +306,8 @@ export function ensureV4State(state) {
   state.autoGovernance ??= { autoEconomy: false, autoPersonnel: false, autoDefense: false };
   state.dismissedCabinetIds ??= [];
   state.threeKingdoms ??= null;
+  state.nextEventAllowedTurn ??= 0;
+  if (state.cabinetInbox === undefined || state.cabinetInbox === null) state.cabinetInbox = [];
 
   if (state.cities) {
     for (const c of Object.values(state.cities)) {
@@ -332,6 +335,10 @@ export function ensureV4State(state) {
   return state;
 }
 
+export function buildingBuildDekads(nextLevel) {
+  return clamp(1 + Math.max(1, Number(nextLevel) || 1), 2, 6);
+}
+
 export function buildingUpgradeCost(state, factionKey, trackId, nextLevel) {
   const def = CITY_BUILDINGS_V4[trackId];
   if (!def) return 999;
@@ -347,6 +354,10 @@ export function upgradeCityBuilding(world, state, cityKey, trackId, { actorFacti
   const city = next.cities?.[cityKey];
   if (!city || city.owner !== actorFaction) throw new Error("仅可于己方直辖城池大兴土木。");
   if (next.sieges?.[cityKey]) throw new Error("城池正遭敌军围困，无法兴建大型工事。");
+  if (city.construction) {
+    const curDef = CITY_BUILDINGS_V4[city.construction.trackId];
+    throw new Error(`「${cityNameV2(world, cityKey)}」正在兴建「${curDef?.name || "工事"}」，尚余 ${city.construction.remainingDekads} 旬完工。`);
+  }
 
   const curLv = city.buildings?.[trackId] ?? 0;
   if (curLv >= 5) throw new Error(`「${cityNameV2(world, cityKey)}」的${def.name}已臻最高第 5 级。`);
@@ -358,17 +369,14 @@ export function upgradeCityBuilding(world, state, cityKey, trackId, { actorFacti
     throw new Error(`扩建「${def.name} Lv.${nextLv}」需国库 ${cost} 钱。`);
   }
 
+  const dur = buildingBuildDekads(nextLv);
   fac.treasury -= cost;
-  city.buildings[trackId] = nextLv;
-  const tier = cityTierInfo(city);
-  city.level = tier.level;
-  if (trackId === "academy") {
-    city.wallMax += def.wallPerLv;
-    city.wall = Math.min(city.wallMax, city.wall + def.wallPerLv);
-    city.publicOrder = clamp(city.publicOrder + 6, 0, 100);
-  } else {
-    city.publicOrder = clamp(city.publicOrder + 2, 0, 100);
-  }
+  city.construction = {
+    trackId,
+    targetLevel: nextLv,
+    totalDekads: dur,
+    remainingDekads: dur,
+  };
 
   if (!silent && actorFaction === next.player) {
     const ev = {
@@ -376,12 +384,48 @@ export function upgradeCityBuilding(world, state, cityKey, trackId, { actorFacti
       kind: "economy",
       faction: actorFaction,
       city: cityKey,
-      text: `🏗️ 兴城固本：「${cityNameV2(world, cityKey)}」落成「${def.icon} ${def.name} Lv.${nextLv}」（耗资 ${cost} 钱 · ${tier.title}）。`,
+      text: `🏗️ 动工兴建：「${cityNameV2(world, cityKey)}」已拨款 ${cost} 钱动工扩建「${def.icon} ${def.name} Lv.${nextLv}」（预计 ${dur} 旬竣工）。`,
     };
     next.events = [...(next.events || []), ev].slice(-80);
     next.lastTurnEvents = [ev];
   }
   return next;
+}
+
+export function tickCityConstructions(world, state, events = []) {
+  for (const city of Object.values(state.cities || {})) {
+    const con = city.construction;
+    if (!con) continue;
+    if (state.sieges?.[city.key]) continue;
+
+    con.remainingDekads -= 1;
+    if (con.remainingDekads <= 0) {
+      const def = CITY_BUILDINGS_V4[con.trackId];
+      const targetLevel = clamp(con.targetLevel || 1, 1, 5);
+      city.buildings ??= defaultCityBuildings(city);
+      city.buildings[con.trackId] = Math.max(city.buildings[con.trackId] || 0, targetLevel);
+      const tier = cityTierInfo(city);
+      city.level = tier.level;
+      if (con.trackId === "academy" && def) {
+        city.wallMax += def.wallPerLv;
+        city.wall = Math.min(city.wallMax, city.wall + def.wallPerLv);
+        city.publicOrder = clamp((city.publicOrder ?? 78) + 6, 0, 100);
+      } else {
+        city.publicOrder = clamp((city.publicOrder ?? 78) + 2, 0, 100);
+      }
+      city.construction = null;
+
+      if (city.owner === state.player && def) {
+        events.push({
+          turn: state.turn,
+          kind: "economy",
+          faction: city.owner,
+          city: city.key,
+          text: `🏗️ 竣工报喜：「${cityNameV2(world, city.key)}」${def.icon} ${def.name} Lv.${targetLevel} 正式落成（${tier.title}）！`,
+        });
+      }
+    }
+  }
 }
 
 export function setTaxLevel(state, taxId) {

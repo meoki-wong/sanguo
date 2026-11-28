@@ -5,8 +5,8 @@ import {
   cityNameV2, factionNameV2, findRoadPath, isHostileV2,
 } from "./constants.js";
 import {
-  CITY_BUILDINGS_V4, TAX_LEVELS_V4, buildingUpgradeCost, computeCourtBonuses,
-  ensureV4State, estimateFactionEconomy, setTaxLevel, upgradeCityBuilding,
+  CITY_BUILDINGS_V4, TAX_LEVELS_V4, buildingBuildDekads, buildingUpgradeCost,
+  computeCourtBonuses, ensureV4State, estimateFactionEconomy, setTaxLevel, upgradeCityBuilding,
 } from "./court.js";
 import { enactDecree, evaluateDeal, proposeDeal } from "./systems.js";
 import { recruitWanderingOfficer } from "./arts.js";
@@ -24,8 +24,11 @@ function ministerMeta(state, officeId, fallbackTitle) {
   };
 }
 
-export function buildCabinetBriefings(world, state) {
+export function buildCabinetBriefings(world, state, { fresh = false } = {}) {
   if (!state || !state.cities || state.outcome !== "ongoing") return [];
+  if (!fresh && Array.isArray(state.cabinetInbox)) {
+    return state.cabinetInbox;
+  }
   const player = state.player;
   const fac = state.factions?.[player];
   if (!fac) return [];
@@ -125,10 +128,10 @@ export function buildCabinetBriefings(world, state) {
     });
   }
 
-  // 4. Highest-ROI city building upgrades (up to 2)
+  // 4. Highest-ROI city building upgrade (at most 1 per monthly batch, skipping active builds)
   const buildCandidates = [];
   for (const c of ownedCities) {
-    if (state.sieges?.[c.key]) continue;
+    if (state.sieges?.[c.key] || c.construction) continue;
     const isBorder = (cityByKey(world, c.key)?.links || []).some(
       (nb) => state.cities[nb] && isHostileV2(state, player, state.cities[nb].owner),
     );
@@ -148,12 +151,10 @@ export function buildCabinetBriefings(world, state) {
     }
   }
   buildCandidates.sort((a, b) => b.score - a.score || a.cost - b.cost);
-  const pickedBuildCities = new Set();
-  for (const bc of buildCandidates) {
-    if (pickedBuildCities.size >= 2) break;
-    if (pickedBuildCities.has(bc.city.key)) continue;
-    pickedBuildCities.add(bc.city.key);
+  const bc = buildCandidates[0];
+  if (bc) {
     const def = CITY_BUILDINGS_V4[bc.trackId];
+    const dur = buildingBuildDekads(bc.nextLv);
     const officeMap = {
       farm: ["grand_minister_agri", "大司农"],
       market: ["grand_minister_comm", "大司徒"],
@@ -165,12 +166,12 @@ export function buildCabinetBriefings(world, state) {
     pushItem({
       id: `cab:build:${bc.city.key}:${bc.trackId}:${bc.nextLv}`,
       category: "economy",
-      priority: 76 - pickedBuildCities.size,
+      priority: 76,
       urgent: false,
       ...m,
-      title: `扩建「${cityNameV2(world, bc.city.key)}」${def.name} Lv.${bc.nextLv}`,
-      summary: `${cityNameV2(world, bc.city.key)}基础稳固，扩建${def.name}可长远厚植产额与国家威望。`,
-      effectText: `${def.name} +1 级（威望 +${def.prestigePerLv}）`,
+      title: `动工扩建「${cityNameV2(world, bc.city.key)}」${def.name} Lv.${bc.nextLv}`,
+      summary: `${cityNameV2(world, bc.city.key)}基础稳固，动工扩建${def.name}可长远厚植产额与国家威望。`,
+      effectText: `${def.name} +1 级（预计 ${dur} 旬竣工 · 威望 +${def.prestigePerLv}）`,
       costText: `国库 ${bc.cost} 钱`,
       action: { kind: "build", payload: { cityKey: bc.city.key, trackId: bc.trackId } },
     });
@@ -283,12 +284,20 @@ export function buildCabinetBriefings(world, state) {
     }
   }
 
-  return items.sort((a, b) => b.priority - a.priority).slice(0, 8);
+  return items.sort((a, b) => b.priority - a.priority).slice(0, 4);
+}
+
+export function refreshCabinetInbox(world, state) {
+  if (!state) return [];
+  state.cabinetInbox = buildCabinetBriefings(world, state, { fresh: true });
+  return state.cabinetInbox;
 }
 
 export function executeCabinetProposal(world, state, proposalId, helpers = {}) {
-  const list = buildCabinetBriefings(world, state);
-  const prop = list.find((p) => p.id === proposalId);
+  const pool = Array.isArray(state.cabinetInbox) && state.cabinetInbox.length
+    ? state.cabinetInbox
+    : buildCabinetBriefings(world, state, { fresh: true });
+  const prop = pool.find((p) => p.id === proposalId);
   if (!prop) throw new Error("该军机奏折已处理或条件已变更。");
 
   const { kind, payload } = prop.action;
@@ -315,6 +324,10 @@ export function executeCabinetProposal(world, state, proposalId, helpers = {}) {
     throw new Error("未知奏折指令类型。");
   }
 
+  next.cabinetInbox = (Array.isArray(next.cabinetInbox) ? next.cabinetInbox : pool)
+    .filter((p) => p.id !== proposalId
+      && !(kind === "build" && p.action?.kind === "build" && p.action?.payload?.cityKey === payload.cityKey));
+
   const ev = {
     turn: next.turn,
     kind: "system",
@@ -331,12 +344,17 @@ export function dismissCabinetProposal(state, proposalId) {
   if (!next.dismissedCabinetIds.includes(proposalId)) {
     next.dismissedCabinetIds.push(proposalId);
   }
+  if (Array.isArray(next.cabinetInbox)) {
+    next.cabinetInbox = next.cabinetInbox.filter((p) => p.id !== proposalId);
+  }
   return next;
 }
 
 export function approveAllRecommended(world, state, helpers = {}) {
   let cur = ensureV4State(structuredClone(state));
-  const initial = buildCabinetBriefings(world, cur);
+  const initial = Array.isArray(cur.cabinetInbox) && cur.cabinetInbox.length
+    ? cur.cabinetInbox.slice()
+    : buildCabinetBriefings(world, cur, { fresh: true });
   if (!initial.length) throw new Error("当前暂无可一键批复的军机奏折。");
 
   let doneCount = 0;
@@ -434,7 +452,7 @@ export function runAutoGovernanceMonthly(world, state, events = [], helpers = {}
 
   if (flags.autoEconomy && (cur.factions?.[player]?.treasury ?? 0) >= 85) {
     const econ = estimateFactionEconomy(cur, player);
-    const buildProp = buildCabinetBriefings(world, cur).find((p) => p.action?.kind === "build");
+    const buildProp = buildCabinetBriefings(world, cur, { fresh: true }).find((p) => p.action?.kind === "build");
     if (buildProp && cur.factions[player].treasury >= 85) {
       const { cityKey, trackId } = buildProp.action.payload;
       try {
@@ -444,7 +462,7 @@ export function runAutoGovernanceMonthly(world, state, events = [], helpers = {}
           turn: cur.turn,
           kind: "economy",
           faction: player,
-          text: `🤖 军机自动兴建：依重臣所议，已扩建「${cityNameV2(world, cityKey)}」${def.name}（余钱 ${cur.factions[player].treasury}，治安 ${econ.avgOrder}）。`,
+          text: `🤖 军机自动兴建：依重臣所议，已拨款动工扩建「${cityNameV2(world, cityKey)}」${def.name}（余钱 ${cur.factions[player].treasury}，治安 ${econ.avgOrder}）。`,
         });
       } catch {
         // Ignore
